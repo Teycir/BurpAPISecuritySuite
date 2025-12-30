@@ -1,7 +1,7 @@
 # BurpAPISecuritySuite
 
 <p align="center">
-  <img src="public/banner.png" alt="BurpAPISecuritySuite Banner" width="600">
+  <img src="public/banner.png" alt="BurpAPISecuritySuite Banner" width="600" style="height: auto; max-height: 80%;">
 </p>
 
 <p align="center">
