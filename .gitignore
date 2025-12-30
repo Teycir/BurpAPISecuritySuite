@@ -1,0 +1,13 @@
+*.pyc
+*.class
+.DS_Store
+__pycache__/
+*.log
+burp_exports/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.history
+pocs
