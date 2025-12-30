@@ -49,6 +49,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
 - [Documentation](#documentation)
 - [FAQ](#faq)
 - [Related Projects](#related-projects)
+- [Professional Services](#professional-services)
 - [Contributing](#contributing)
   - [Author](#author)
   - [License](#license)
