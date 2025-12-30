@@ -63,10 +63,16 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
 ### Diff View
 ![Diff Analysis](public/diff.png)
 
-### Integration Examples
+### Nuclei Tab
 ![Nuclei Integration](public/nuclei.png)
+
+### Katana Tab
 ![Katana Integration](public/katana.png)
+
+### HTTPX Tab
 ![HTTPX Integration](public/httpx.png)
+
+### FFUF Tab
 ![FFUF Integration](public/fffuf.png)
 
 ### Version Info
