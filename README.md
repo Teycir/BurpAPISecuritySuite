@@ -11,7 +11,7 @@
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-2.0-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.0-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -772,7 +772,7 @@ MIT License - Free to use for authorized security testing and research purposes.
 
 ### Recent Updates
 
-### v2.0 - Advanced Fuzzing & AI Integration
+### v1.0 - Initial Release
 - ✅ 15 attack types with 108+ vectors
 - ✅ BOLA-specific fuzzing for all authenticated endpoints
 - ✅ Auto-configured Burp Intruder export
