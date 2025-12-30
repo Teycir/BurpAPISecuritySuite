@@ -758,6 +758,27 @@ A: Yes! They integrate seamlessly:
 - [Burp Waydroid Connector](https://github.com/Teycir/burp-waydroid-connector) - Burp proxy integration for Waydroid
 - [BurpCopyIssues](https://github.com/teycir/BurpCopyIssues) - Original inspiration for this project
 
+## 💼 Professional Services
+
+Need custom security tools or API testing solutions? I build production-ready applications and security tools.
+
+### Featured Projects
+
+- **[TimeSeal](https://timeseal.online)** ([GitHub](https://github.com/Teycir/Timeseal)) - Cryptographic time-locked vault and dead man's switch with zero-trust encryption
+- **[Ghost Chat](https://ghost-chat.pages.dev)** - Secure P2P chat with WebRTC, no server storage, self-destruct timers
+- **[BurpCopyIssues](https://github.com/Teycir/BurpCopyIssues)** - Burp Suite extension for browsing, copying, and exporting scan findings
+- **[BurpWpsScan](https://github.com/Teycir/BurpWpsScan)** - WordPress security scanner for Burp Suite with WPScan API integration
+- **Custom Security Tools** - Burp extensions, API testing frameworks, automation scripts
+
+### Services Offered
+
+- 🔒 **Security Tool Development** - Custom Burp extensions, penetration testing tools, automation frameworks
+- 🚀 **Web Application Development** - Full-stack development with modern technologies
+- 🔧 **API Security Consulting** - Architecture review, vulnerability assessment, remediation guidance
+- 🤖 **AI Integration** - LLM-powered security tools, automated payload generation, intelligent fuzzing
+
+**Get in Touch**: [teycirbensoltane.tn](https://teycirbensoltane.tn) | Available for freelance projects and consulting
+
 ## Contributing
 
 ### Author
