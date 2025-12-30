@@ -20,6 +20,15 @@
 
 Professional-grade Burp Suite extension for comprehensive API reconnaissance, intelligent fuzzing, and AI-powered security testing.
 
+<p align="center">
+  <a href="https://github.com/sponsors/Teycir">
+    <img src="https://img.shields.io/badge/Sponsor-❤️-red.svg?style=for-the-badge" alt="Sponsor">
+  </a>
+  <a href="https://www.buymeacoffee.com/teycir">
+    <img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-☕-yellow.svg?style=for-the-badge" alt="Buy Me A Coffee">
+  </a>
+</p>
+
 ## Table of Contents
 
 - [Screenshots](#screenshots)
