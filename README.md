@@ -81,6 +81,9 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
 ### FFUF Tab
 ![FFUF Integration](public/fffuf.png)
 
+### Wayback Tab
+![Wayback Integration](public/wayback.png)
+
 ### Version Info
 ![Version](public/version.png)
 
