@@ -1,8 +1,12 @@
 # BurpAPISecuritySuite
 
-![banner](public/banner.png)
+<p align="center">
+  <img src="public/banner.png" alt="BurpAPISecuritySuite Banner" width="600">
+</p>
 
-![Demo](public/API%20security%20suite.gif)
+<p align="center">
+  <img src="public/API%20security%20suite.gif" alt="Demo" width="800">
+</p>
 
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
