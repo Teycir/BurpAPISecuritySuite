@@ -85,6 +85,12 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
 ### Wayback Tab
 ![Wayback Integration](public/wayback.png)
 
+### Export Options
+![Export Options](public/export.png)
+
+### Turbo Intruder Export
+![Turbo Intruder Export](public/turbointruderexport.png)
+
 ### Version Info
 ![Version](public/version.png)
 
