@@ -48,7 +48,6 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
 - [Use Cases](#use-cases)
 - [Documentation](#documentation)
 - [FAQ](#faq)
-- [Related Projects](#related-projects)
 - [Professional Services](#professional-services)
 - [Contributing](#contributing)
   - [Author](#author)
@@ -751,13 +750,6 @@ A: Yes! They integrate seamlessly:
 - **Cross-Platform**: Works on Windows, macOS, Linux
 - **Extensible**: Easy to add new attack types and payloads
 - **Professional UI**: Color-coded severity, tabbed interface, real-time stats
-
-## Related Projects
-
-- [RedTeamToolkitForAndroid](../RedTeamToolkitForAndroid) - Mobile app penetration testing with Frida, MCP servers, and AI orchestration
-- [Frida Waydroid Launcher](https://github.com/Teycir/frida-waydroid-launcher) - One-command Frida + ADB environment
-- [Burp Waydroid Connector](https://github.com/Teycir/burp-waydroid-connector) - Burp proxy integration for Waydroid
-- [BurpCopyIssues](https://github.com/teycir/BurpCopyIssues) - Original inspiration for this project
 
 ## 💼 Professional Services
 
