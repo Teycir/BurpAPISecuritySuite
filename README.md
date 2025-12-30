@@ -25,6 +25,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
 - [Screenshots](#screenshots)
 - [Purpose](#purpose)
 - [Key Features](#key-features)
+- [Comparison with Similar Tools](#comparison-with-similar-tools)
 - [Installation](#installation)
 - [Requirements](#requirements)
 - [Usage](#usage)
@@ -130,6 +131,41 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Nuclei**: Target export and integrated scanning with WAF evasion
 - **Payload Library**: JSON export of all attack payloads
 - **cURL Export**: Copy attacks as cURL commands for manual testing
+
+## Comparison with Similar Tools
+
+| Feature | BurpAPISecuritySuite | Burp Scanner Pro | OWASP ZAP | Postman |
+|---------|---------------------|------------------|-----------|----------|
+| **Price** | Free | $449/year | Free | Free/Paid |
+| **API-Specific Focus** | ✅ Yes | ⚠️ Partial | ⚠️ Partial | ✅ Yes |
+| **Auto-Capture & Normalization** | ✅ Yes | ❌ No | ⚠️ Basic | ❌ No |
+| **BOLA/IDOR Detection** | ✅ Automated | ⚠️ Manual | ⚠️ Manual | ❌ No |
+| **Attack Types** | 15 types | 100+ (generic) | 50+ (generic) | Limited |
+| **API Payloads** | 108+ API-focused | Generic web | Generic web | Basic |
+| **JWT Analysis** | ✅ Automatic | ⚠️ Extension needed | ⚠️ Extension needed | ⚠️ Manual |
+| **GraphQL Testing** | ✅ Built-in | ❌ No | ⚠️ Limited | ⚠️ Manual |
+| **Race Condition Testing** | ✅ Turbo Intruder | ✅ Turbo Intruder | ❌ No | ❌ No |
+| **AI Integration** | ✅ Export for LLM | ❌ No | ❌ No | ❌ No |
+| **Version Scanner** | ✅ Built-in | ❌ No | ❌ No | ❌ No |
+| **Parameter Mining** | ✅ Built-in | ⚠️ Extension needed | ❌ No | ❌ No |
+| **Wayback Discovery** | ✅ Built-in | ❌ No | ❌ No | ❌ No |
+| **External Tool Integration** | ✅ Nuclei, HTTPX, Katana, FFUF | ❌ No | ⚠️ Limited | ⚠️ Limited |
+| **WAF Bypass Techniques** | ✅ 20+ methods | ⚠️ Some | ⚠️ Some | ❌ No |
+| **Export Formats** | JSON, Intruder, Turbo, Nuclei, cURL | XML, HTML | XML, HTML, JSON | JSON, cURL |
+| **Burp Community Support** | ✅ Yes | ❌ Pro only | N/A | N/A |
+| **Learning Curve** | Low | Medium | Medium | Low |
+| **Best For** | API pentesting, bug bounty | Full web app testing | DAST automation | API development |
+
+### Why Choose BurpAPISecuritySuite?
+
+- **API-First Design**: Built specifically for modern API security testing (REST, GraphQL, SOAP)
+- **Free & Open Source**: All features available without licensing costs
+- **Intelligent Automation**: Auto-detects BOLA/IDOR vulnerabilities across all authenticated endpoints
+- **AI-Powered**: Export context for ChatGPT/Claude to generate custom payloads
+- **Comprehensive Coverage**: 15 attack types with 108+ API-specific payloads
+- **External Tool Integration**: Seamlessly integrates with Nuclei, HTTPX, Katana, FFUF
+- **Works with Burp Community**: No need for expensive Burp Pro license
+- **Active Development**: Regular updates with new attack vectors and features
 
 ## Installation
 
