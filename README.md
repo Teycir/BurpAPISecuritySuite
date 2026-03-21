@@ -1,3 +1,16 @@
+<!-- donation:eth:start -->
+## Support Development
+
+**Donate ETH:** `0x11282eE5726B3370c8B480e321b3B2aA13686582`
+
+If this project saves you time or helps your security work, please support ongoing development.
+
+<p align="center">
+  <img src="publiceth.svg" alt="Donate ETH QR Code" width="220" />
+</p>
+
+<!-- donation:eth:end -->
+
 # BurpAPISecuritySuite
 
 <p align="center">
