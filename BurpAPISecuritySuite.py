@@ -2,6 +2,7 @@
 # pylint: disable=import-error
 import json
 import re
+import shlex
 import threading
 import time
 
@@ -94,6 +95,16 @@ class BurpExtender(
         self.lock = threading.Lock()
         self.max_endpoints = 800
         self.max_body_size = 5000
+        self._tool_help_cache = {}
+        self._tool_process_lock = threading.Lock()
+        self._active_tool_processes = {}
+        self._tool_cancel_flags = {
+            "nuclei": threading.Event(),
+            "httpx": threading.Event(),
+            "katana": threading.Event(),
+            "ffuf": threading.Event(),
+            "wayback": threading.Event(),
+        }
 
         # Pagination state
         self.current_page = 0
@@ -313,6 +324,86 @@ class BurpExtender(
         btn.setBackground(color)
         btn.setForeground(Color.WHITE)
         btn.addActionListener(action)
+        return btn
+
+    def _create_command_preset_combo(self, field, checkbox, presets, help_label=None):
+        """Create preset dropdown that populates custom command field."""
+        labels = ["Preset Cmd..."]
+        labels.extend([label for label, _, _ in presets])
+        combo = JComboBox(labels)
+        combo.setToolTipText(
+            "Select a preset to auto-fill the custom command textbox"
+        )
+
+        def on_select(_event):
+            idx = combo.getSelectedIndex()
+            if idx <= 0:
+                return
+            _, template, description = presets[idx - 1]
+            field.setText(template)
+            checkbox.setSelected(True)
+            if help_label:
+                help_label.setText("Preset Help: {}".format(description))
+                help_label.setToolTipText(description)
+            combo.setSelectedIndex(0)
+
+        combo.addActionListener(on_select)
+        return combo
+
+    def _create_preset_help_button(
+        self,
+        title,
+        placeholders,
+        presets,
+        usage_notes=None,
+        override_notes=None,
+    ):
+        """Create small help button that explains commands and override usage."""
+        btn = JButton("?")
+        btn.setToolTipText("Show command usage and preset help")
+
+        def on_help(_event):
+            lines = []
+            lines.append("{} Command Help".format(title))
+            lines.append("=" * 60)
+            lines.append("")
+            lines.append("Quick Start:")
+            lines.append("  1) Default mode: leave 'Use Custom Cmd' unchecked.")
+            lines.append("  2) Override mode: check 'Use Custom Cmd' and provide Custom command.")
+            lines.append("  3) Preset dropdown auto-fills Custom command and enables override.")
+            lines.append("  4) Use Stop button to cancel long-running scans.")
+            if usage_notes:
+                lines.append("")
+                lines.append("Tool Notes:")
+                for note in usage_notes:
+                    lines.append("  - {}".format(note))
+            lines.append("Placeholders:")
+            for placeholder in placeholders:
+                lines.append("  - {}".format(placeholder))
+            lines.append("")
+            lines.append("Override Rules:")
+            lines.append("  - Custom command must be valid shell syntax.")
+            lines.append("  - Unknown placeholders are rejected.")
+            lines.append("  - Empty custom command is rejected when override is enabled.")
+            if override_notes:
+                for note in override_notes:
+                    lines.append("  - {}".format(note))
+            lines.append("")
+            lines.append("Available Presets:")
+            for label, template, description in presets:
+                lines.append("")
+                lines.append("[{}]".format(label))
+                lines.append("  {}".format(description))
+                lines.append("  {}".format(template))
+
+            JOptionPane.showMessageDialog(
+                self._panel,
+                "\n".join(lines),
+                "{} Command Help".format(title),
+                JOptionPane.INFORMATION_MESSAGE,
+            )
+
+        btn.addActionListener(on_help)
         return btn
 
     def _create_text_area_panel(self):
@@ -1021,6 +1112,8 @@ class BurpExtender(
     def _create_nuclei_tab(self):
         """Create Nuclei scanner tab"""
         panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
         controls = JPanel(FlowLayout(FlowLayout.LEFT))
         controls.add(JLabel("Nuclei Path:"))
@@ -1031,9 +1124,68 @@ class BurpExtender(
             default_nuclei if os.path.exists(default_nuclei) else "nuclei", 25
         )
         controls.add(self.nuclei_path_field)
+        self.nuclei_custom_cmd_checkbox = JCheckBox("Use Custom Cmd", False)
+        controls.add(self.nuclei_custom_cmd_checkbox)
+        controls.add(JLabel("Custom:"))
+        self.nuclei_custom_cmd_field = JTextField("", 35)
+        self.nuclei_custom_cmd_field.setToolTipText(
+            "Example: {nuclei_path} -list {targets_file} -jsonl {json_file} -silent"
+        )
+        controls.add(self.nuclei_custom_cmd_field)
+        controls.add(JLabel("Preset:"))
+        self.nuclei_preset_help_label = JLabel(
+            "Preset Help: Choose preset for quick safe command templates."
+        )
+        nuclei_presets = [
+            (
+                "Recon Fast",
+                '{nuclei_path} -list {targets_file} -tags exposure,config,api,swagger,openapi,graphql,jwt,panel,debug,backup,logs,trace,files,paths -etags dos,intrusive,headless,cve,fuzz -timeout 5 -retries 1 -rate-limit 150 -c 25 -silent -header "X-Forwarded-For: 127.0.0.1" -jsonl {json_file}',
+                "Runs broad API-focused discovery on generated Recon targets with fast settings.",
+            ),
+            (
+                "High/Critical",
+                "{nuclei_path} -list {targets_file} -severity critical,high -timeout 7 -retries 1 -rate-limit 100 -c 20 -silent -jsonl {json_file}",
+                "Prioritizes only high and critical findings for quick triage.",
+            ),
+            (
+                "API/Auth Focus",
+                "{nuclei_path} -list {targets_file} -tags api,swagger,openapi,graphql,auth,jwt,config,exposure -timeout 5 -retries 1 -rate-limit 120 -c 20 -silent -jsonl {json_file}",
+                "Targets API/authentication and configuration exposure checks.",
+            ),
+        ]
+        controls.add(
+            self._create_command_preset_combo(
+                self.nuclei_custom_cmd_field,
+                self.nuclei_custom_cmd_checkbox,
+                nuclei_presets,
+                self.nuclei_preset_help_label,
+            )
+        )
+        controls.add(
+            self._create_preset_help_button(
+                "Nuclei",
+                ["{nuclei_path}", "{targets_file}", "{output_file}", "{json_file}"],
+                nuclei_presets,
+                usage_notes=[
+                    "Use local ProjectDiscovery nuclei binary in Nuclei Path.",
+                    "Default mode scans generated Recon targets (base URLs + API paths).",
+                    "Use tags and etags presets for fast API-focused coverage.",
+                ],
+                override_notes=[
+                    "Include {json_file} so results can be parsed in this tab.",
+                    "Include {targets_file} if you want to keep Recon-derived target scope.",
+                    "Avoid unsupported flags for your local version (for example: -random-agent).",
+                ],
+            )
+        )
         controls.add(
             self._create_action_button(
                 "Run Nuclei", Color(138, 43, 226), lambda e: self._run_nuclei()
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_nuclei(e)
             )
         )
         controls.add(
@@ -1056,7 +1208,11 @@ class BurpExtender(
             )
         )
 
-        panel.add(controls, BorderLayout.NORTH)
+        help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        help_row.add(self.nuclei_preset_help_label)
+        top_panel.add(controls)
+        top_panel.add(help_row)
+        panel.add(top_panel, BorderLayout.NORTH)
 
         self.nuclei_area, scroll = self._create_text_area_panel()
         panel.add(scroll, BorderLayout.CENTER)
@@ -1065,6 +1221,8 @@ class BurpExtender(
     def _create_httpx_tab(self):
         """Create HTTPX probe tab"""
         panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
         controls = JPanel(FlowLayout(FlowLayout.LEFT))
         controls.add(JLabel("HTTPX Path:"))
@@ -1078,9 +1236,67 @@ class BurpExtender(
         default_httpx = next((p for p in httpx_paths if os.path.exists(p)), "httpx")
         self.httpx_path_field = JTextField(default_httpx, 25)
         controls.add(self.httpx_path_field)
+        self.httpx_custom_cmd_checkbox = JCheckBox("Use Custom Cmd", False)
+        controls.add(self.httpx_custom_cmd_checkbox)
+        controls.add(JLabel("Custom:"))
+        self.httpx_custom_cmd_field = JTextField("", 35)
+        self.httpx_custom_cmd_field.setToolTipText(
+            "Example: cat {urls_file} | {httpx_path} -status-code -nc"
+        )
+        controls.add(self.httpx_custom_cmd_field)
+        controls.add(JLabel("Preset:"))
+        self.httpx_preset_help_label = JLabel(
+            "Preset Help: Choose preset for common HTTP probe profiles."
+        )
+        httpx_presets = [
+            (
+                "Status+NoColor",
+                "cat {urls_file} | {httpx_path} -status-code -nc -silent",
+                "Basic status-code probe with clean output formatting.",
+            ),
+            (
+                "Status+Title",
+                "cat {urls_file} | {httpx_path} -status-code -title -nc -silent",
+                "Adds page titles alongside status codes for faster endpoint review.",
+            ),
+            (
+                "Tech+Server",
+                "cat {urls_file} | {httpx_path} -status-code -tech-detect -server -nc -silent",
+                "Includes technology and server fingerprinting with status codes.",
+            ),
+        ]
+        controls.add(
+            self._create_command_preset_combo(
+                self.httpx_custom_cmd_field,
+                self.httpx_custom_cmd_checkbox,
+                httpx_presets,
+                self.httpx_preset_help_label,
+            )
+        )
+        controls.add(
+            self._create_preset_help_button(
+                "HTTPX",
+                ["{httpx_path}", "{urls_file}"],
+                httpx_presets,
+                usage_notes=[
+                    "Use local ProjectDiscovery httpx binary, not Python httpx CLI.",
+                    "Default mode probes status codes for URLs exported from Recon.",
+                    "Use presets to add title, tech-detect, and server fingerprint output.",
+                ],
+                override_notes=[
+                    "Include {urls_file} if you want to probe Recon-derived URLs.",
+                    "If binary check fails, set HTTPX Path to /home/teycir/go/bin/httpx.",
+                ],
+            )
+        )
         controls.add(
             self._create_action_button(
                 "Probe Endpoints", Color(0, 150, 136), lambda e: self._run_httpx(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_httpx(e)
             )
         )
         controls.add(
@@ -1101,7 +1317,11 @@ class BurpExtender(
             )
         )
 
-        panel.add(controls, BorderLayout.NORTH)
+        help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        help_row.add(self.httpx_preset_help_label)
+        top_panel.add(controls)
+        top_panel.add(help_row)
+        panel.add(top_panel, BorderLayout.NORTH)
 
         self.httpx_area, scroll = self._create_text_area_panel()
         panel.add(scroll, BorderLayout.CENTER)
@@ -1110,6 +1330,8 @@ class BurpExtender(
     def _create_katana_tab(self):
         """Create Katana crawler tab"""
         panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
         controls = JPanel(FlowLayout(FlowLayout.LEFT))
         controls.add(JLabel("Katana Path:"))
@@ -1120,9 +1342,67 @@ class BurpExtender(
             default_katana if os.path.exists(default_katana) else "katana", 25
         )
         controls.add(self.katana_path_field)
+        self.katana_custom_cmd_checkbox = JCheckBox("Use Custom Cmd", False)
+        controls.add(self.katana_custom_cmd_checkbox)
+        controls.add(JLabel("Custom:"))
+        self.katana_custom_cmd_field = JTextField("", 35)
+        self.katana_custom_cmd_field.setToolTipText(
+            "Example: cat {urls_file} | {katana_path} -d 1 -jc -silent"
+        )
+        controls.add(self.katana_custom_cmd_field)
+        controls.add(JLabel("Preset:"))
+        self.katana_preset_help_label = JLabel(
+            "Preset Help: Choose depth profile based on crawl coverage needs."
+        )
+        katana_presets = [
+            (
+                "Depth1 JSON",
+                "cat {urls_file} | {katana_path} -d 1 -jc -silent",
+                "Fast shallow crawl (depth 1) with JSON-compatible output lines.",
+            ),
+            (
+                "Depth2 JSON",
+                "cat {urls_file} | {katana_path} -d 2 -jc -silent",
+                "Balanced crawl depth for wider endpoint discovery.",
+            ),
+            (
+                "Depth3 URL",
+                "cat {urls_file} | {katana_path} -d 3 -silent",
+                "Deeper crawl for maximum coverage; slower and noisier.",
+            ),
+        ]
+        controls.add(
+            self._create_command_preset_combo(
+                self.katana_custom_cmd_field,
+                self.katana_custom_cmd_checkbox,
+                katana_presets,
+                self.katana_preset_help_label,
+            )
+        )
+        controls.add(
+            self._create_preset_help_button(
+                "Katana",
+                ["{katana_path}", "{urls_file}"],
+                katana_presets,
+                usage_notes=[
+                    "Default mode crawls hosts from Recon with depth 1 and JS crawl.",
+                    "Use deeper presets for wider endpoint coverage with more runtime.",
+                    "Discovered URLs can be imported back into Recon.",
+                ],
+                override_notes=[
+                    "Include {urls_file} if you want to crawl Recon-derived hosts.",
+                    "If {urls_file} is not used, custom command fully defines scope.",
+                ],
+            )
+        )
         controls.add(
             self._create_action_button(
                 "Crawl Endpoints", Color(156, 39, 176), lambda e: self._run_katana(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_katana(e)
             )
         )
         controls.add(
@@ -1152,7 +1432,11 @@ class BurpExtender(
             )
         )
 
-        panel.add(controls, BorderLayout.NORTH)
+        help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        help_row.add(self.katana_preset_help_label)
+        top_panel.add(controls)
+        top_panel.add(help_row)
+        panel.add(top_panel, BorderLayout.NORTH)
 
         self.katana_area, scroll = self._create_text_area_panel()
         panel.add(scroll, BorderLayout.CENTER)
@@ -1186,6 +1470,11 @@ class BurpExtender(
         controls.add(
             self._create_action_button(
                 "Fuzz Directories", Color(255, 87, 34), lambda e: self._run_ffuf(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_ffuf(e)
             )
         )
         controls.add(
@@ -1226,11 +1515,18 @@ class BurpExtender(
     def _create_wayback_tab(self):
         """Create Wayback Machine discovery tab"""
         panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
         controls = JPanel(FlowLayout(FlowLayout.LEFT))
         controls.add(JLabel("Wayback:"))
         controls.add(
             self._create_action_button(
                 "Discover", Color(138, 43, 226), lambda e: self._run_wayback()
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_wayback(e)
             )
         )
         controls.add(
@@ -1263,12 +1559,70 @@ class BurpExtender(
         controls.add(JLabel(" | Limit:"))
         self.wayback_limit_field = JTextField("100", 3)
         controls.add(self.wayback_limit_field)
+        self.wayback_custom_cmd_checkbox = JCheckBox("Use Custom Cmd", False)
+        controls.add(self.wayback_custom_cmd_checkbox)
+        controls.add(JLabel("Custom:"))
+        self.wayback_custom_cmd_field = JTextField("", 45)
+        self.wayback_custom_cmd_field.setToolTipText(
+            "Example: cat {targets_file} | waybackurls"
+        )
+        controls.add(self.wayback_custom_cmd_field)
+        controls.add(JLabel("Preset:"))
+        self.wayback_preset_help_label = JLabel(
+            "Preset Help: Choose passive historical URL source command."
+        )
+        wayback_presets = [
+            (
+                "waybackurls",
+                "cat {targets_file} | waybackurls",
+                "Uses waybackurls to pull archived URLs from Wayback index.",
+            ),
+            (
+                "gau",
+                "cat {targets_file} | gau --subs",
+                "Uses gau to gather historical URLs including subdomains.",
+            ),
+            (
+                "gau+threads",
+                "cat {targets_file} | gau --subs --threads 5",
+                "Same as gau preset with thread tuning for faster collection.",
+            ),
+        ]
+        controls.add(
+            self._create_command_preset_combo(
+                self.wayback_custom_cmd_field,
+                self.wayback_custom_cmd_checkbox,
+                wayback_presets,
+                self.wayback_preset_help_label,
+            )
+        )
+        controls.add(
+            self._create_preset_help_button(
+                "Wayback",
+                ["{targets_file}", "{from_year}", "{to_year}", "{limit}"],
+                wayback_presets,
+                usage_notes=[
+                    "Default mode queries Wayback CDX API for hosts and API base paths.",
+                    "From/To/Limit fields control built-in query range and depth.",
+                    "Preset commands use passive sources: waybackurls or gau.",
+                ],
+                override_notes=[
+                    "Include {targets_file} if you want to use generated host/path list.",
+                    "Custom output lines can be plain URLs or 'original | archive | timestamp'.",
+                    "If custom command does not use {targets_file}, scope is fully custom.",
+                ],
+            )
+        )
         controls.add(
             self._create_action_button(
                 "Clear", Color(220, 53, 69), lambda e: self.wayback_area.setText("")
             )
         )
-        panel.add(controls, BorderLayout.NORTH)
+        help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        help_row.add(self.wayback_preset_help_label)
+        top_panel.add(controls)
+        top_panel.add(help_row)
+        panel.add(top_panel, BorderLayout.NORTH)
         self.wayback_area, scroll = self._create_text_area_panel()
         panel.add(scroll, BorderLayout.CENTER)
         self.wayback_discovered = []
@@ -2970,6 +3324,15 @@ def handleResponse(req, interesting):
                 "[!] No endpoints in Recon tab. Capture or import first\n"
             )
             return
+        if not self._validate_binary_signature(
+            "Nuclei",
+            nuclei_path,
+            self.nuclei_area,
+            required_tokens=["-list", "-jsonl", "-tags", "-etags"],
+            forbidden_tokens=[],
+            fix_hint="Set Nuclei Path to your local ProjectDiscovery nuclei binary (for example: /home/teycir/go/bin/nuclei).",
+        ):
+            return
 
         # Create temp file in /tmp instead of auto-saving to user directory
         import tempfile
@@ -3030,6 +3393,22 @@ def handleResponse(req, interesting):
                         "Error closing nuclei scan targets file: {}".format(str(e))
                     )
 
+        use_custom_nuclei, custom_nuclei_command = self._resolve_custom_command(
+            "Nuclei",
+            self.nuclei_custom_cmd_checkbox,
+            self.nuclei_custom_cmd_field,
+            {
+                "nuclei_path": nuclei_path,
+                "targets_file": targets_file,
+                "output_file": output_file,
+                "json_file": json_file,
+            },
+            self.nuclei_area,
+        )
+        if use_custom_nuclei and not custom_nuclei_command:
+            self._cleanup_temp_dir(temp_dir, "nuclei custom command validation")
+            return
+
         self.log_to_ui("[*] Nuclei discovery: {} base URLs + API paths".format(target_count))
         self.log_to_ui("[*] Targets: {}".format(targets_file))
         self.log_to_ui("[*] Output: {}".format(output_file))
@@ -3043,48 +3422,59 @@ def handleResponse(req, interesting):
         )
         self.nuclei_area.append("[*] Timeout: 5s, Retries: 1 (speed optimized)\n")
         self.nuclei_area.append("[*] Rate: 150 req/s, Concurrency: 25 (fast mode)\n")
-        self.nuclei_area.append("[*] Evasion: Random UA + X-Forwarded-For spoofing\n\n")
+        self.nuclei_area.append("[*] Evasion: Header-based spoofing (X-Forwarded-For)\n\n")
+        self._clear_tool_cancel("nuclei")
 
         def run_scan():
+            process = None
             try:
                 # Discovery-focused: find NEW endpoints
                 include_tags = "exposure,config,api,swagger,openapi,graphql,jwt,panel,debug,backup,logs,trace,files,paths"
                 exclude_tags = "dos,intrusive,headless,cve,fuzz"
 
-                cmd = [
-                    nuclei_path,
-                    "-list",
-                    targets_file,
-                    "-o",
-                    output_file,
-                    "-jsonl",
-                    json_file,
-                    "-tags",
-                    include_tags,
-                    "-etags",
-                    exclude_tags,
-                    "-no-color",
-                    "-timeout",
-                    "5",
-                    "-retries",
-                    "1",
-                    "-rate-limit",
-                    "150",
-                    "-c",
-                    "25",
-                    "-silent",
-                    "-disable-update-check",
-                    "-random-agent",
-                    "-header",
-                    "X-Forwarded-For: 127.0.0.1",
-                ]
+                if use_custom_nuclei and custom_nuclei_command:
+                    cmd = ["bash", "-c", custom_nuclei_command]
+                    display_cmd = custom_nuclei_command
+                    SwingUtilities.invokeLater(
+                        lambda: self.nuclei_area.append(
+                            "[*] Custom command override enabled\n"
+                        )
+                    )
+                else:
+                    cmd = [
+                        nuclei_path,
+                        "-list",
+                        targets_file,
+                        "-o",
+                        output_file,
+                        "-jsonl",
+                        json_file,
+                        "-tags",
+                        include_tags,
+                        "-etags",
+                        exclude_tags,
+                        "-no-color",
+                        "-timeout",
+                        "5",
+                        "-retries",
+                        "1",
+                        "-rate-limit",
+                        "150",
+                        "-c",
+                        "25",
+                        "-silent",
+                        "-disable-update-check",
+                        "-header",
+                        "X-Forwarded-For: 127.0.0.1",
+                    ]
+                    display_cmd = " ".join(cmd)
                 SwingUtilities.invokeLater(
                     lambda: self.nuclei_area.append(
-                        "[*] Command: {}\n\n".format(" ".join(cmd))
+                        "[*] Command: {}\n\n".format(display_cmd)
                     )
                 )
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[*] Nuclei cmd: {}".format(" ".join(cmd)))
+                    lambda: self.log_to_ui("[*] Nuclei cmd: {}".format(display_cmd))
                 )
                 SwingUtilities.invokeLater(
                     lambda: self.nuclei_area.append("[*] Discovery mode: Scanning base URLs to find NEW endpoints\n\n")
@@ -3097,6 +3487,7 @@ def handleResponse(req, interesting):
                     process = subprocess.Popen(  # nosec B603
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
                     )
+                    self._set_active_tool_process("nuclei", process)
                 except Exception as e:
                     SwingUtilities.invokeLater(
                         lambda: self.nuclei_area.append(
@@ -3116,9 +3507,14 @@ def handleResponse(req, interesting):
                 # Wait with minimal progress updates
                 start_wait = time_module.time()
                 last_update = start_wait
+                cancelled_by_user = False
                 while process.poll() is None:
                     current = time_module.time()
                     elapsed = int(current - start_wait)
+                    if self._is_tool_cancelled("nuclei"):
+                        cancelled_by_user = True
+                        self._terminate_process_cross_platform(process, "Nuclei")
+                        break
                     if elapsed > max_timeout:
                         try:
                             process.kill()
@@ -3143,6 +3539,36 @@ def handleResponse(req, interesting):
 
                 process.wait()
                 elapsed = int(time_module.time() - start_time)
+                stdout_data = process.stdout.read() if process.stdout else ""
+                stderr_data = process.stderr.read() if process.stderr else ""
+                if not isinstance(stdout_data, str):
+                    try:
+                        stdout_data = stdout_data.decode("utf-8", errors="ignore")
+                    except Exception as e:
+                        self._callbacks.printError(
+                            "Nuclei stdout decode error: {}".format(str(e))
+                        )
+                        stdout_data = str(stdout_data)
+                if not isinstance(stderr_data, str):
+                    try:
+                        stderr_data = stderr_data.decode("utf-8", errors="ignore")
+                    except Exception as e:
+                        self._callbacks.printError(
+                            "Nuclei stderr decode error: {}".format(str(e))
+                        )
+                        stderr_data = str(stderr_data)
+
+                if cancelled_by_user:
+                    SwingUtilities.invokeLater(
+                        lambda: self.nuclei_area.append(
+                            "\n[!] Nuclei run cancelled by user\n"
+                        )
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui("[!] Nuclei cancelled by user")
+                    )
+                    return
+
                 SwingUtilities.invokeLater(
                     lambda: self.log_to_ui(
                         "[*] Nuclei: {}s, exit code {}".format(
@@ -3151,34 +3577,111 @@ def handleResponse(req, interesting):
                     )
                 )
 
+                if process.returncode != 0:
+                    fail_lines = [
+                        "",
+                        "[!] Nuclei command failed",
+                        "[!] Exit code: {}".format(process.returncode),
+                        "[!] Command: {}".format(display_cmd),
+                    ]
+                    if stderr_data and stderr_data.strip():
+                        fail_lines.append("[!] STDERR:")
+                        fail_lines.append(stderr_data.strip()[:3000])
+                    elif stdout_data and stdout_data.strip():
+                        fail_lines.append("[!] Output:")
+                        fail_lines.append(stdout_data.strip()[:3000])
+                    combined_output = "{}\n{}".format(stdout_data or "", stderr_data or "")
+                    if "flag provided but not defined" in combined_output:
+                        fail_lines.append(
+                            "[*] Tip: your Nuclei version does not support one of these flags."
+                        )
+                        fail_lines.append(
+                            "[*] Try removing unsupported flags from Custom Cmd (for example: -random-agent)."
+                        )
+                    if use_custom_nuclei:
+                        fail_lines.append(
+                            "[*] Tip: ensure custom command writes JSON lines to {json_file}"
+                        )
+                    fail_text = "\n".join(fail_lines) + "\n"
+                    SwingUtilities.invokeLater(
+                        lambda t=fail_text: self.nuclei_area.append(t)
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui(
+                            "[!] Nuclei failed with exit code {}".format(
+                                process.returncode
+                            )
+                        )
+                    )
+                    return
+
+                if not os.path.exists(json_file):
+                    warn_lines = [
+                        "",
+                        "[!] Nuclei completed but expected results file was not created",
+                        "[!] Expected JSON file: {}".format(json_file),
+                        "[!] Command: {}".format(display_cmd),
+                    ]
+                    if stderr_data and stderr_data.strip():
+                        warn_lines.append("[!] STDERR:")
+                        warn_lines.append(stderr_data.strip()[:3000])
+                    if use_custom_nuclei:
+                        warn_lines.append(
+                            "[*] Tip: include {json_file} in Custom Cmd and make nuclei write json output there"
+                        )
+                    warn_text = "\n".join(warn_lines) + "\n"
+                    SwingUtilities.invokeLater(
+                        lambda t=warn_text: self.nuclei_area.append(t)
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui(
+                            "[!] Nuclei produced no parseable results file"
+                        )
+                    )
+                    return
+
                 # Parse JSON results and group by severity
                 findings_by_severity = {'critical': [], 'high': [], 'medium': [], 'low': [], 'info': []}
                 vuln_count = 0
 
-                if os.path.exists(json_file):
-                    try:
-                        with open(json_file, "r") as f:
-                            for line in f:
-                                if line.strip():
-                                    vuln_count += 1
-                                    try:
-                                        vuln = json.loads(line)
-                                        severity = vuln.get('info', {}).get('severity', 'info').lower()
-                                        template = vuln.get('template-id', 'unknown')
-                                        matched = vuln.get('matched-at', vuln.get('host', ''))
-                                        findings_by_severity.get(severity, findings_by_severity['info']).append(
-                                            "[{}] {}".format(template, matched)
-                                        )
-                                    except Exception as json_err:
-                                        self._callbacks.printError(
-                                            "Nuclei JSON parse error: {}".format(str(json_err))
-                                        )
-                    except Exception as e:
-                        self._callbacks.printError("Error reading JSON: {}".format(str(e)))
+                try:
+                    with open(json_file, "r") as f:
+                        for line in f:
+                            if line.strip():
+                                vuln_count += 1
+                                try:
+                                    vuln = json.loads(line)
+                                    severity = vuln.get('info', {}).get('severity', 'info').lower()
+                                    template = vuln.get('template-id', 'unknown')
+                                    matched = vuln.get('matched-at', vuln.get('host', ''))
+                                    findings_by_severity.get(severity, findings_by_severity['info']).append(
+                                        "[{}] {}".format(template, matched)
+                                    )
+                                except Exception as json_err:
+                                    self._callbacks.printError(
+                                        "Nuclei JSON parse error: {}".format(str(json_err))
+                                    )
+                except Exception as e:
+                    self._callbacks.printError("Error reading JSON: {}".format(str(e)))
+                    read_fail = (
+                        "\n[!] Failed to read Nuclei JSON results: {}\n".format(str(e))
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda t=read_fail: self.nuclei_area.append(t)
+                    )
+                    return
 
+                uses_recon_target_list = (not use_custom_nuclei) or (
+                    targets_file in display_cmd
+                )
+                target_summary = (
+                    str(target_count)
+                    if uses_recon_target_list
+                    else "Custom command (not using generated target list)"
+                )
                 result = ["\n" + "=" * 80, "NUCLEI SCAN RESULTS", "=" * 80, ""]
                 result.append("[*] Scan Time: {}s".format(elapsed))
-                result.append("[*] Targets: {}".format(target_count))
+                result.append("[*] Targets: {}".format(target_summary))
                 result.append("[*] Total Findings: {}".format(vuln_count))
                 result.append("")
 
@@ -3217,7 +3720,19 @@ def handleResponse(req, interesting):
                     )
                 else:
                     result.append("[+] No vulnerabilities found")
-                    result.append("[*] All {} targets scanned successfully".format(target_count))
+                    if uses_recon_target_list:
+                        result.append(
+                            "[*] All {} targets scanned successfully".format(
+                                target_count
+                            )
+                        )
+                    else:
+                        result.append(
+                            "[*] Custom command completed successfully"
+                        )
+                        result.append(
+                            "[*] Note: target count is defined by your custom command"
+                        )
                     SwingUtilities.invokeLater(
                         lambda: self.log_to_ui("[+] No vulnerabilities")
                     )
@@ -3235,11 +3750,9 @@ def handleResponse(req, interesting):
                     lambda: self.log_to_ui("[!] Error: {}".format(str(e)))
                 )
             finally:
-                try:
-                    import shutil
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                except Exception as e:
-                    self._callbacks.printError("Cleanup error: {}".format(str(e)))
+                self._clear_active_tool_process("nuclei", process)
+                self._clear_tool_cancel("nuclei")
+                self._cleanup_temp_dir(temp_dir, "nuclei scan")
 
         thread = threading.Thread(target=run_scan)
         thread.daemon = True
@@ -3518,6 +4031,7 @@ def handleResponse(req, interesting):
     def _extract_jwt(self, req_info):
         """Extract and decode JWT tokens from Authorization header, cookies, params, and body"""
         import base64
+        import binascii
 
         def decode_jwt(token):
             try:
@@ -3533,7 +4047,12 @@ def handleResponse(req, interesting):
                     "signature": parts[2],
                     "location": ""
                 }
-            except Exception:
+            except (ValueError, TypeError, binascii.Error):
+                return None
+            except Exception as e:
+                self._callbacks.printError(
+                    "JWT decode unexpected error: {}".format(str(e))
+                )
                 return None
 
         # Check Authorization header
@@ -5230,6 +5749,429 @@ Generate a complete Burp extension that:
         r"""Remove \n\t and other unwanted characters from URL"""
         return re.sub(r"[\n\t\r]", "", url.strip())
 
+    def _cleanup_temp_dir(self, temp_dir, context):
+        """Delete temporary directory and report cleanup failures explicitly."""
+        import os
+        import shutil
+
+        if not temp_dir:
+            return
+        if not os.path.exists(temp_dir):
+            return
+
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            self._callbacks.printError(
+                "Cleanup error ({}): {}".format(context, str(e))
+            )
+
+    def _resolve_custom_command(self, tool_name, checkbox, field, context, output_area):
+        """Resolve command template when custom command override is enabled."""
+        use_custom = checkbox.isSelected()
+        if not use_custom:
+            return False, None
+
+        template = field.getText().strip()
+        if not template:
+            output_area.setText(
+                "[!] {} custom command enabled but empty\n".format(tool_name)
+            )
+            output_area.append("[*] Uncheck custom mode or provide a command\n")
+            return True, None
+
+        try:
+            rendered_command = template.format(**context).strip()
+        except KeyError as e:
+            placeholder = str(e).strip("'\"")
+            output_area.setText(
+                "[!] {} custom command has unknown placeholder: {{{}}}\n".format(
+                    tool_name, placeholder
+                )
+            )
+            output_area.append(
+                "[*] Supported placeholders: {}\n".format(
+                    ", ".join(sorted(context.keys()))
+                )
+            )
+            return True, None
+        except Exception as e:
+            output_area.setText(
+                "[!] {} custom command template error: {}\n".format(tool_name, str(e))
+            )
+            return True, None
+
+        if not rendered_command:
+            output_area.setText(
+                "[!] {} custom command became empty after formatting\n".format(tool_name)
+            )
+            return True, None
+
+        try:
+            shlex.split(rendered_command)
+        except Exception as e:
+            output_area.setText(
+                "[!] {} custom command is invalid: {}\n".format(tool_name, str(e))
+            )
+            return True, None
+
+        return True, rendered_command
+
+    def _decode_process_data(self, data, context):
+        """Decode subprocess output safely for Jython/Python compatibility."""
+        if isinstance(data, str):
+            return data
+        try:
+            return data.decode("utf-8", errors="ignore")
+        except Exception as e:
+            self._callbacks.printError("{} decode error: {}".format(context, str(e)))
+            return str(data)
+
+    def _probe_binary_help(self, binary_path):
+        """Run lightweight binary help probes and cache result per path."""
+        cache_key = "help::{}".format(binary_path)
+        if cache_key in self._tool_help_cache:
+            return self._tool_help_cache[cache_key]
+
+        import subprocess
+        import time as time_module
+
+        best_output = ""
+        last_error = None
+
+        for help_flag in ["-h", "--help"]:
+            cmd = [binary_path, help_flag]
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    shell=False,
+                )
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+            timeout_seconds = 8
+            started = time_module.time()
+            while process.poll() is None:
+                if time_module.time() - started > timeout_seconds:
+                    try:
+                        process.kill()
+                        process.wait()
+                    except Exception as kill_err:
+                        self._callbacks.printError(
+                            "Help probe kill error ({}): {}".format(
+                                binary_path, str(kill_err)
+                            )
+                        )
+                    last_error = "timed out after {}s".format(timeout_seconds)
+                    break
+                time_module.sleep(0.1)
+
+            stdout_data = process.stdout.read() if process.stdout else ""
+            stderr_data = process.stderr.read() if process.stderr else ""
+            stdout_text = self._decode_process_data(
+                stdout_data, "Help probe stdout ({})".format(binary_path)
+            )
+            stderr_text = self._decode_process_data(
+                stderr_data, "Help probe stderr ({})".format(binary_path)
+            )
+            combined = "{}\n{}".format(stdout_text or "", stderr_text or "").strip()
+            if combined and len(combined) > len(best_output):
+                best_output = combined
+
+            help_markers = combined.lower()
+            has_help_text = (
+                "usage" in help_markers
+                or "flags:" in help_markers
+                or "options" in help_markers
+            )
+            if process.returncode == 0 or has_help_text:
+                result = (True, best_output or combined, None)
+                self._tool_help_cache[cache_key] = result
+                return result
+
+            last_error = "exit code {}".format(process.returncode)
+
+        result = (False, best_output, last_error or "unable to execute command")
+        self._tool_help_cache[cache_key] = result
+        return result
+
+    def _validate_binary_signature(
+        self,
+        tool_name,
+        binary_path,
+        output_area,
+        required_tokens=None,
+        forbidden_tokens=None,
+        fix_hint=None,
+    ):
+        """Validate local external binary signature/options before running scans."""
+        required_tokens = required_tokens or []
+        forbidden_tokens = forbidden_tokens or []
+
+        probe_ok, help_text, probe_error = self._probe_binary_help(binary_path)
+        if not probe_ok:
+            output_area.setText(
+                "[!] {} binary check failed: {}\n".format(tool_name, binary_path)
+            )
+            if probe_error:
+                output_area.append("[!] {}\n".format(probe_error))
+            if help_text:
+                first_line = help_text.splitlines()[0] if help_text.splitlines() else ""
+                if first_line:
+                    output_area.append("[!] Output: {}\n".format(first_line[:200]))
+            if fix_hint:
+                output_area.append("[*] {}\n".format(fix_hint))
+            return False
+
+        help_text_lower = (help_text or "").lower()
+        missing = [
+            token for token in required_tokens if token.lower() not in help_text_lower
+        ]
+        forbidden = [
+            token for token in forbidden_tokens if token.lower() in help_text_lower
+        ]
+
+        if missing or forbidden:
+            output_area.setText(
+                "[!] {} binary appears incompatible: {}\n".format(
+                    tool_name, binary_path
+                )
+            )
+            if forbidden:
+                output_area.append(
+                    "[!] Detected incompatible signature: {}\n".format(
+                        ", ".join(forbidden)
+                    )
+                )
+            if missing:
+                output_area.append(
+                    "[!] Missing expected options: {}\n".format(", ".join(missing))
+                )
+            if fix_hint:
+                output_area.append("[*] {}\n".format(fix_hint))
+            return False
+
+        return True
+
+    def _extract_command_executables(self, command_text):
+        """Extract executable tokens from simple shell command chains."""
+        executables = []
+        try:
+            tokens = shlex.split(command_text)
+        except Exception as e:
+            self._callbacks.printError(
+                "Command executable parse error: {}".format(str(e))
+            )
+            return executables
+
+        separators = set(["|", "||", "&&", ";"])
+        expect_exec = True
+        for token in tokens:
+            if token in separators:
+                expect_exec = True
+                continue
+            if not expect_exec:
+                continue
+            if "=" in token and "/" not in token:
+                # Skip basic env assignments like KEY=value
+                parts = token.split("=", 1)
+                if len(parts) == 2 and parts[0]:
+                    continue
+            executables.append(token)
+            expect_exec = False
+
+        return executables
+
+    def _validate_wayback_custom_command_tools(self, command_text, output_area):
+        """Validate wayback custom command tools (gau/waybackurls) when present."""
+        import os
+
+        executables = self._extract_command_executables(command_text)
+        checks = {
+            "waybackurls": {
+                "required": ["-dates", "-no-subs"],
+                "forbidden": [],
+                "hint": "Install waybackurls and ensure it is in PATH, or use full path in Custom Cmd.",
+            },
+            "gau": {
+                "required": ["--subs", "--threads"],
+                "forbidden": [],
+                "hint": "Install gau and ensure it is in PATH, or use full path in Custom Cmd.",
+            },
+        }
+
+        for executable in executables:
+            name = os.path.basename(executable)
+            if name not in checks:
+                continue
+            cfg = checks[name]
+            if not self._validate_binary_signature(
+                name,
+                executable,
+                output_area,
+                required_tokens=cfg["required"],
+                forbidden_tokens=cfg["forbidden"],
+                fix_hint=cfg["hint"],
+            ):
+                return False
+
+        return True
+
+    def _clear_tool_cancel(self, tool_key):
+        """Clear cancellation event for a tool run."""
+        event = self._tool_cancel_flags.get(tool_key)
+        if event:
+            event.clear()
+
+    def _set_tool_cancel(self, tool_key):
+        """Set cancellation event for a tool run."""
+        event = self._tool_cancel_flags.get(tool_key)
+        if event:
+            event.set()
+
+    def _is_tool_cancelled(self, tool_key):
+        """Check whether user requested stop for a tool."""
+        event = self._tool_cancel_flags.get(tool_key)
+        return event.is_set() if event else False
+
+    def _set_active_tool_process(self, tool_key, process_obj):
+        """Track currently running subprocess for a tool."""
+        with self._tool_process_lock:
+            self._active_tool_processes[tool_key] = process_obj
+
+    def _get_active_tool_process(self, tool_key):
+        """Get currently running subprocess for a tool."""
+        with self._tool_process_lock:
+            return self._active_tool_processes.get(tool_key)
+
+    def _clear_active_tool_process(self, tool_key, process_obj=None):
+        """Clear tracked subprocess for a tool, optionally by identity."""
+        with self._tool_process_lock:
+            current = self._active_tool_processes.get(tool_key)
+            if current is None:
+                return
+            if process_obj is None or current is process_obj:
+                self._active_tool_processes.pop(tool_key, None)
+
+    def _terminate_process_cross_platform(self, process_obj, tool_name):
+        """Terminate process tree across Windows/macOS/Linux best-effort."""
+        import os
+        import subprocess
+        import time as time_module
+
+        if not process_obj:
+            return True, "No running process"
+
+        already_done = process_obj.poll() is not None
+        if already_done:
+            return True, "Process already finished"
+
+        pid = getattr(process_obj, "pid", None)
+        errors = []
+
+        try:
+            if pid:
+                if os.name == "nt":
+                    kill_cmd = ["taskkill", "/PID", str(pid), "/T", "/F"]
+                    killer = subprocess.Popen(
+                        kill_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        shell=False,
+                    )
+                    killer.wait()
+                else:
+                    # Kill children first, then parent (best-effort).
+                    for kill_cmd in [
+                        ["pkill", "-TERM", "-P", str(pid)],
+                        ["kill", "-TERM", str(pid)],
+                    ]:
+                        killer = subprocess.Popen(
+                            kill_cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            shell=False,
+                        )
+                        killer.wait()
+        except Exception as e:
+            errors.append("OS-level stop error: {}".format(str(e)))
+
+        try:
+            process_obj.terminate()
+        except Exception as e:
+            errors.append("terminate() error: {}".format(str(e)))
+
+        wait_start = time_module.time()
+        while process_obj.poll() is None and (time_module.time() - wait_start) < 3:
+            time_module.sleep(0.1)
+
+        if process_obj.poll() is None:
+            try:
+                process_obj.kill()
+            except Exception as e:
+                errors.append("kill() error: {}".format(str(e)))
+
+        stopped = process_obj.poll() is not None
+        if stopped:
+            return True, "Stopped {}".format(tool_name)
+
+        if errors:
+            return False, " | ".join(errors)
+        return False, "Process still running"
+
+    def _stop_tool_run(self, tool_key, tool_name, output_area):
+        """Stop active external tool run with cross-platform kill behavior."""
+        self._set_tool_cancel(tool_key)
+
+        process_obj = self._get_active_tool_process(tool_key)
+        if not process_obj:
+            output_area.append(
+                "[*] Stop requested for {} (no active subprocess detected)\n".format(
+                    tool_name
+                )
+            )
+            self.log_to_ui("[*] Stop requested for {}".format(tool_name))
+            return
+
+        stopped, message = self._terminate_process_cross_platform(process_obj, tool_name)
+        self._clear_active_tool_process(tool_key, process_obj)
+        if stopped:
+            output_area.append("[!] {} stop requested by user\n".format(tool_name))
+            self.log_to_ui("[!] {} stopped by user".format(tool_name))
+        else:
+            output_area.append("[!] Failed to stop {}: {}\n".format(tool_name, message))
+            self.log_to_ui("[!] {} stop failed: {}".format(tool_name, message))
+
+    def _stop_nuclei(self, event):
+        self._stop_tool_run("nuclei", "Nuclei", self.nuclei_area)
+
+    def _stop_httpx(self, event):
+        self._stop_tool_run("httpx", "HTTPX", self.httpx_area)
+
+    def _stop_katana(self, event):
+        self._stop_tool_run("katana", "Katana", self.katana_area)
+
+    def _stop_ffuf(self, event):
+        self._stop_tool_run("ffuf", "FFUF", self.ffuf_area)
+
+    def _stop_wayback(self, event):
+        self._stop_tool_run("wayback", "Wayback", self.wayback_area)
+
+    def _normalize_wayback_entry(self, line):
+        """Normalize wayback line into: original | archive | timestamp."""
+        cleaned = self._clean_url(line)
+        if not cleaned:
+            return None
+
+        parts = [p.strip() for p in cleaned.split(" | ")]
+        if len(parts) >= 3:
+            return "{} | {} | {}".format(parts[0], parts[1], parts[2])
+
+        return "{} | {} | custom".format(cleaned, cleaned)
+
     def _run_httpx(self, event):
         """Run HTTPX probe on endpoints from Recon tab"""
         import os
@@ -5246,6 +6188,18 @@ Generate a complete Burp extension that:
             self.httpx_area.setText(
                 "[!] No endpoints in Recon tab. Capture or import first\n"
             )
+            return
+        if not self._validate_binary_signature(
+            "HTTPX",
+            httpx_path,
+            self.httpx_area,
+            required_tokens=["-status-code", "-tech-detect", "-title"],
+            forbidden_tokens=[
+                "a next generation http client",
+                "usage: httpx <url> [options]",
+            ],
+            fix_hint="Use ProjectDiscovery httpx (for example: /home/teycir/go/bin/httpx), not the Python httpx client CLI.",
+        ):
             return
 
         # Use temp directory instead of auto-saving
@@ -5266,20 +6220,43 @@ Generate a complete Burp extension that:
             if writer:
                 writer.close()
 
+        use_custom_httpx, custom_httpx_command = self._resolve_custom_command(
+            "HTTPX",
+            self.httpx_custom_cmd_checkbox,
+            self.httpx_custom_cmd_field,
+            {"httpx_path": httpx_path, "urls_file": urls_file},
+            self.httpx_area,
+        )
+        if use_custom_httpx and not custom_httpx_command:
+            self._cleanup_temp_dir(temp_dir, "httpx custom command validation")
+            return
+
         self.httpx_area.setText("[*] Initializing HTTPX...\n")
         self.httpx_area.append("[*] Targets: {} URLs\n".format(target_count))
         self.log_to_ui("[*] HTTPX: Starting scan on {} URLs".format(target_count))
+        self._clear_tool_cancel("httpx")
 
         def run_scan():
+            process = None
             try:
-                cmd = [
-                    "bash",
-                    "-c",
-                    "cat {} | {} -status-code -nc".format(urls_file, httpx_path),
-                ]
+                if use_custom_httpx and custom_httpx_command:
+                    cmd = ["bash", "-c", custom_httpx_command]
+                    display_cmd = custom_httpx_command
+                    SwingUtilities.invokeLater(
+                        lambda: self.httpx_area.append(
+                            "[*] Custom command override enabled\n"
+                        )
+                    )
+                else:
+                    cmd = [
+                        "bash",
+                        "-c",
+                        "cat {} | {} -status-code -nc".format(urls_file, httpx_path),
+                    ]
+                    display_cmd = " ".join(cmd)
                 SwingUtilities.invokeLater(
                     lambda: self.httpx_area.append(
-                        "[*] Command: {}\n\n".format(" ".join(cmd))
+                        "[*] Command: {}\n\n".format(display_cmd)
                     )
                 )
 
@@ -5287,15 +6264,21 @@ Generate a complete Burp extension that:
                 process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1, shell=False
                 )
+                self._set_active_tool_process("httpx", process)
 
                 # Collect results grouped by status
                 results_by_status = {'2xx': [], '3xx': [], '4xx': [], '5xx': []}
                 last_update = start_time
+                cancelled_by_user = False
 
                 while True:
                     line = process.stdout.readline()
                     if not line:
                         if process.poll() is not None:
+                            break
+                        if self._is_tool_cancelled("httpx"):
+                            cancelled_by_user = True
+                            self._terminate_process_cross_platform(process, "HTTPX")
                             break
                         current_time = time_module.time()
                         if current_time - last_update > 2:
@@ -5328,6 +6311,16 @@ Generate a complete Burp extension that:
 
                 process.wait()
                 elapsed = int(time_module.time() - start_time)
+                if cancelled_by_user:
+                    SwingUtilities.invokeLater(
+                        lambda: self.httpx_area.append(
+                            "\n[!] HTTPX run cancelled by user\n"
+                        )
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui("[!] HTTPX cancelled by user")
+                    )
+                    return
                 total_count = sum(len(v) for v in results_by_status.values())
 
                 # Build grouped output
@@ -5397,11 +6390,9 @@ Generate a complete Burp extension that:
                     lambda: self.log_to_ui("[!] HTTPX error: {}".format(str(e)))
                 )
             finally:
-                try:
-                    import shutil
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                except Exception as e:
-                    self._callbacks.printError("Cleanup error: {}".format(str(e)))
+                self._clear_active_tool_process("httpx", process)
+                self._clear_tool_cancel("httpx")
+                self._cleanup_temp_dir(temp_dir, "httpx scan")
 
         thread = threading.Thread(target=run_scan)
         thread.daemon = True
@@ -5547,6 +6538,15 @@ Generate a complete Burp extension that:
                 "[!] No endpoints in Recon tab. Capture or import first\n"
             )
             return
+        if not self._validate_binary_signature(
+            "Katana",
+            katana_path,
+            self.katana_area,
+            required_tokens=["-depth", "-js-crawl", "-silent"],
+            forbidden_tokens=[],
+            fix_hint="Set Katana Path to your local ProjectDiscovery katana binary (for example: /home/teycir/go/bin/katana).",
+        ):
+            return
 
         # Use temp directory instead of auto-saving
         temp_dir = tempfile.mkdtemp(prefix="burp_katana_")
@@ -5570,20 +6570,48 @@ Generate a complete Burp extension that:
             if writer:
                 writer.close()
 
+        use_custom_katana, custom_katana_command = self._resolve_custom_command(
+            "Katana",
+            self.katana_custom_cmd_checkbox,
+            self.katana_custom_cmd_field,
+            {"katana_path": katana_path, "urls_file": urls_file},
+            self.katana_area,
+        )
+        if use_custom_katana and not custom_katana_command:
+            self._cleanup_temp_dir(temp_dir, "katana custom command validation")
+            return
+        uses_recon_host_list = (not use_custom_katana) or (urls_file in custom_katana_command)
+
         self.katana_area.setText("[*] Initializing Katana...\n")
         self.katana_area.append("[*] Targets: {} hosts\n".format(len(hosts)))
+        if use_custom_katana and not uses_recon_host_list:
+            self.katana_area.append(
+                "[*] Note: custom command defines target scope (generated host list not referenced)\n"
+            )
         self.log_to_ui("[*] Katana: Starting crawl on {} hosts".format(len(hosts)))
+        self._clear_tool_cancel("katana")
 
         def run_scan():
+            process = None
             try:
-                cmd = [
-                    "bash",
-                    "-c",
-                    "cat {} | {} -d 1 -jc -silent".format(urls_file, katana_path),
-                ]
+                if use_custom_katana and custom_katana_command:
+                    cmd = ["bash", "-c", custom_katana_command]
+                    display_cmd = custom_katana_command
+                    SwingUtilities.invokeLater(
+                        lambda: self.katana_area.append(
+                            "[*] Custom command override enabled\n"
+                        )
+                    )
+                else:
+                    cmd = [
+                        "bash",
+                        "-c",
+                        "cat {} | {} -d 1 -jc -silent".format(urls_file, katana_path),
+                    ]
+                    display_cmd = " ".join(cmd)
                 SwingUtilities.invokeLater(
                     lambda: self.katana_area.append(
-                        "[*] Command: {}\n\n".format(" ".join(cmd))
+                        "[*] Command: {}\n\n".format(display_cmd)
                     )
                 )
 
@@ -5591,6 +6619,7 @@ Generate a complete Burp extension that:
                 process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1
                 )
+                self._set_active_tool_process("katana", process)
 
                 line_count = 0
                 last_update = start_time
@@ -5599,6 +6628,9 @@ Generate a complete Burp extension that:
                     line = process.stdout.readline()
                     if not line:
                         if process.poll() is not None:
+                            break
+                        if self._is_tool_cancelled("katana"):
+                            self._terminate_process_cross_platform(process, "Katana")
                             break
                         current_time = time_module.time()
                         if current_time - last_update > 2:
@@ -5621,10 +6653,56 @@ Generate a complete Burp extension that:
 
                 process.wait()
                 elapsed = int(time_module.time() - start_time)
+                if self._is_tool_cancelled("katana"):
+                    SwingUtilities.invokeLater(
+                        lambda: self.katana_area.append(
+                            "\n[!] Katana run cancelled by user\n"
+                        )
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui("[!] Katana cancelled by user")
+                    )
+                    return
+                stderr_data = process.stderr.read() if process.stderr else ""
+                if not isinstance(stderr_data, str):
+                    try:
+                        stderr_data = stderr_data.decode("utf-8", errors="ignore")
+                    except Exception as e:
+                        self._callbacks.printError(
+                            "Katana stderr decode error: {}".format(str(e))
+                        )
+                        stderr_data = str(stderr_data)
 
                 # Store results in memory only - don't auto-save
                 with self.katana_lock:
                     self.katana_discovered = results
+
+                if process.returncode != 0:
+                    fail_lines = [
+                        "",
+                        "[!] Katana command failed",
+                        "[!] Exit code: {}".format(process.returncode),
+                        "[!] Command: {}".format(display_cmd),
+                    ]
+                    if results:
+                        fail_lines.append(
+                            "[!] Partial output captured: {} URLs".format(len(results))
+                        )
+                    if stderr_data and stderr_data.strip():
+                        fail_lines.append("[!] STDERR:")
+                        fail_lines.append(stderr_data.strip()[:3000])
+                    fail_text = "\n".join(fail_lines) + "\n"
+                    SwingUtilities.invokeLater(
+                        lambda t=fail_text: self.katana_area.append(t)
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui(
+                            "[!] Katana failed with exit code {}".format(
+                                process.returncode
+                            )
+                        )
+                    )
+                    return
 
                 # Categorize results
                 api_endpoints = []
@@ -5660,6 +6738,10 @@ Generate a complete Burp extension that:
                 summary += "KATANA CRAWL RESULTS\n"
                 summary += "=" * 80 + "\n"
                 summary += "[*] Crawl Time: {}s\n".format(elapsed)
+                if uses_recon_host_list:
+                    summary += "[*] Targets: {} hosts\n".format(len(hosts))
+                else:
+                    summary += "[*] Targets: Custom command (scope defined by command)\n"
                 summary += "[*] Total Discovered: {} URLs\n".format(len(results))
                 summary += "\n"
 
@@ -5715,11 +6797,9 @@ Generate a complete Burp extension that:
                     lambda: self.log_to_ui("[!] Katana error: {}".format(str(e)))
                 )
             finally:
-                try:
-                    import shutil
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                except Exception as e:
-                    self._callbacks.printError("Cleanup error: {}".format(str(e)))
+                self._clear_active_tool_process("katana", process)
+                self._clear_tool_cancel("katana")
+                self._cleanup_temp_dir(temp_dir, "katana scan")
 
         thread = threading.Thread(target=run_scan)
         thread.daemon = True
@@ -5795,6 +6875,15 @@ Generate a complete Burp extension that:
         if not ffuf_path:
             self.ffuf_area.setText("[!] Configure FFUF path first\n")
             return
+        if not self._validate_binary_signature(
+            "FFUF",
+            ffuf_path,
+            self.ffuf_area,
+            required_tokens=["fuzz faster u fool", "-json", "-noninteractive"],
+            forbidden_tokens=[],
+            fix_hint="Set FFUF Path to your local ffuf binary (for example: /home/teycir/go/bin/ffuf).",
+        ):
+            return
 
         if not wordlist or not os.path.exists(wordlist):
             self.ffuf_area.setText("[!] Wordlist not found: {}\n".format(wordlist))
@@ -5855,11 +6944,14 @@ Generate a complete Burp extension that:
             "[*] Filtering: Skipping static paths (js, css, images, fonts)\n\n"
         )
         self.log_to_ui("[*] FFUF: {} targets from Recon".format(len(targets)))
+        self._clear_tool_cancel("ffuf")
 
         def run_scan():
+            process = None
             try:
                 all_matches = []
                 total_start = time_module.time()
+                cancelled_by_user = False
 
                 # Batch UI update - accumulate messages
                 progress_msg = "\n[*] Scanning {} targets...\n\n".format(len(targets))
@@ -5869,6 +6961,9 @@ Generate a complete Burp extension that:
 
                 idx = 0
                 for target in targets:
+                    if self._is_tool_cancelled("ffuf"):
+                        cancelled_by_user = True
+                        break
                     idx += 1
                     # Only update UI every 5 targets to reduce overhead
                     if idx % 5 == 0 or idx == len(targets):
@@ -5904,6 +6999,7 @@ Generate a complete Burp extension that:
                         stderr=subprocess.PIPE,
                         bufsize=1,
                     )
+                    self._set_active_tool_process("ffuf", process)
 
                     # Thread-safe output gobbler
                     stdout_lines = []
@@ -5931,13 +7027,19 @@ Generate a complete Burp extension that:
                     # Pure timeout loop
                     start_wait = time_module.time()
                     while process.poll() is None:
+                        if self._is_tool_cancelled("ffuf"):
+                            cancelled_by_user = True
+                            self._terminate_process_cross_platform(process, "FFUF")
+                            break
                         if time_module.time() - start_wait > timeout:
                             timed_out = True
                             try:
                                 process.kill()
                                 process.wait()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                self._callbacks.printError(
+                                    "FFUF process kill failed: {}".format(str(e))
+                                )
                             SwingUtilities.invokeLater(
                                 lambda: self.ffuf_area.append(
                                     "[!] Timeout after {}s\n".format(timeout)
@@ -5948,12 +7050,17 @@ Generate a complete Burp extension that:
 
                     stdout_thread.join(timeout=2)
                     process.wait()
+                    self._clear_active_tool_process("ffuf", process)
+
+                    if cancelled_by_user:
+                        break
 
                     # Parse JSON output
                     if not timed_out:
                         with output_lock:
                             lines_snapshot = list(stdout_lines)
 
+                        invalid_json_lines = 0
                         for line in lines_snapshot:
                             if not isinstance(line, str):
                                 try:
@@ -5982,7 +7089,21 @@ Generate a complete Burp extension that:
                                         )
                                     )
                             except (ValueError, TypeError):
-                                pass
+                                invalid_json_lines += 1
+
+                        if invalid_json_lines > 0:
+                            SwingUtilities.invokeLater(
+                                lambda c=invalid_json_lines: self.ffuf_area.append(
+                                    "[!] FFUF parse warnings: {} invalid JSON lines\n".format(
+                                        c
+                                    )
+                                )
+                            )
+                            self._callbacks.printError(
+                                "FFUF parse warnings: {} invalid JSON lines".format(
+                                    invalid_json_lines
+                                )
+                            )
 
                     elapsed = time_module.time() - start
                     all_matches.extend(target_matches)
@@ -5992,6 +7113,19 @@ Generate a complete Burp extension that:
                             "[+] Complete: {:.1f}s | {} matches\n\n".format(e, m)
                         )
                     )
+
+                if cancelled_by_user:
+                    with self.ffuf_lock:
+                        self.ffuf_results = all_matches
+                    SwingUtilities.invokeLater(
+                        lambda: self.ffuf_area.append(
+                            "\n[!] FFUF run cancelled by user\n"
+                        )
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui("[!] FFUF cancelled by user")
+                    )
+                    return
 
                 # Store results
                 with self.ffuf_lock:
@@ -6059,6 +7193,9 @@ Generate a complete Burp extension that:
                 SwingUtilities.invokeLater(
                     lambda: self.log_to_ui("[!] FFUF error: {}".format(str(e)))
                 )
+            finally:
+                self._clear_active_tool_process("ffuf", process)
+                self._clear_tool_cancel("ffuf")
 
         thread = threading.Thread(target=run_scan)
         thread.daemon = True
@@ -6066,7 +7203,10 @@ Generate a complete Burp extension that:
 
     def _run_wayback(self):
         """Discover historical endpoints using Wayback Machine API"""
+        import os
+        import subprocess
         import threading
+        import tempfile
         import time as time_module
 
         if not self.api_data:
@@ -6138,17 +7278,78 @@ Generate a complete Burp extension that:
             self.wayback_area.setText("[!] No hosts found in Recon tab\n")
             return
 
+        wayback_temp_dir = None
+        wayback_targets_file = None
+        use_custom_wayback = False
+        custom_wayback_command = None
+
+        if self.wayback_custom_cmd_checkbox.isSelected():
+            wayback_temp_dir = tempfile.mkdtemp(prefix="burp_wayback_")
+            wayback_targets_file = os.path.join(wayback_temp_dir, "targets.txt")
+            writer = None
+            try:
+                writer = FileWriter(wayback_targets_file)
+                for host, path in queries:
+                    target = host + path if path else host
+                    writer.write(target + "\n")
+            finally:
+                if writer:
+                    try:
+                        writer.close()
+                    except Exception as e:
+                        self._callbacks.printError(
+                            "Wayback target file close error: {}".format(str(e))
+                        )
+
+            use_custom_wayback, custom_wayback_command = self._resolve_custom_command(
+                "Wayback",
+                self.wayback_custom_cmd_checkbox,
+                self.wayback_custom_cmd_field,
+                {
+                    "targets_file": wayback_targets_file,
+                    "from_year": from_year,
+                    "to_year": to_year,
+                    "limit": limit,
+                },
+                self.wayback_area,
+            )
+            if use_custom_wayback and not custom_wayback_command:
+                self._cleanup_temp_dir(
+                    wayback_temp_dir, "wayback custom command validation"
+                )
+                return
+            if use_custom_wayback and custom_wayback_command:
+                if not self._validate_wayback_custom_command_tools(
+                    custom_wayback_command, self.wayback_area
+                ):
+                    self._cleanup_temp_dir(
+                        wayback_temp_dir, "wayback custom command tool validation"
+                    )
+                    return
+        uses_recon_query_list = (not use_custom_wayback) or (
+            wayback_targets_file and wayback_targets_file in custom_wayback_command
+        )
+
         self.wayback_area.setText("[*] Querying Wayback Machine...\n")
         self.wayback_area.append(
             "[*] Targets: {} hosts + {} paths\n".format(len(hosts), len(paths))
         )
         self.wayback_area.append("[*] Date Range: {}-{}\n".format(from_year, to_year))
         self.wayback_area.append("[*] Limit: {} per target\n\n".format(limit))
+        if use_custom_wayback and custom_wayback_command:
+            self.wayback_area.append("[*] Mode: Custom command override\n")
+            self.wayback_area.append("[*] Command: {}\n\n".format(custom_wayback_command))
+            if not uses_recon_query_list:
+                self.wayback_area.append(
+                    "[*] Note: custom command defines query scope (generated target list not referenced)\n\n"
+                )
         self.log_to_ui(
             "[*] Wayback: {} queries ({}-{})".format(len(queries), from_year, to_year)
         )
+        self._clear_tool_cancel("wayback")
 
         def run_discovery():
+            process = None
             try:
                 import json
 
@@ -6159,146 +7360,268 @@ Generate a complete Burp extension that:
                 start_time = time_module.time()
                 error_count = 0
                 backoff_time = 3.0  # Start with 3s delay
+                custom_warning_lines = []
+                cancelled_by_user = False
 
-                idx = 0
-                for host, path in queries:
-                    idx += 1
-                    target = host + path if path else host
+                if use_custom_wayback and custom_wayback_command:
+                    cmd = ["bash", "-c", custom_wayback_command]
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        bufsize=1,
+                        shell=False,
+                    )
+                    self._set_active_tool_process("wayback", process)
                     SwingUtilities.invokeLater(
-                        lambda t=target, i=idx, total=len(queries): self.wayback_area.append(
-                            "[*] {}/{}: {}\n".format(i, total, t)
+                        lambda: self.log_to_ui(
+                            "[*] Wayback custom cmd: {}".format(custom_wayback_command)
                         )
                     )
 
-                    # Retry logic with exponential backoff
-                    max_retries = 2
-                    retry_delay = 2
-                    success = False
-                    data = None
-
-                    try:
-                        for attempt in range(max_retries + 1):
-                            try:
-                                # Query Wayback CDX API with date range
-                                match_type = "prefix" if path else "domain"
-                                api_url = "http://web.archive.org/cdx/search/cdx?url={}&matchType={}&output=json&filter=statuscode:200&collapse=urlkey&from={}&to={}&limit={}".format(
-                                    target, match_type, from_year, to_year, limit
+                    while True:
+                        line = process.stdout.readline()
+                        if not line:
+                            if process.poll() is not None:
+                                break
+                            if self._is_tool_cancelled("wayback"):
+                                cancelled_by_user = True
+                                self._terminate_process_cross_platform(
+                                    process, "Wayback"
                                 )
+                                break
+                            time_module.sleep(0.1)
+                            continue
 
-                                # Create request with proper headers to bypass robots.txt
-                                request = urllib2.Request(api_url)
-                                request.add_header('User-Agent', 'Mozilla/5.0 (compatible; archive.org_bot +http://archive.org/details/archive.org_bot)')
-                                request.add_header('Accept', 'application/json')
-
-                                response = None
-                                try:
-                                    response = urllib2.urlopen(request, timeout=20)
-                                    data = json.loads(response.read())
-                                    success = True
-                                except urllib2.HTTPError as http_err:
-                                    if http_err.code == 403:
-                                        raise Exception(  # noqa: B904
-                                            "HTTP Error 403: FORBIDDEN (blocked by robots.txt)"
-                                        )
-                                    elif http_err.code == 429:
-                                        if attempt < max_retries:
-                                            time_module.sleep(retry_delay * (2 ** attempt))
-                                            continue
-                                        raise Exception(  # noqa: B904
-                                            "HTTP Error 429: Too Many Requests"
-                                        )
-                                    else:
-                                        raise Exception(  # noqa: B904
-                                            "HTTP Error {}: {}".format(
-                                                http_err.code, http_err.reason
-                                            )
-                                        )
-                                except urllib2.URLError as url_err:
-                                    if "timed out" in str(url_err).lower():
-                                        if attempt < max_retries:
-                                            time_module.sleep(retry_delay)
-                                            continue
-                                        raise Exception(  # noqa: B904
-                                            "Timeout after {} retries".format(max_retries)
-                                        )
-                                    raise Exception("Network error: {}".format(str(url_err)))  # noqa: B904
-                                finally:
-                                    if response:
-                                        response.close()
-
-                                if success:
-                                    break
+                        if not isinstance(line, str):
+                            try:
+                                line = line.decode("utf-8", errors="ignore")
                             except Exception:
-                                if attempt == max_retries:
-                                    raise
-                                time_module.sleep(retry_delay)
-                    except Exception as e:
-                        err_msg = str(e)
+                                line = str(line)
+
+                        normalized = self._normalize_wayback_entry(line)
+                        if not normalized:
+                            continue
+
+                        original_url = normalized.split(" | ", 1)[0]
+                        if original_url in seen_urls:
+                            continue
+
+                        seen_urls.add(original_url)
+                        all_urls.append(normalized)
                         SwingUtilities.invokeLater(
-                            lambda err=err_msg: self.wayback_area.append(
-                                "  [!] Error: {}\n".format(err)
+                            lambda u=original_url: self.wayback_area.append(
+                                "  [+] {}\n".format(u)
+                            )
+                            )
+
+                    stderr_data = process.stderr.read()
+                    process.wait()
+                    if self._is_tool_cancelled("wayback"):
+                        cancelled_by_user = True
+                    if not isinstance(stderr_data, str):
+                        try:
+                            stderr_data = stderr_data.decode("utf-8", errors="ignore")
+                        except Exception as e:
+                            self._callbacks.printError(
+                                "Wayback stderr decode error: {}".format(str(e))
+                            )
+                            stderr_data = str(stderr_data)
+
+                    if process.returncode != 0:
+                        err_preview = (stderr_data or "").strip()
+                        if len(err_preview) > 300:
+                            err_preview = err_preview[:300] + "..."
+                        if all_urls:
+                            warning = (
+                                "[!] Custom command exited with code {} after producing {} snapshots".format(
+                                    process.returncode, len(all_urls)
+                                )
+                            )
+                            custom_warning_lines.append(warning)
+                            if err_preview:
+                                custom_warning_lines.append(
+                                    "[!] STDERR: {}".format(err_preview)
+                                )
+                            SwingUtilities.invokeLater(
+                                lambda w=warning: self.wayback_area.append(w + "\n")
+                            )
+                            SwingUtilities.invokeLater(
+                                lambda: self.log_to_ui(
+                                    "[!] Wayback custom command partial failure (exit {})".format(
+                                        process.returncode
+                                    )
+                                )
+                            )
+                        else:
+                            error_count = len(queries)
+                            raise Exception(
+                                "Custom command failed (exit {}): {}".format(
+                                    process.returncode,
+                                    err_preview or "no stderr output",
+                                )
+                            )
+                else:
+                    idx = 0
+                    for host, path in queries:
+                        if self._is_tool_cancelled("wayback"):
+                            cancelled_by_user = True
+                            break
+                        idx += 1
+                        target = host + path if path else host
+                        SwingUtilities.invokeLater(
+                            lambda t=target, i=idx, total=len(queries): self.wayback_area.append(
+                                "[*] {}/{}: {}\n".format(i, total, t)
                             )
                         )
-                        error_count += 1
-                        if "429" in err_msg or "Too Many Requests" in err_msg:
-                            backoff_time = min(backoff_time * 2, 60.0)
-                            time_module.sleep(backoff_time)
-                        continue
 
-                    try:
-                        if success and data and len(data) > 1:  # First row is headers
-                            found_count = 0
-                            for row in data[1:]:  # Skip header row
-                                if len(row) >= 3:
-                                    original_url = row[2]  # Original URL
-                                    timestamp = row[1]  # Timestamp
-                                    snapshot_url = (
-                                        "http://web.archive.org/web/{}/{}".format(
-                                            timestamp, original_url
-                                        )
+                        # Retry logic with exponential backoff
+                        max_retries = 2
+                        retry_delay = 2
+                        success = False
+                        data = None
+
+                        try:
+                            for attempt in range(max_retries + 1):
+                                try:
+                                    # Query Wayback CDX API with date range
+                                    match_type = "prefix" if path else "domain"
+                                    api_url = "http://web.archive.org/cdx/search/cdx?url={}&matchType={}&output=json&filter=statuscode:200&collapse=urlkey&from={}&to={}&limit={}".format(
+                                        target, match_type, from_year, to_year, limit
                                     )
 
-                                    # Deduplicate by original URL
-                                    if original_url not in seen_urls:
-                                        seen_urls.add(original_url)
-                                        all_urls.append(
-                                            "{} | {} | {}".format(
-                                                original_url, snapshot_url, timestamp
+                                    # Create request with proper headers to bypass robots.txt
+                                    request = urllib2.Request(api_url)
+                                    request.add_header('User-Agent', 'Mozilla/5.0 (compatible; archive.org_bot +http://archive.org/details/archive.org_bot)')
+                                    request.add_header('Accept', 'application/json')
+
+                                    response = None
+                                    try:
+                                        response = urllib2.urlopen(request, timeout=20)
+                                        data = json.loads(response.read())
+                                        success = True
+                                    except urllib2.HTTPError as http_err:
+                                        if http_err.code == 403:
+                                            raise Exception(  # noqa: B904
+                                                "HTTP Error 403: FORBIDDEN (blocked by robots.txt)"
+                                            )
+                                        elif http_err.code == 429:
+                                            if attempt < max_retries:
+                                                time_module.sleep(retry_delay * (2 ** attempt))
+                                                continue
+                                            raise Exception(  # noqa: B904
+                                                "HTTP Error 429: Too Many Requests"
+                                            )
+                                        else:
+                                            raise Exception(  # noqa: B904
+                                                "HTTP Error {}: {}".format(
+                                                    http_err.code, http_err.reason
+                                                )
+                                            )
+                                    except urllib2.URLError as url_err:
+                                        if "timed out" in str(url_err).lower():
+                                            if attempt < max_retries:
+                                                time_module.sleep(retry_delay)
+                                                continue
+                                            raise Exception(  # noqa: B904
+                                                "Timeout after {} retries".format(max_retries)
+                                            )
+                                        raise Exception("Network error: {}".format(str(url_err)))  # noqa: B904
+                                    finally:
+                                        if response:
+                                            response.close()
+
+                                    if success:
+                                        break
+                                except Exception:
+                                    if attempt == max_retries:
+                                        raise
+                                    time_module.sleep(retry_delay)
+                        except Exception as e:
+                            err_msg = str(e)
+                            SwingUtilities.invokeLater(
+                                lambda err=err_msg: self.wayback_area.append(
+                                    "  [!] Error: {}\n".format(err)
+                                )
+                            )
+                            error_count += 1
+                            if "429" in err_msg or "Too Many Requests" in err_msg:
+                                backoff_time = min(backoff_time * 2, 60.0)
+                                time_module.sleep(backoff_time)
+                            continue
+
+                        try:
+                            if success and data and len(data) > 1:  # First row is headers
+                                found_count = 0
+                                for row in data[1:]:  # Skip header row
+                                    if len(row) >= 3:
+                                        original_url = row[2]  # Original URL
+                                        timestamp = row[1]  # Timestamp
+                                        snapshot_url = (
+                                            "http://web.archive.org/web/{}/{}".format(
+                                                timestamp, original_url
                                             )
                                         )
-                                        found_count += 1
 
-                            if found_count > 0:
-                                SwingUtilities.invokeLater(
-                                    lambda c=found_count: self.wayback_area.append(
-                                        "  [+] Found: {} snapshots\n".format(c)
+                                        # Deduplicate by original URL
+                                        if original_url not in seen_urls:
+                                            seen_urls.add(original_url)
+                                            all_urls.append(
+                                                "{} | {} | {}".format(
+                                                    original_url, snapshot_url, timestamp
+                                                )
+                                            )
+                                            found_count += 1
+
+                                if found_count > 0:
+                                    SwingUtilities.invokeLater(
+                                        lambda c=found_count: self.wayback_area.append(
+                                            "  [+] Found: {} snapshots\n".format(c)
+                                        )
                                     )
-                                )
+                                else:
+                                    SwingUtilities.invokeLater(
+                                        lambda: self.wayback_area.append(
+                                            "  [-] No unique archives\n"
+                                        )
+                                    )
                             else:
                                 SwingUtilities.invokeLater(
                                     lambda: self.wayback_area.append(
-                                        "  [-] No unique archives\n"
+                                        "  [-] No archive found\n"
                                     )
                                 )
-                        else:
+                        except Exception as parse_err:
+                            err_msg = str(parse_err)
                             SwingUtilities.invokeLater(
-                                lambda: self.wayback_area.append(
-                                    "  [-] No archive found\n"
+                                lambda err=err_msg: self.wayback_area.append(
+                                    "  [!] Parse error: {}\n".format(err)
                                 )
                             )
-                    except Exception as parse_err:
-                        err_msg = str(parse_err)
-                        SwingUtilities.invokeLater(
-                            lambda err=err_msg: self.wayback_area.append(
-                                "  [!] Parse error: {}\n".format(err)
+                            self._callbacks.printError("Wayback parse error: {}".format(err_msg))
+
+                        # Reset error tracking on success
+                        error_count = 0
+                        backoff_time = 3.0
+                        if self._is_tool_cancelled("wayback"):
+                            cancelled_by_user = True
+                            break
+                        time_module.sleep(4.0)  # 15 req/min (safe rate limiting)
+
+                if cancelled_by_user:
+                    with self.wayback_lock:
+                        self.wayback_discovered = all_urls
+                    SwingUtilities.invokeLater(
+                        lambda c=len(all_urls): self.wayback_area.append(
+                            "\n[!] Wayback run cancelled by user (partial snapshots: {})\n".format(
+                                c
                             )
                         )
-                        self._callbacks.printError("Wayback parse error: {}".format(err_msg))
-
-                    # Reset error tracking on success
-                    error_count = 0
-                    backoff_time = 3.0
-                    time_module.sleep(4.0)  # 15 req/min (safe rate limiting)
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui("[!] Wayback cancelled by user")
+                    )
+                    return
 
                 elapsed = int(time_module.time() - start_time)
 
@@ -6310,11 +7633,19 @@ Generate a complete Burp extension that:
                 summary += "WAYBACK DISCOVERY RESULTS\n"
                 summary += "=" * 80 + "\n"
                 summary += "[*] Query Time: {}s (~{}min)\n".format(elapsed, elapsed // 60)
-                summary += "[*] Queries: {} (hosts + paths)\n".format(len(queries))
+                if uses_recon_query_list:
+                    summary += "[*] Queries: {} (hosts + paths)\n".format(len(queries))
+                else:
+                    summary += "[*] Queries: Custom command (scope defined by command)\n"
                 summary += "[*] Snapshots Found: {}\n".format(len(all_urls))
-                summary += "[*] Success Rate: {}%\n".format(
-                    int((len(queries) - error_count) * 100.0 / len(queries)) if len(queries) > 0 else 0
-                )
+                if uses_recon_query_list:
+                    summary += "[*] Success Rate: {}%\n".format(
+                        int((len(queries) - error_count) * 100.0 / len(queries)) if len(queries) > 0 else 0
+                    )
+                else:
+                    summary += "[*] Success Rate: N/A (custom mode)\n"
+                if custom_warning_lines:
+                    summary += "\n" + "\n".join(custom_warning_lines) + "\n"
                 summary += "\n"
 
                 if all_urls:
@@ -6355,7 +7686,10 @@ Generate a complete Burp extension that:
                                 # Skip noise patterns
                                 if not any(n in endpoint.lower() for n in ['/r/$', '?rdt=']):
                                     api_endpoints_list.append(endpoint)
-                        except Exception:
+                        except Exception as e:
+                            self._callbacks.printError(
+                                "Wayback endpoint parse error: {}".format(str(e))
+                            )
                             continue
                     
                     # Deduplicate and sort
@@ -6392,6 +7726,11 @@ Generate a complete Burp extension that:
                 SwingUtilities.invokeLater(
                     lambda: self.log_to_ui("[!] Wayback error: {}".format(str(e)))
                 )
+            finally:
+                self._clear_active_tool_process("wayback", process)
+                self._clear_tool_cancel("wayback")
+                if wayback_temp_dir:
+                    self._cleanup_temp_dir(wayback_temp_dir, "wayback scan")
 
         thread = threading.Thread(target=run_discovery)
         thread.daemon = True
@@ -6438,8 +7777,10 @@ Generate a complete Burp extension that:
                     if parsed.getQuery():
                         endpoint += "?" + parsed.getQuery()
                     unique_endpoints.add(endpoint)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._callbacks.printError(
+                        "Wayback export endpoint parse error: {}".format(str(e))
+                    )
 
         structured.sort(key=lambda x: x["score"], reverse=True)
 

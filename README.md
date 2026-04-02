@@ -121,8 +121,10 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
   - [Contributing](#contributing)
     - [Author](#author)
     - [License](#license)
+  - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
+    - [v1.1.0 - External Tool UX and Control Update](#v110---external-tool-ux-and-control-update)
     - [v1.0 - Initial Release](#v10---initial-release)
     - [Roadmap](#roadmap)
 
@@ -305,17 +307,26 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 #### 6. Nuclei Tab
 - **Nuclei Path**: Configure path to nuclei binary
 - **Run Nuclei**: Execute Nuclei scanner with WAF evasion
+- **Use Custom Cmd**: Override default command with your own template
+- **Preset Cmd + ? Help**: Auto-fill common commands and show usage guidance
+- **Stop**: Cancel active scans safely
 - **Export Targets**: Save target list for external scanning
-- **Features**: Random UA, X-Forwarded-For spoofing, rate limiting
+- **Features**: Header-based spoofing, rate limiting, clear error reporting
 
 #### 7. HTTPX Tab
 - **HTTPX Path**: Configure path to httpx binary
 - **Probe Endpoints**: Fast HTTP probing with technology detection
+- **Use Custom Cmd**: Override default command with your own template
+- **Preset Cmd + ? Help**: Auto-fill common probe profiles and usage
+- **Stop**: Cancel active probes safely
 - **Export URLs**: Save URLs for external tools
 
 #### 8. Katana Tab
 - **Katana Path**: Configure path to katana binary
 - **Crawl Endpoints**: Deep web crawling for endpoint discovery
+- **Use Custom Cmd**: Override default command with your own template
+- **Preset Cmd + ? Help**: Auto-fill crawl depth profiles and usage
+- **Stop**: Cancel active crawls safely
 - **Export Discovered**: Save discovered endpoints
 - **Send to Recon**: Import discovered endpoints to Recon tab
 
@@ -330,6 +341,9 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Date Range**: Configure from/to years for historical search
 - **Limit**: Set maximum results to retrieve
 - **Discover**: Query Wayback Machine for historical endpoints
+- **Use Custom Cmd**: Override built-in queries with waybackurls/gau commands
+- **Preset Cmd + ? Help**: Auto-fill passive collection presets and usage
+- **Stop**: Cancel active discovery safely
 - **Send to Recon**: Import discovered endpoints to Recon tab
 - **Export Results**: Save discovered endpoints
 
@@ -713,6 +727,21 @@ A: Default paths:
 
 Or configure custom paths in each tab.
 
+**Q: How do custom command overrides work?**
+
+A:
+- Leave `Use Custom Cmd` unchecked to use safe built-in defaults.
+- Check `Use Custom Cmd` to run exactly what you type in the command box.
+- Use `Preset Cmd...` to auto-fill common commands quickly.
+- Click `?` to see placeholders and examples for each tab.
+
+**Q: Why does HTTPX show invalid option errors?**
+
+A:
+- Make sure you are using ProjectDiscovery `httpx`, not the Python `httpx` CLI tool.
+- Recommended path: `~/go/bin/httpx`.
+- The extension now validates local tool signatures and shows a fix hint when mismatched.
+
 ### Export & Integration
 
 **Q: Where are exported files saved?**
@@ -754,6 +783,7 @@ A:
 - Check tool is installed and path is correct
 - Verify network connectivity to targets
 - Large scans may take 5-10 minutes (max timeout: 10 minutes)
+- Use the **Stop** button in the same tab to cancel running external tools
 - Check Activity Log for detailed error messages
 
 **Q: Why are some endpoints marked as "Critical" or "High"?**
@@ -858,9 +888,20 @@ Developed by [Teycir Ben Soltane](https://teycirbensoltane.tn)
 
 MIT License - Free to use for authorized security testing and research purposes.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for full release history.
+
 ## Updates & Roadmap
 
 ### Recent Updates
+
+### v1.1.0 - External Tool UX and Control Update
+- ✅ Custom command override with validation for Nuclei, HTTPX, Katana, and Wayback
+- ✅ Preset command dropdowns and expanded `?` help popups for external tools
+- ✅ Cross-platform stop controls for external tool runs (Windows/macOS/Linux)
+- ✅ Local binary compatibility checks (including HTTPX CLI mismatch detection)
+- ✅ Stronger command failure reporting with actionable remediation hints
 
 ### v1.0 - Initial Release
 - ✅ 15 attack types with 108+ vectors
