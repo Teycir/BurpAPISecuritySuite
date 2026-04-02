@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.0] - 2026-04-02
+
+### Added
+- New `Auth Replay` tab to compare authorization behavior across Guest/User/Admin profiles.
+- Replay scope selector (`Selected Endpoint`, `Filtered View`, `All Endpoints`) and run limiter (`Max`).
+- Profile header `Extract` actions for Guest/User/Admin with candidate discovery from captured Recon traffic.
+- Searchable extraction popup with live filtering to pick header candidates safely and explicitly.
+- Replay stop control integrated with cross-platform cancellation flow.
+
+### Changed
+- Auth Replay helper text and logging now explain extraction/selection workflow clearly.
+- Header extraction now prioritizes profile-aware candidates while preserving explicit user choice.
+
+### Fixed
+- Eliminated ambiguous single-candidate auto-fill for replay profile headers by requiring explicit popup selection.
+
 ## [1.1.0] - 2026-04-02
 
 ### Added

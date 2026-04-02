@@ -7,7 +7,7 @@ import threading
 import time
 
 from burp import IBurpExtender, IContextMenuFactory, IHttpListener, IProxyListener, ITab
-from java.awt import BorderLayout, Color, FlowLayout, Font, GridLayout
+from java.awt import BorderLayout, Color, Dimension, FlowLayout, Font, GridLayout
 from java.awt.event import MouseAdapter
 from java.io import File, FileWriter
 from java.net import URL
@@ -104,6 +104,7 @@ class BurpExtender(
             "katana": threading.Event(),
             "ffuf": threading.Event(),
             "wayback": threading.Event(),
+            "authreplay": threading.Event(),
         }
 
         # Pagination state
@@ -270,6 +271,9 @@ class BurpExtender(
         # Fuzzer tab
         fuzzer_panel = self._create_fuzzer_tab()
 
+        # Auth Replay tab
+        auth_replay_panel = self._create_auth_replay_tab()
+
         # Nuclei tab
         nuclei_panel = self._create_nuclei_tab()
 
@@ -291,6 +295,7 @@ class BurpExtender(
         self.tabbed_pane.addTab("Version Scanner", version_panel)
         self.tabbed_pane.addTab("Param Miner", param_panel)
         self.tabbed_pane.addTab("Fuzzer", fuzzer_panel)
+        self.tabbed_pane.addTab("Auth Replay", auth_replay_panel)
         self.tabbed_pane.addTab("Nuclei", nuclei_panel)
         self.tabbed_pane.addTab("HTTPX", httpx_panel)
         self.tabbed_pane.addTab("Katana", katana_panel)
@@ -1107,6 +1112,111 @@ class BurpExtender(
         self.fuzzer_area, scroll = self._create_text_area_panel()
         panel.add(scroll, BorderLayout.CENTER)
         self.fuzzing_attacks = []
+        return panel
+
+    def _create_auth_replay_tab(self):
+        """Create Auth Replay tab for multi-role authorization checks."""
+        panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+
+        controls = JPanel(FlowLayout(FlowLayout.LEFT))
+        controls.add(JLabel("Scope:"))
+        self.auth_replay_scope_combo = JComboBox(
+            ["Selected Endpoint", "Filtered View", "All Endpoints"]
+        )
+        controls.add(self.auth_replay_scope_combo)
+        controls.add(JLabel("Max:"))
+        self.auth_replay_max_field = JTextField("50", 4)
+        controls.add(self.auth_replay_max_field)
+        controls.add(
+            self._create_action_button(
+                "Run Replay", Color(220, 53, 69), lambda e: self._run_auth_replay(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_auth_replay(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Clear",
+                Color(108, 117, 125),
+                lambda e: self.auth_replay_area.setText(""),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Copy",
+                Color(70, 130, 180),
+                lambda e: self._copy_to_clipboard(self.auth_replay_area.getText()),
+            )
+        )
+
+        guest_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        guest_row.add(JLabel("Guest Header:"))
+        self.auth_guest_header_field = JTextField("", 58)
+        self.auth_guest_header_field.setToolTipText(
+            "Optional. Format: Header-Name: value (example: Cookie: session=...)"
+        )
+        guest_row.add(self.auth_guest_header_field)
+        guest_row.add(
+            self._create_action_button(
+                "Extract",
+                Color(40, 167, 69),
+                lambda e: self._extract_auth_profile_header("guest"),
+            )
+        )
+
+        user_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        user_row.add(JLabel("User Header:"))
+        self.auth_user_header_field = JTextField("", 59)
+        self.auth_user_header_field.setToolTipText(
+            "Optional but recommended. Format: Authorization: Bearer <user_token>"
+        )
+        user_row.add(self.auth_user_header_field)
+        user_row.add(
+            self._create_action_button(
+                "Extract",
+                Color(40, 167, 69),
+                lambda e: self._extract_auth_profile_header("user"),
+            )
+        )
+
+        admin_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        admin_row.add(JLabel("Admin Header:"))
+        self.auth_admin_header_field = JTextField("", 57)
+        self.auth_admin_header_field.setToolTipText(
+            "Optional but recommended. Format: Authorization: Bearer <admin_token>"
+        )
+        admin_row.add(self.auth_admin_header_field)
+        admin_row.add(
+            self._create_action_button(
+                "Extract",
+                Color(40, 167, 69),
+                lambda e: self._extract_auth_profile_header("admin"),
+            )
+        )
+
+        help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        help_row.add(
+            JLabel(
+                "Use header format 'Name: value'. Extract opens a searchable popup picker from captured headers."
+            )
+        )
+
+        top_panel.add(controls)
+        top_panel.add(guest_row)
+        top_panel.add(user_row)
+        top_panel.add(admin_row)
+        top_panel.add(help_row)
+        panel.add(top_panel, BorderLayout.NORTH)
+
+        self.auth_replay_area, scroll = self._create_text_area_panel()
+        panel.add(scroll, BorderLayout.CENTER)
+        self.auth_replay_findings = []
+        self.auth_replay_lock = threading.Lock()
         return panel
 
     def _create_nuclei_tab(self):
@@ -6159,6 +6269,839 @@ Generate a complete Burp extension that:
 
     def _stop_wayback(self, event):
         self._stop_tool_run("wayback", "Wayback", self.wayback_area)
+
+    def _stop_auth_replay(self, event):
+        """Request cancellation for auth replay run."""
+        self._set_tool_cancel("authreplay")
+        self.auth_replay_area.append("[!] Auth Replay stop requested by user\n")
+        self.log_to_ui("[!] Auth Replay stop requested by user")
+
+    def _parse_auth_profile_header(self, profile_name, header_value):
+        """Parse optional role header in 'Name: Value' format."""
+        raw = (header_value or "").strip()
+        if not raw:
+            return None
+        if ":" not in raw:
+            raise ValueError(
+                "{} header must use 'Name: Value' format".format(profile_name)
+            )
+        name, value = raw.split(":", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name or not value:
+            raise ValueError(
+                "{} header must include both name and value".format(profile_name)
+            )
+        return (name, value)
+
+    def _get_auth_profile_field(self, profile_key):
+        """Return UI field for auth replay profile key."""
+        mapping = {
+            "guest": self.auth_guest_header_field,
+            "user": self.auth_user_header_field,
+            "admin": self.auth_admin_header_field,
+        }
+        return mapping.get(profile_key)
+
+    def _get_selected_endpoint_key(self):
+        """Get currently selected endpoint key from Recon list."""
+        selected_value = self.endpoint_list.getSelectedValue()
+        if selected_value is None:
+            return None
+        return EndpointClickListener._extract_endpoint_key(str(selected_value))
+
+    def _entry_matches_profile_hint(self, entry, profile_key):
+        """Heuristic to prefer entries that likely match chosen profile."""
+        auth_detected = [str(a).lower() for a in entry.get("auth_detected", [])]
+        if profile_key == "guest":
+            return (
+                ("none" in auth_detected)
+                or ("session cookie" in auth_detected)
+                or (len(auth_detected) == 0)
+            )
+        return "none" not in auth_detected
+
+    def _extract_profile_header_candidates_from_headers(self, headers, profile_key):
+        """Collect ordered header candidates from one request header set."""
+        if not headers or not isinstance(headers, dict):
+            return []
+
+        if profile_key == "guest":
+            priority = [
+                "cookie",
+                "authorization",
+                "x-api-key",
+                "x-auth-token",
+                "x-access-token",
+                "x-session-token",
+                "x-csrf-token",
+            ]
+        else:
+            priority = [
+                "authorization",
+                "x-api-key",
+                "x-auth-token",
+                "x-access-token",
+                "cookie",
+                "x-session-token",
+                "x-csrf-token",
+            ]
+
+        header_items = []
+        for key, value in headers.items():
+            key_str = str(key).strip()
+            value_str = str(value).strip()
+            if key_str and value_str:
+                header_items.append((key_str, value_str))
+
+        candidates = []
+        seen = set()
+
+        for wanted in priority:
+            for key, value in header_items:
+                candidate = "{}: {}".format(key, value)
+                candidate_key = candidate.lower()
+                if key.lower() == wanted and candidate_key not in seen:
+                    candidates.append(candidate)
+                    seen.add(candidate_key)
+
+        keyword_priority = ["auth", "token", "cookie", "session", "api-key", "apikey"]
+        for keyword in keyword_priority:
+            for key, value in header_items:
+                key_lower = key.lower()
+                candidate = "{}: {}".format(key, value)
+                candidate_key = candidate.lower()
+                if keyword in key_lower and candidate_key not in seen:
+                    candidates.append(candidate)
+                    seen.add(candidate_key)
+
+        return candidates
+
+    def _extract_profile_header_from_headers(self, headers, profile_key):
+        """Pick first best candidate header from header dict for selected profile."""
+        candidates = self._extract_profile_header_candidates_from_headers(
+            headers, profile_key
+        )
+        return candidates[0] if candidates else None
+
+    def _find_profile_header_candidates_in_entries(
+        self, entries, profile_key, prefer_match=True, max_candidates=10
+    ):
+        """Search entries list and return ordered unique header candidates."""
+        entries_list = entries if isinstance(entries, list) else [entries]
+        if prefer_match:
+            first_pass = [
+                e
+                for e in entries_list
+                if isinstance(e, dict) and self._entry_matches_profile_hint(e, profile_key)
+            ]
+            second_pass = entries_list
+        else:
+            first_pass = entries_list
+            second_pass = []
+
+        results = []
+        seen = set()
+        for pass_entries in [first_pass, second_pass]:
+            for entry in pass_entries:
+                if not isinstance(entry, dict):
+                    continue
+                candidates = self._extract_profile_header_candidates_from_headers(
+                    entry.get("headers", {}), profile_key
+                )
+                for header_line in candidates:
+                    normalized = header_line.lower()
+                    if normalized in seen:
+                        continue
+                    results.append(header_line)
+                    seen.add(normalized)
+                    if len(results) >= max_candidates:
+                        return results
+        return results
+
+    def _build_auth_header_choice_label(self, index, endpoint_key, header_line, is_selected):
+        """Build readable label for header extraction popup."""
+        source_label = "[Selected]" if is_selected else "[Captured]"
+        endpoint_label = endpoint_key or "<unknown endpoint>"
+        preview = header_line
+        if len(preview) > 110:
+            preview = preview[:107] + "..."
+        return "#{:02d} {} {} -> {}".format(
+            index, source_label, endpoint_label, preview
+        )
+
+    def _choose_auth_profile_header_candidate(self, profile_key, options):
+        """Show searchable popup for choosing extracted header candidate."""
+        chooser_panel = JPanel(BorderLayout(6, 6))
+        top_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        top_row.add(JLabel("Filter:"))
+        search_field = JTextField("", 42)
+        top_row.add(search_field)
+        chooser_panel.add(top_row, BorderLayout.NORTH)
+
+        list_model = DefaultListModel()
+        candidate_list = JList(list_model)
+        candidate_list.setVisibleRowCount(12)
+        candidate_scroll = JScrollPane(candidate_list)
+        candidate_scroll.setPreferredSize(Dimension(1080, 260))
+        chooser_panel.add(candidate_scroll, BorderLayout.CENTER)
+
+        footer = JLabel(
+            "Type to filter by endpoint/header text. Select one item then click OK."
+        )
+        chooser_panel.add(footer, BorderLayout.SOUTH)
+
+        visible_indices = []
+
+        def rebuild_visible_candidates():
+            query = search_field.getText().strip().lower()
+            list_model.clear()
+            visible_indices[:] = []
+            for idx, option in enumerate(options):
+                searchable = "{} {} {}".format(
+                    option.get("label", ""),
+                    option.get("value", ""),
+                    option.get("endpoint", ""),
+                ).lower()
+                if query and query not in searchable:
+                    continue
+                list_model.addElement(option.get("label", ""))
+                visible_indices.append(idx)
+            if list_model.getSize() > 0:
+                candidate_list.setSelectedIndex(0)
+
+        class HeaderFilterListener(DocumentListener):
+            def insertUpdate(self, e):
+                rebuild_visible_candidates()
+
+            def removeUpdate(self, e):
+                rebuild_visible_candidates()
+
+            def changedUpdate(self, e):
+                rebuild_visible_candidates()
+
+        search_field.getDocument().addDocumentListener(HeaderFilterListener())
+        rebuild_visible_candidates()
+
+        result = JOptionPane.showConfirmDialog(
+            self._panel,
+            chooser_panel,
+            "{} Header Extract".format(profile_key.capitalize()),
+            JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.PLAIN_MESSAGE,
+        )
+        if result != JOptionPane.OK_OPTION:
+            return None
+
+        selected_idx = candidate_list.getSelectedIndex()
+        if selected_idx < 0 or selected_idx >= len(visible_indices):
+            self.auth_replay_area.append(
+                "[!] No {} header selected from popup.\n".format(profile_key)
+            )
+            return None
+
+        option_index = visible_indices[selected_idx]
+        if option_index < 0 or option_index >= len(options):
+            self.auth_replay_area.append(
+                "[!] Invalid {} header selection index.\n".format(profile_key)
+            )
+            return None
+        return options[option_index]
+
+    def _extract_auth_profile_header(self, profile_key):
+        """Extract profile header candidates and let user choose via popup."""
+        profile_key = (profile_key or "").strip().lower()
+        field = self._get_auth_profile_field(profile_key)
+        if field is None:
+            self.auth_replay_area.append("[!] Unknown profile: {}\n".format(profile_key))
+            return
+
+        selected_key = self._get_selected_endpoint_key()
+        with self.lock:
+            data_snapshot = list(self.api_data.items())
+
+        options = []
+        seen_values = set()
+        max_options = 35
+
+        def add_option(endpoint_key, header_line, is_selected):
+            if not header_line:
+                return
+            normalized = header_line.strip().lower()
+            if not normalized or normalized in seen_values:
+                return
+            if len(options) >= max_options:
+                return
+            options.append(
+                {
+                    "label": self._build_auth_header_choice_label(
+                        len(options) + 1, endpoint_key, header_line, is_selected
+                    ),
+                    "value": header_line,
+                    "endpoint": endpoint_key,
+                }
+            )
+            seen_values.add(normalized)
+
+        if selected_key:
+            selected_entries = None
+            for endpoint_key, entries in data_snapshot:
+                if endpoint_key == selected_key:
+                    selected_entries = entries
+                    break
+            if selected_entries:
+                selected_candidates = self._find_profile_header_candidates_in_entries(
+                    selected_entries, profile_key, prefer_match=True, max_candidates=12
+                )
+                if not selected_candidates:
+                    selected_candidates = self._find_profile_header_candidates_in_entries(
+                        selected_entries, profile_key, prefer_match=False, max_candidates=12
+                    )
+                for header_line in selected_candidates:
+                    add_option(selected_key, header_line, True)
+
+        for endpoint_key, entries in data_snapshot:
+            if len(options) >= max_options:
+                break
+            if selected_key and endpoint_key == selected_key:
+                continue
+            candidates = self._find_profile_header_candidates_in_entries(
+                entries, profile_key, prefer_match=True, max_candidates=4
+            )
+            for header_line in candidates:
+                add_option(endpoint_key, header_line, False)
+                if len(options) >= max_options:
+                    break
+
+        if not options:
+            for endpoint_key, entries in data_snapshot:
+                if len(options) >= max_options:
+                    break
+                if selected_key and endpoint_key == selected_key:
+                    continue
+                candidates = self._find_profile_header_candidates_in_entries(
+                    entries, profile_key, prefer_match=False, max_candidates=3
+                )
+                for header_line in candidates:
+                    add_option(endpoint_key, header_line, False)
+                    if len(options) >= max_options:
+                        break
+
+        if not options:
+            self.auth_replay_area.append(
+                "[!] No {} header candidate found. Select endpoint with auth/cookie headers and retry.\n".format(
+                    profile_key
+                )
+            )
+            return
+
+        chosen = self._choose_auth_profile_header_candidate(profile_key, options)
+        if chosen is None:
+            self.auth_replay_area.append(
+                "[*] {} header extraction cancelled by user.\n".format(
+                    profile_key.capitalize()
+                )
+            )
+            return
+
+        field.setText(chosen["value"])
+        self.auth_replay_area.append(
+            "[+] {} header selected from {}.\n".format(
+                profile_key.capitalize(), chosen["endpoint"]
+            )
+        )
+
+    def _build_auth_replay_request(self, entry, profile_header):
+        """Build raw HTTP request with optional auth/profile header override."""
+        method = (entry.get("method") or "GET").upper()
+        path = entry.get("path") or "/"
+        query = entry.get("query_string") or ""
+        if query:
+            path += "?" + query
+
+        request_line = "{} {} HTTP/1.1\r\n".format(method, path)
+        headers = ["Host: {}".format(entry.get("host", ""))]
+        existing_headers = entry.get("headers", {}) or {}
+
+        override_header_name = None
+        if profile_header:
+            override_header_name = profile_header[0].lower()
+
+        added = set(["host"])
+        for key, value in existing_headers.items():
+            key_str = str(key)
+            value_str = str(value)
+            key_lower = key_str.lower()
+            if key_lower in ["host", "content-length", "connection"]:
+                continue
+            if override_header_name and key_lower == override_header_name:
+                continue
+            headers.append("{}: {}".format(key_str, value_str))
+            added.add(key_lower)
+
+        if "user-agent" not in added:
+            headers.append("User-Agent: BurpAPISecuritySuite/AuthReplay")
+        if "accept" not in added:
+            headers.append("Accept: */*")
+        headers.append("Connection: close")
+
+        if profile_header:
+            headers.append("{}: {}".format(profile_header[0], profile_header[1]))
+
+        body = entry.get("request_body") or ""
+        if body:
+            headers.append("Content-Length: {}".format(len(body)))
+
+        request = request_line + "\r\n".join(headers) + "\r\n\r\n"
+        if body:
+            request += body
+        return request
+
+    def _perform_auth_replay_request(self, entry, profile_header):
+        """Send request and return compact response signature."""
+        host = entry.get("host", "")
+        protocol = entry.get("protocol", "https")
+        use_https = protocol == "https"
+        port = entry.get("port", -1)
+        if port == -1:
+            port = 443 if use_https else 80
+
+        request = self._build_auth_replay_request(entry, profile_header)
+        request_bytes = self._helpers.stringToBytes(request)
+
+        try:
+            response_obj = self._callbacks.makeHttpRequest(
+                host, port, use_https, request_bytes
+            )
+        except Exception as e:
+            return {
+                "status": 0,
+                "length": 0,
+                "preview": "",
+                "error": "request failed: {}".format(str(e)),
+            }
+
+        response = response_obj
+        if hasattr(response_obj, "getResponse"):
+            response = response_obj.getResponse()
+
+        if not response:
+            return {
+                "status": 0,
+                "length": 0,
+                "preview": "",
+                "error": "empty response",
+            }
+
+        try:
+            resp_info = self._helpers.analyzeResponse(response)
+            body_offset = resp_info.getBodyOffset()
+            response_len = max(0, len(response) - body_offset)
+            preview_bytes = response[body_offset : body_offset + 320]
+            preview = self._helpers.bytesToString(preview_bytes)
+            preview = re.sub(r"\s+", " ", (preview or "")).strip()
+            return {
+                "status": resp_info.getStatusCode(),
+                "length": response_len,
+                "preview": preview,
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "status": 0,
+                "length": 0,
+                "preview": "",
+                "error": "response parse failed: {}".format(str(e)),
+            }
+
+    def _auth_replay_preview_similar(self, left_preview, right_preview):
+        """Loose similarity check for body previews."""
+        left = (left_preview or "").lower()
+        right = (right_preview or "").lower()
+        left = re.sub(r"\s+", " ", left)
+        right = re.sub(r"\s+", " ", right)
+        left = re.sub(r"[0-9a-f]{24,}", "{token}", left)
+        right = re.sub(r"[0-9a-f]{24,}", "{token}", right)
+        left = re.sub(r"\d+", "0", left)
+        right = re.sub(r"\d+", "0", right)
+
+        if not left and not right:
+            return True
+        if left == right:
+            return True
+
+        overlap = min(len(left), len(right), 140)
+        if overlap >= 40 and left[:overlap] == right[:overlap]:
+            return True
+        return False
+
+    def _evaluate_auth_replay_findings(self, endpoint_key, role_results):
+        """Score likely authorization issues from role response signatures."""
+        findings = []
+        if "admin" in role_results:
+            high_role = "admin"
+        elif "user" in role_results:
+            high_role = "user"
+        else:
+            high_role = "guest"
+
+        high_data = role_results.get(high_role, {})
+        if high_data.get("error"):
+            return findings
+
+        success_codes = set([200, 201, 202, 204, 206])
+        compare_roles = [role for role in ["guest", "user"] if role in role_results]
+        for low_role in compare_roles:
+            if low_role == high_role:
+                continue
+            low_data = role_results.get(low_role, {})
+            if low_data.get("error"):
+                continue
+
+            low_status = int(low_data.get("status", 0) or 0)
+            high_status = int(high_data.get("status", 0) or 0)
+            low_len = int(low_data.get("length", 0) or 0)
+            high_len = int(high_data.get("length", 0) or 0)
+            similar_preview = self._auth_replay_preview_similar(
+                low_data.get("preview", ""), high_data.get("preview", "")
+            )
+            length_delta = abs(low_len - high_len)
+            length_close = length_delta <= max(32, int(max(low_len, high_len) * 0.12))
+
+            finding = None
+            if (
+                low_status in success_codes
+                and high_status in success_codes
+                and low_status == high_status
+                and (similar_preview or length_close)
+            ):
+                severity = (
+                    "critical"
+                    if low_role == "guest" and high_role == "admin"
+                    else "high"
+                )
+                finding = {
+                    "severity": severity,
+                    "endpoint": endpoint_key,
+                    "issue": "{} response looks similar to {} response".format(
+                        low_role, high_role
+                    ),
+                    "low_role": low_role,
+                    "high_role": high_role,
+                    "low_status": low_status,
+                    "high_status": high_status,
+                    "low_length": low_len,
+                    "high_length": high_len,
+                }
+            elif low_status in success_codes and high_status in [401, 403]:
+                finding = {
+                    "severity": "high",
+                    "endpoint": endpoint_key,
+                    "issue": "{} access succeeded while {} was denied".format(
+                        low_role, high_role
+                    ),
+                    "low_role": low_role,
+                    "high_role": high_role,
+                    "low_status": low_status,
+                    "high_status": high_status,
+                    "low_length": low_len,
+                    "high_length": high_len,
+                }
+            elif (
+                low_status == high_status
+                and low_status not in [0, 401, 403, 404]
+                and length_close
+                and similar_preview
+            ):
+                finding = {
+                    "severity": "medium",
+                    "endpoint": endpoint_key,
+                    "issue": "{} and {} responses are nearly identical".format(
+                        low_role, high_role
+                    ),
+                    "low_role": low_role,
+                    "high_role": high_role,
+                    "low_status": low_status,
+                    "high_status": high_status,
+                    "low_length": low_len,
+                    "high_length": high_len,
+                }
+
+            if finding:
+                findings.append(finding)
+
+        return findings
+
+    def _collect_auth_replay_targets(self, scope, max_count):
+        """Collect endpoint keys based on replay scope."""
+        keys = []
+        if scope == "Selected Endpoint":
+            selected_value = self.endpoint_list.getSelectedValue()
+            if not selected_value:
+                return [], 0
+            endpoint_key = EndpointClickListener._extract_endpoint_key(str(selected_value))
+            if not endpoint_key:
+                return [], 0
+            keys = [endpoint_key]
+        elif scope == "Filtered View":
+            with self.lock:
+                keys = list(self._filter_endpoints().keys())
+        else:
+            with self.lock:
+                keys = list(self.api_data.keys())
+
+        prioritized = []
+        with self.lock:
+            for endpoint_key in keys:
+                entries = self.api_data.get(endpoint_key)
+                if not entries:
+                    continue
+                entry = self._get_entry(entries)
+                severity = self._get_severity(endpoint_key, entries)
+                severity_rank = {"critical": 0, "high": 1, "medium": 2, "info": 3}
+                id_like = (
+                    0
+                    if re.search(
+                        r"/{id}|/{uuid}|/{objectid}", entry.get("normalized_path", "")
+                    )
+                    else 1
+                )
+                prioritized.append(
+                    (
+                        severity_rank.get(severity, 4),
+                        id_like,
+                        endpoint_key,
+                    )
+                )
+
+        prioritized.sort(key=lambda item: (item[0], item[1], item[2]))
+        ordered_keys = [item[2] for item in prioritized]
+        total_available = len(ordered_keys)
+        if max_count > 0:
+            ordered_keys = ordered_keys[:max_count]
+        return ordered_keys, total_available
+
+    def _run_auth_replay(self, event):
+        """Replay endpoints across roles and score likely authz weaknesses."""
+        if not self.api_data:
+            self.auth_replay_area.setText(
+                "[!] No endpoints in Recon tab. Capture or import first\n"
+            )
+            return
+
+        max_text = self.auth_replay_max_field.getText().strip() or "50"
+        try:
+            max_count = int(max_text)
+            if max_count < 1:
+                max_count = 1
+            if max_count > 500:
+                max_count = 500
+        except ValueError:
+            max_count = 50
+
+        try:
+            guest_header = self._parse_auth_profile_header(
+                "Guest", self.auth_guest_header_field.getText()
+            )
+            user_header = self._parse_auth_profile_header(
+                "User", self.auth_user_header_field.getText()
+            )
+            admin_header = self._parse_auth_profile_header(
+                "Admin", self.auth_admin_header_field.getText()
+            )
+        except ValueError as e:
+            self.auth_replay_area.setText("[!] {}\n".format(str(e)))
+            return
+
+        profiles = [("guest", guest_header)]
+        if user_header:
+            profiles.append(("user", user_header))
+        if admin_header:
+            profiles.append(("admin", admin_header))
+        if len(profiles) < 2:
+            self.auth_replay_area.setText(
+                "[!] Provide at least one non-empty User or Admin header\n"
+            )
+            self.auth_replay_area.append(
+                "[*] Header format: Authorization: Bearer <token>\n"
+            )
+            return
+
+        scope = str(self.auth_replay_scope_combo.getSelectedItem())
+        endpoint_keys, total_available = self._collect_auth_replay_targets(scope, max_count)
+        if not endpoint_keys:
+            self.auth_replay_area.setText(
+                "[!] No endpoints found for scope '{}'\n".format(scope)
+            )
+            if scope == "Selected Endpoint":
+                self.auth_replay_area.append(
+                    "[*] Select one endpoint from Recon list and retry\n"
+                )
+            return
+
+        self._clear_tool_cancel("authreplay")
+        self.auth_replay_area.setText("[*] Starting Auth Replay MVP...\n")
+        self.auth_replay_area.append("[*] Scope: {}\n".format(scope))
+        self.auth_replay_area.append(
+            "[*] Targets: {} of {} available\n".format(
+                len(endpoint_keys), total_available
+            )
+        )
+        self.auth_replay_area.append(
+            "[*] Profiles: {}\n".format(
+                ", ".join([name for name, _ in profiles])
+            )
+        )
+        self.auth_replay_area.append(
+            "[*] Tip: use Stop to cancel the run at any time\n\n"
+        )
+        self.log_to_ui(
+            "[*] Auth Replay: {} targets, profiles={}".format(
+                len(endpoint_keys), ",".join([name for name, _ in profiles])
+            )
+        )
+
+        def run_replay():
+            findings = []
+            scanned = 0
+            cancelled = False
+            errors = 0
+
+            try:
+                idx = 0
+                for endpoint_key in endpoint_keys:
+                    if self._is_tool_cancelled("authreplay"):
+                        cancelled = True
+                        break
+
+                    idx += 1
+                    if idx == 1 or idx % 5 == 0:
+                        SwingUtilities.invokeLater(
+                            lambda i=idx, total=len(endpoint_keys): self.auth_replay_area.append(
+                                "[*] Replaying {}/{}...\n".format(i, total)
+                            )
+                        )
+
+                    with self.lock:
+                        entries = self.api_data.get(endpoint_key)
+                    if not entries:
+                        continue
+
+                    entry = self._get_entry(entries)
+                    role_results = {}
+                    for role_name, role_header in profiles:
+                        if self._is_tool_cancelled("authreplay"):
+                            cancelled = True
+                            break
+                        result = self._perform_auth_replay_request(entry, role_header)
+                        role_results[role_name] = result
+                        if result.get("error"):
+                            errors += 1
+
+                    if cancelled:
+                        break
+
+                    endpoint_findings = self._evaluate_auth_replay_findings(
+                        endpoint_key, role_results
+                    )
+                    findings.extend(endpoint_findings)
+                    scanned += 1
+
+                severity_order = {"critical": 0, "high": 1, "medium": 2}
+                findings.sort(
+                    key=lambda f: (
+                        severity_order.get(f.get("severity", "medium"), 3),
+                        f.get("endpoint", ""),
+                    )
+                )
+                with self.auth_replay_lock:
+                    self.auth_replay_findings = list(findings)
+
+                severity_counts = {"critical": 0, "high": 0, "medium": 0}
+                for finding in findings:
+                    sev = finding.get("severity", "medium")
+                    if sev in severity_counts:
+                        severity_counts[sev] += 1
+
+                output = []
+                output.append("")
+                output.append("=" * 80)
+                output.append("AUTH REPLAY RESULTS")
+                output.append("=" * 80)
+                output.append("[*] Scanned Endpoints: {}".format(scanned))
+                output.append("[*] Findings: {}".format(len(findings)))
+                output.append("[*] Request Errors: {}".format(errors))
+                if cancelled:
+                    output.append("[!] Run cancelled by user")
+                output.append(
+                    "[*] Severity: Critical={} High={} Medium={}".format(
+                        severity_counts["critical"],
+                        severity_counts["high"],
+                        severity_counts["medium"],
+                    )
+                )
+                output.append("")
+
+                if findings:
+                    output.append("TOP FINDINGS")
+                    output.append("-" * 80)
+                    for finding in findings[:25]:
+                        output.append(
+                            "[{}] {}".format(
+                                finding.get("severity", "medium").upper(),
+                                finding.get("issue", ""),
+                            )
+                        )
+                        output.append("  Endpoint: {}".format(finding.get("endpoint", "")))
+                        output.append(
+                            "  {} status/len: {}/{} | {} status/len: {}/{}".format(
+                                finding.get("low_role", "low"),
+                                finding.get("low_status", 0),
+                                finding.get("low_length", 0),
+                                finding.get("high_role", "high"),
+                                finding.get("high_status", 0),
+                                finding.get("high_length", 0),
+                            )
+                        )
+                        output.append("")
+                    if len(findings) > 25:
+                        output.append("[*] {} more findings not shown".format(len(findings) - 25))
+                else:
+                    output.append("[+] No obvious cross-role authz issues detected")
+                    output.append("[*] Try broader endpoint scope or different tokens")
+
+                result_text = "\n".join(output) + "\n"
+                SwingUtilities.invokeLater(
+                    lambda t=result_text: self.auth_replay_area.append(t)
+                )
+                if cancelled:
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui(
+                            "[!] Auth Replay cancelled ({} scanned, {} findings)".format(
+                                scanned, len(findings)
+                            )
+                        )
+                    )
+                else:
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui(
+                            "[+] Auth Replay complete ({} scanned, {} findings)".format(
+                                scanned, len(findings)
+                            )
+                        )
+                    )
+            except Exception as e:
+                err = "[!] Auth Replay failed: {}\n".format(str(e))
+                SwingUtilities.invokeLater(lambda t=err: self.auth_replay_area.append(t))
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui("[!] Auth Replay error: {}".format(str(e)))
+                )
+            finally:
+                self._clear_tool_cancel("authreplay")
+
+        thread = threading.Thread(target=run_replay)
+        thread.daemon = True
+        thread.start()
 
     def _normalize_wayback_entry(self, line):
         """Normalize wayback line into: original | archive | timestamp."""

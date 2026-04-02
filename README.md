@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.0-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -80,6 +80,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
       - [8. Katana Tab](#8-katana-tab)
       - [9. FFUF Tab](#9-ffuf-tab)
       - [10. Wayback Tab](#10-wayback-tab)
+      - [11. Auth Replay Tab](#11-auth-replay-tab)
   - [Advanced Fuzzing Capabilities](#advanced-fuzzing-capabilities)
     - [Attack Types Detected](#attack-types-detected)
     - [Exported Data Structure](#exported-data-structure)
@@ -124,6 +125,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
   - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
+    - [v1.2.0 - Auth Replay and Header Extraction UX](#v120---auth-replay-and-header-extraction-ux)
     - [v1.1.0 - External Tool UX and Control Update](#v110---external-tool-ux-and-control-update)
     - [v1.0 - Initial Release](#v10---initial-release)
     - [Roadmap](#roadmap)
@@ -346,6 +348,15 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Stop**: Cancel active discovery safely
 - **Send to Recon**: Import discovered endpoints to Recon tab
 - **Export Results**: Save discovered endpoints
+
+#### 11. Auth Replay Tab
+- **Scope**: Replay Selected Endpoint, Filtered View, or All Endpoints
+- **Max**: Limit endpoints per run for faster triage
+- **Guest/User/Admin Headers**: Set profile headers in `Name: value` format
+- **Extract**: Open searchable popup to pick captured auth/session headers
+- **Run Replay**: Replay requests per profile and compare response behavior
+- **Stop**: Cancel active replay safely
+- **Findings Output**: Severity-scored evidence for likely BOLA/authz drift
 
 ## Advanced Fuzzing Capabilities
 
@@ -742,6 +753,14 @@ A:
 - Recommended path: `~/go/bin/httpx`.
 - The extension now validates local tool signatures and shows a fix hint when mismatched.
 
+**Q: How do I fill Guest/User/Admin headers for Auth Replay quickly?**
+
+A:
+- In `Auth Replay`, click `Extract` next to Guest/User/Admin.
+- A searchable popup opens with captured header candidates.
+- Filter by endpoint text, header name, or token fragment.
+- Select one item and click `OK`; the field is filled in `Name: value` format.
+
 ### Export & Integration
 
 **Q: Where are exported files saved?**
@@ -895,6 +914,14 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 ## Updates & Roadmap
 
 ### Recent Updates
+
+### v1.2.0 - Auth Replay and Header Extraction UX
+- ✅ Added `Auth Replay` tab for multi-profile authorization regression checks
+- ✅ Added replay scope controls (`Selected Endpoint`, `Filtered View`, `All Endpoints`)
+- ✅ Added profile header fields for `Guest`, `User`, and `Admin`
+- ✅ Added `Extract` helper with searchable popup for captured header selection
+- ✅ Added replay cancellation support with dedicated `Stop` control
+- ✅ Improved replay logging and selection feedback in output
 
 ### v1.1.0 - External Tool UX and Control Update
 - ✅ Custom command override with validation for Nuclei, HTTPX, Katana, and Wayback
