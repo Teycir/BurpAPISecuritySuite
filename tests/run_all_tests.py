@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """Run all tests"""
 import sys
 import os
@@ -10,11 +11,12 @@ def run_tests():
     print("=" * 80)
     print("RUNNING ALL TESTS")
     print("=" * 80)
-    print()
+    print("")
     
     tests = [
         'test_fuzzer_logic',
-        'test_real_data'
+        'test_real_data',
+        'test_feature_contracts'
     ]
     
     passed = 0
@@ -22,8 +24,8 @@ def run_tests():
     
     for test_name in tests:
         try:
-            print(f"\n{'=' * 80}")
-            print(f"Running: {test_name}")
+            print("\n{}".format("=" * 80))
+            print("Running: {}".format(test_name))
             print('=' * 80)
             module = __import__(test_name)
             
@@ -32,18 +34,20 @@ def run_tests():
                 if attr.startswith('test_'):
                     func = getattr(module, attr)
                     if callable(func):
-                        func()
+                        result = func()
+                        if result is False:
+                            raise AssertionError("{}.{} returned False".format(test_name, attr))
             
             passed += 1
         except Exception as e:
-            print(f"  ✗ FAILED: {e}")
+            print("  [FAIL] {}".format(e))
             failed += 1
     
     print("\n" + "=" * 80)
     print("TEST SUMMARY")
     print("=" * 80)
-    print(f"Passed: {passed}/{len(tests)}")
-    print(f"Failed: {failed}/{len(tests)}")
+    print("Passed: {}/{}".format(passed, len(tests)))
+    print("Failed: {}/{}".format(failed, len(tests)))
     
     return failed == 0
 

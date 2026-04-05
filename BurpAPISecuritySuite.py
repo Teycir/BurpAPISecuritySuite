@@ -83,6 +83,284 @@ class BurpExtender(
     BASE64_PATTERN = re.compile(r"[A-Za-z0-9+/]{40,}={0,2}")
     HEX_PATTERN = re.compile(r"[0-9a-fA-F]{32,}")
     ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*[mK]")
+    PASSIVE_ADMIN_PATH_PATTERN = re.compile(
+        r"/(admin|internal|manage|role|roles|permission|permissions|billing|finance|staff|config|debug)(/|$)",
+        re.IGNORECASE,
+    )
+    PASSIVE_RESOURCE_PATH_PATTERN = re.compile(
+        r"/(search|list|export|report|download|upload|bulk|import|sync|query|graphql|analytics|history)(/|$)",
+        re.IGNORECASE,
+    )
+    PASSIVE_FLOW_PATH_PATTERN = re.compile(
+        r"/(checkout|payment|payout|transfer|withdraw|redeem|coupon|order|purchase|refund|approve|mfa|verify|reset|invite|subscription|billing)(/|$)",
+        re.IGNORECASE,
+    )
+    PASSIVE_WEBHOOK_PATH_PATTERN = re.compile(
+        r"/(webhook|callback|integration|notify)(/|$)",
+        re.IGNORECASE,
+    )
+    PASSIVE_VERSION_SEGMENT_PATTERN = re.compile(r"/(v\d+(?:\.\d+)?)(?=/|$)", re.IGNORECASE)
+    PASSIVE_LIMIT_QUERY_PATTERN = re.compile(
+        r"(?:^|&)(?:limit|page_size|pagesize|max|size)=([0-9]{1,7})(?:&|$)",
+        re.IGNORECASE,
+    )
+    PASSIVE_CALLBACK_PARAM_KEYWORDS = (
+        "url",
+        "uri",
+        "link",
+        "target",
+        "dest",
+        "destination",
+        "callback",
+        "redirect",
+        "return",
+        "next",
+        "webhook",
+        "endpoint",
+        "proxy",
+        "source",
+        "image",
+        "avatar",
+        "file",
+    )
+    PASSIVE_SIGNATURE_HEADER_HINTS = (
+        "x-signature",
+        "x-hub-signature",
+        "x-hub-signature-256",
+        "stripe-signature",
+        "x-webhook-signature",
+        "x-slack-signature",
+        "x-twilio-signature",
+    )
+    PASSIVE_UPSTREAM_ERROR_HINTS = (
+        "upstream",
+        "econnrefused",
+        "etimedout",
+        "timed out",
+        "connection refused",
+        "socket hang up",
+        "certificate verify failed",
+        "unable to resolve host",
+        "dns",
+    )
+    PASSIVE_SENSITIVE_FIELD_KEYWORDS = (
+        "ssn",
+        "social",
+        "dob",
+        "birth",
+        "salary",
+        "wage",
+        "tax",
+        "passport",
+        "national",
+        "identity",
+        "iban",
+        "bank",
+        "account",
+        "credit",
+        "card",
+        "cvv",
+        "email",
+        "phone",
+        "address",
+        "location",
+        "token",
+        "secret",
+        "password",
+    )
+    PASSIVE_STATIC_EXTENSIONS = (
+        ".js",
+        ".mjs",
+        ".css",
+        ".map",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".ico",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".mp4",
+        ".webm",
+        ".avi",
+        ".mov",
+        ".pdf",
+    )
+    PASSIVE_STATIC_PATH_PARTS = (
+        "js",
+        "css",
+        "static",
+        "dist",
+        "assets",
+        "images",
+        "img",
+        "fonts",
+        "sdk",
+        "library",
+        "safeframe",
+        "gtag",
+        "gtm",
+        "pagead",
+        "analytics",
+        "ads",
+        "sodar",
+        "prebid",
+        "rtv",
+    )
+    PASSIVE_API_PATTERN_HINTS = (
+        "rest api",
+        "graphql",
+        "json api",
+        "xml api",
+    )
+    FUZZER_STATIC_PATH_PARTS = PASSIVE_STATIC_PATH_PARTS + (
+        "xjs",
+        "pixels",
+        "pixel",
+        "sync",
+        "usersync",
+        "user-sync",
+        "cookie-sync",
+        "cookie_sync",
+        "rmkt",
+        "tr",
+        "ac",
+    )
+    PARAM_MINER_NOISE_PATH_MARKERS = (
+        "/openrtb",
+        "/prebid",
+        "/bidder",
+        "/header-bidding",
+        "/cookie-sync",
+        "/cookie_sync",
+        "/usersync",
+        "/user-sync",
+        "/pixel",
+        "/collect",
+        "/rum",
+        "/sodar",
+        "/pagead",
+        "/adserver",
+        "/sync",
+    )
+    FFUF_NOISE_HOST_PATTERNS = (
+        "google.com",
+        "doubleclick.net",
+        "googlesyndication.com",
+        "google-analytics.com",
+        "googleusercontent.com",
+        "gstatic.com",
+        "recaptcha.net",
+        "facebook.com",
+        "fbcdn.net",
+        "twitter.com",
+        "x.com",
+        "linkedin.com",
+        "cdn.",
+        "cloudfront.net",
+        "fastly.net",
+        "akamai",
+        "sentry.io",
+        "segment.io",
+        "datadog",
+        "newrelic",
+        "dailymotion.com",
+        "dmcdn.net",
+        "instagram.com",
+        "cdninstagram.com",
+        "youtube.com",
+        "ytimg.com",
+        "vimeo.com",
+        "tiktok.com",
+        "tiktokcdn.com",
+    )
+    WAYBACK_NOISE_HOST_PATTERNS = (
+        "doubleclick.net",
+        "googlesyndication.com",
+        "googleadservices.com",
+        "googletagmanager.com",
+        "adnxs.com",
+        "rubiconproject.com",
+        "pubmatic.com",
+        "outbrain.com",
+        "criteo.com",
+        "openx.net",
+        "teads.tv",
+        "smartadserver.com",
+        "everesttech.net",
+        "rfihub.com",
+        "sharethis.com",
+        "adform.net",
+        "taboola.com",
+        "bidswitch.net",
+        "demdex.net",
+        "casalemedia.com",
+        "zemanta.com",
+        "connatix.com",
+        "id5-sync.com",
+        "adscale.de",
+        "semasio.net",
+        "servenobid.com",
+        "pbstck.com",
+        "mediarithmics.com",
+        "seedtag.com",
+        "audion.fm",
+        "aps.amazon-adsystem.com",
+        "amazon-adsystem.com",
+        "scorecardresearch.com",
+        "adsrvr.org",
+    )
+    WAYBACK_NOISE_LABELS = (
+        "ad",
+        "ads",
+        "sync",
+        "pixel",
+        "tracker",
+        "tracking",
+        "analytics",
+        "metric",
+        "metrics",
+        "telemetry",
+        "beacon",
+        "tag",
+        "tags",
+        "prebid",
+        "bid",
+    )
+    FFUF_NOISE_PATH_PARTS = (
+        "pagead",
+        "ads",
+        "adservice",
+        "analytics",
+        "collect",
+        "pixel",
+        "beacon",
+        "telemetry",
+        "track",
+        "gtm",
+        "tag",
+    )
+    FFUF_MAX_TARGETS = 120
+    FFUF_THREADS = 16
+    FFUF_REQUEST_TIMEOUT_SECONDS = 8
+    FFUF_RATE_LIMIT = 35
+    FFUF_TARGET_TIMEOUT_SECONDS = 45
+    NUCLEI_MAX_TARGETS = 800
+    NUCLEI_REQUEST_TIMEOUT_SECONDS = 8
+    NUCLEI_RETRIES = 1
+    NUCLEI_RATE_LIMIT = 100
+    NUCLEI_CONCURRENCY = 20
+    NUCLEI_BULK_SIZE = 8
+    NUCLEI_MAX_HOST_ERROR = 8
+    NUCLEI_SCAN_STRATEGY = "host-spray"
+    NUCLEI_MAX_SCAN_SECONDS = 900
+    KATANA_MAX_TARGETS = 40
+    WAYBACK_MAX_QUERIES = 160
 
     def registerExtenderCallbacks(self, callbacks):
         self._callbacks = callbacks
@@ -96,6 +374,12 @@ class BurpExtender(
         self.max_endpoints = 800
         self.max_body_size = 5000
         self._tool_help_cache = {}
+        self.target_base_scope_lines = []
+        self.target_base_scope_hosts = set()
+        self.target_base_scope_bases = set()
+        self.target_base_scope_only_enabled = False
+        self.target_scope_checkboxes = []
+        self._syncing_target_scope_checkboxes = False
         self._tool_process_lock = threading.Lock()
         self._active_tool_processes = {}
         self._tool_cancel_flags = {
@@ -106,6 +390,8 @@ class BurpExtender(
             "wayback": threading.Event(),
             "authreplay": threading.Event(),
         }
+        self.passive_discovery_findings = []
+        self.passive_discovery_lock = threading.Lock()
 
         # Pagination state
         self.current_page = 0
@@ -274,6 +560,9 @@ class BurpExtender(
         # Auth Replay tab
         auth_replay_panel = self._create_auth_replay_tab()
 
+        # Passive Discovery tab
+        passive_discovery_panel = self._create_passive_discovery_tab()
+
         # Nuclei tab
         nuclei_panel = self._create_nuclei_tab()
 
@@ -296,6 +585,7 @@ class BurpExtender(
         self.tabbed_pane.addTab("Param Miner", param_panel)
         self.tabbed_pane.addTab("Fuzzer", fuzzer_panel)
         self.tabbed_pane.addTab("Auth Replay", auth_replay_panel)
+        self.tabbed_pane.addTab("Passive Discovery", passive_discovery_panel)
         self.tabbed_pane.addTab("Nuclei", nuclei_panel)
         self.tabbed_pane.addTab("HTTPX", httpx_panel)
         self.tabbed_pane.addTab("Katana", katana_panel)
@@ -331,13 +621,74 @@ class BurpExtender(
         btn.addActionListener(action)
         return btn
 
-    def _create_command_preset_combo(self, field, checkbox, presets, help_label=None):
-        """Create preset dropdown that populates custom command field."""
+    def _add_target_scope_controls(self, controls):
+        """Attach shared target-base scope controls for external tool tabs."""
+        controls.add(
+            self._create_action_button(
+                "Target Bases...",
+                Color(96, 125, 139),
+                lambda e: self._open_target_base_scope_popup(),
+            )
+        )
+        checkbox = JCheckBox(
+            "Only Base+Derivatives", bool(self.target_base_scope_only_enabled)
+        )
+        checkbox.setToolTipText(
+            "Restrict scans to popup base URLs/hosts and same base-domain derivatives."
+        )
+        checkbox.addActionListener(
+            lambda _event, cb=checkbox: self._set_target_base_scope_only(
+                cb.isSelected()
+            )
+        )
+        controls.add(checkbox)
+        self.target_scope_checkboxes.append(checkbox)
+
+    def _set_target_base_scope_only(self, enabled):
+        """Synchronize target-base-only scope state across tab checkboxes."""
+        desired = bool(enabled)
+        changed = desired != bool(self.target_base_scope_only_enabled)
+        self.target_base_scope_only_enabled = desired
+        if self._syncing_target_scope_checkboxes:
+            return
+        self._syncing_target_scope_checkboxes = True
+        try:
+            for checkbox in self.target_scope_checkboxes:
+                if checkbox is None:
+                    continue
+                if checkbox.isSelected() != desired:
+                    checkbox.setSelected(desired)
+        finally:
+            self._syncing_target_scope_checkboxes = False
+
+        if changed:
+            state = "enabled" if desired else "disabled"
+            self.log_to_ui("[*] Base URL scope mode {}".format(state))
+
+    def _add_force_kill_button(self, controls, output_area=None):
+        """Attach emergency kill button for external scanner processes."""
+
+        def on_click(_event):
+            area = output_area() if callable(output_area) else output_area
+            self._pkill_external_tools(area)
+
+        controls.add(
+            self._create_action_button(
+                "PKill Tools",
+                Color(183, 28, 28),
+                on_click,
+            )
+        )
+
+    def _create_command_preset_combo(
+        self, field, checkbox, presets, help_label=None, auto_enable=False
+    ):
+        """Create preset dropdown that populates command field from templates."""
         labels = ["Preset Cmd..."]
         labels.extend([label for label, _, _ in presets])
         combo = JComboBox(labels)
         combo.setToolTipText(
-            "Select a preset to auto-fill the custom command textbox"
+            "Select a preset to auto-fill the command textbox"
         )
 
         def on_select(_event):
@@ -346,10 +697,14 @@ class BurpExtender(
                 return
             _, template, description = presets[idx - 1]
             field.setText(template)
-            checkbox.setSelected(True)
+            if auto_enable:
+                checkbox.setSelected(True)
             if help_label:
-                help_label.setText("Preset Help: {}".format(description))
-                help_label.setToolTipText(description)
+                hint = description
+                if not checkbox.isSelected():
+                    hint = "{} Check 'Enable Custom' to run it.".format(description)
+                help_label.setText("Preset Help: {}".format(hint))
+                help_label.setToolTipText(hint)
             combo.setSelectedIndex(0)
 
         combo.addActionListener(on_select)
@@ -373,9 +728,13 @@ class BurpExtender(
             lines.append("=" * 60)
             lines.append("")
             lines.append("Quick Start:")
-            lines.append("  1) Default mode: leave 'Use Custom Cmd' unchecked.")
-            lines.append("  2) Override mode: check 'Use Custom Cmd' and provide Custom command.")
-            lines.append("  3) Preset dropdown auto-fills Custom command and enables override.")
+            lines.append("  1) Default mode: leave 'Enable Custom' unchecked.")
+            lines.append(
+                "  2) Override mode: check 'Enable Custom' and provide Command text."
+            )
+            lines.append(
+                "  3) Preset dropdown fills Command text only; override stays opt-in."
+            )
             lines.append("  4) Use Stop button to cancel long-running scans.")
             if usage_notes:
                 lines.append("")
@@ -666,43 +1025,11 @@ class BurpExtender(
         self.version_results = []
         lines = []
 
-        # Filter to API endpoints only
-        api_endpoints = {}
-        for key, entries in self.api_data.items():
-            entry = self._get_entry(entries)
-            path = entry["normalized_path"].lower()
-
-            # Skip static files
-            if any(
-                path.endswith(ext) for ext in [".js", ".css", ".html", ".json", ".xml"]
-            ):
-                continue
-
-            # Skip image/font paths
-            if any(
-                x in path
-                for x in [
-                    "/dist/",
-                    "/static/",
-                    "/css/",
-                    "/shreddit/",
-                    "/recaptcha/",
-                    "/gsi/",
-                ]
-            ):
-                continue
-
-            # Skip if already versioned
-            if any(v in path for v in ["/v1/", "/v2/", "/v3/", "/api/v"]):
-                continue
-
-            # Only include API-like paths
-            if "/api/" in path or "/svc/" in path or path.startswith("/r/"):
-                api_endpoints[key] = entries
+        api_endpoints, filter_meta = self._collect_version_targets()
 
         if not api_endpoints:
             self.version_area.setText(
-                "[!] No API endpoints found (filtered out static files)\n"
+                "[!] No API endpoints found (filtered out static/noisy endpoints)\n"
             )
             return
 
@@ -720,8 +1047,8 @@ class BurpExtender(
 
         summary = []
         summary.append(
-            "[*] Filtered: {} API endpoints (excluded static files)".format(
-                len(api_endpoints)
+            "[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(
+                len(api_endpoints), filter_meta.get("excluded_endpoints", 0)
             )
         )
         summary.append("[*] Testing {} version variations".format(len(versions)))
@@ -884,36 +1211,11 @@ class BurpExtender(
         base_params = [p.strip() for p in self.param_input.getText().split(",")]
         self.param_results = []
 
-        # Filter to API endpoints only
-        api_endpoints = {}
-        for key, entries in self.api_data.items():
-            entry = self._get_entry(entries)
-            path = entry["normalized_path"].lower()
-
-            # Skip static files
-            if any(
-                path.endswith(ext) for ext in [".js", ".css", ".html", ".json", ".xml"]
-            ):
-                continue
-
-            # Skip static resource paths
-            if any(
-                x in path
-                for x in ["/dist/", "/static/", "/css/", "/shreddit/", "/recaptcha/"]
-            ):
-                continue
-
-            # Prioritize API paths
-            if (
-                "/api/" in path
-                or "/svc/" in path
-                or entry["method"] in ["POST", "PUT", "PATCH", "DELETE"]
-            ):
-                api_endpoints[key] = entries
+        api_endpoints, filter_meta = self._collect_param_targets()
 
         if not api_endpoints:
             self.param_area.setText(
-                "[!] No API endpoints found (filtered out static files)\n"
+                "[!] No API endpoints found (filtered out static/noisy endpoints)\n"
             )
             return
 
@@ -936,8 +1238,8 @@ class BurpExtender(
 
         lines = []
         lines.append(
-            "[*] Filtered: {} API endpoints (excluded {} static files)".format(
-                len(api_endpoints), len(self.api_data) - len(api_endpoints)
+            "[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(
+                len(api_endpoints), filter_meta.get("excluded_endpoints", 0)
             )
         )
         lines.append(
@@ -1051,7 +1353,26 @@ class BurpExtender(
         controls = JPanel(FlowLayout(FlowLayout.LEFT))
         controls.add(JLabel("Attack:"))
         self.attack_type_combo = JComboBox(
-            ["All", "BOLA", "IDOR", "Auth Bypass", "SQLi", "XSS", "SSRF", "XXE", "WAF Bypass"]
+            [
+                "All",
+                "BOLA",
+                "IDOR",
+                "Auth Bypass",
+                "SQLi",
+                "XSS",
+                "NoSQL",
+                "Path Traversal",
+                "Mass Assignment",
+                "Race Condition",
+                "GraphQL",
+                "JWT",
+                "SSTI",
+                "Deserialization",
+                "Business Logic",
+                "SSRF",
+                "XXE",
+                "WAF Bypass",
+            ]
         )
         controls.add(self.attack_type_combo)
         controls.add(
@@ -1219,6 +1540,78 @@ class BurpExtender(
         self.auth_replay_lock = threading.Lock()
         return panel
 
+    def _create_passive_discovery_tab(self):
+        """Create passive discovery tab based on captured/replayed proxy history."""
+        panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+
+        controls = JPanel(FlowLayout(FlowLayout.LEFT))
+        controls.add(JLabel("Scope:"))
+        self.passive_scope_combo = JComboBox(
+            ["Selected Endpoint", "Filtered View", "All Endpoints"]
+        )
+        self.passive_scope_combo.setSelectedItem("All Endpoints")
+        controls.add(self.passive_scope_combo)
+        controls.add(JLabel("Mode:"))
+        self.passive_mode_combo = JComboBox(
+            [
+                "All",
+                "API5 (BFLA)",
+                "API3 (Data)",
+                "API4 (Resource)",
+                "API6 (Flows)",
+                "API9 (Version)",
+                "API10 (Consumption)",
+            ]
+        )
+        controls.add(self.passive_mode_combo)
+        controls.add(JLabel("Max:"))
+        self.passive_max_field = JTextField("250", 4)
+        controls.add(self.passive_max_field)
+        controls.add(
+            self._create_action_button(
+                "Run Passive", Color(40, 167, 69), lambda e: self._run_passive_discovery(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Export",
+                Color(70, 130, 180),
+                lambda e: self._export_passive_discovery_results(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Clear",
+                Color(220, 53, 69),
+                lambda e: self.passive_area.setText(""),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Copy",
+                Color(108, 117, 125),
+                lambda e: self._copy_to_clipboard(self.passive_area.getText()),
+            )
+        )
+
+        help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        help_row.add(
+            JLabel(
+                "Passive only: analyzes captured/replayed proxy history. No active requests are sent."
+            )
+        )
+
+        top_panel.add(controls)
+        top_panel.add(help_row)
+        panel.add(top_panel, BorderLayout.NORTH)
+
+        self.passive_area, scroll = self._create_text_area_panel()
+        panel.add(scroll, BorderLayout.CENTER)
+        self.passive_discovery_findings = []
+        return panel
+
     def _create_nuclei_tab(self):
         """Create Nuclei scanner tab"""
         panel = JPanel(BorderLayout())
@@ -1229,17 +1622,26 @@ class BurpExtender(
         controls.add(JLabel("Nuclei Path:"))
         import os
 
-        default_nuclei = os.path.expanduser("~/go/bin/nuclei")
+        nuclei_candidates = [
+            os.path.expanduser("~/go/bin/nuclei"),
+            os.path.expanduser("~/go/bin/nuclei.exe"),
+            "nuclei.exe" if os.name == "nt" else "nuclei",
+            "nuclei",
+        ]
+        default_nuclei = next(
+            (p for p in nuclei_candidates if os.path.exists(p)),
+            "nuclei.exe" if os.name == "nt" else "nuclei",
+        )
         self.nuclei_path_field = JTextField(
-            default_nuclei if os.path.exists(default_nuclei) else "nuclei", 25
+            default_nuclei, 25
         )
         controls.add(self.nuclei_path_field)
-        self.nuclei_custom_cmd_checkbox = JCheckBox("Use Custom Cmd", False)
+        self.nuclei_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
         controls.add(self.nuclei_custom_cmd_checkbox)
-        controls.add(JLabel("Custom:"))
+        controls.add(JLabel("Command:"))
         self.nuclei_custom_cmd_field = JTextField("", 35)
         self.nuclei_custom_cmd_field.setToolTipText(
-            "Example: {nuclei_path} -list {targets_file} -jsonl {json_file} -silent"
+            "Example: {nuclei_path} -list {targets_file} -jsonl-export {json_file} -silent"
         )
         controls.add(self.nuclei_custom_cmd_field)
         controls.add(JLabel("Preset:"))
@@ -1249,17 +1651,17 @@ class BurpExtender(
         nuclei_presets = [
             (
                 "Recon Fast",
-                '{nuclei_path} -list {targets_file} -tags exposure,config,api,swagger,openapi,graphql,jwt,panel,debug,backup,logs,trace,files,paths -etags dos,intrusive,headless,cve,fuzz -timeout 5 -retries 1 -rate-limit 150 -c 25 -silent -header "X-Forwarded-For: 127.0.0.1" -jsonl {json_file}',
-                "Runs broad API-focused discovery on generated Recon targets with fast settings.",
+                '{nuclei_path} -list {targets_file} -tags exposure,api,swagger,openapi -etags dos,intrusive,headless,cve,fuzz,fuzzing,brute-force -timeout 8 -retries 1 -rate-limit 100 -c 20 -bs 8 -mhe 8 -ss host-spray -no-httpx -project -silent -header "X-Forwarded-For: 127.0.0.1" -jsonl-export {json_file}',
+                "Optimized for speed: minimal tags, faster timeout, higher rate limit for quick API discovery.",
             ),
             (
                 "High/Critical",
-                "{nuclei_path} -list {targets_file} -severity critical,high -timeout 7 -retries 1 -rate-limit 100 -c 20 -silent -jsonl {json_file}",
+                "{nuclei_path} -list {targets_file} -severity critical,high -timeout 12 -retries 2 -rate-limit 40 -c 8 -silent -jsonl-export {json_file}",
                 "Prioritizes only high and critical findings for quick triage.",
             ),
             (
                 "API/Auth Focus",
-                "{nuclei_path} -list {targets_file} -tags api,swagger,openapi,graphql,auth,jwt,config,exposure -timeout 5 -retries 1 -rate-limit 120 -c 20 -silent -jsonl {json_file}",
+                "{nuclei_path} -list {targets_file} -tags api,swagger,openapi,graphql,auth,jwt,config,exposure -timeout 10 -retries 2 -rate-limit 45 -c 8 -silent -jsonl-export {json_file}",
                 "Targets API/authentication and configuration exposure checks.",
             ),
         ]
@@ -1278,16 +1680,18 @@ class BurpExtender(
                 nuclei_presets,
                 usage_notes=[
                     "Use local ProjectDiscovery nuclei binary in Nuclei Path.",
-                    "Default mode scans generated Recon targets (base URLs + API paths).",
+                    "Default mode scans scoped first-party Recon targets (base URLs + API paths).",
                     "Use tags and etags presets for fast API-focused coverage.",
                 ],
                 override_notes=[
                     "Include {json_file} so results can be parsed in this tab.",
+                    "Preferred JSON output flag: -jsonl-export {json_file}.",
                     "Include {targets_file} if you want to keep Recon-derived target scope.",
                     "Avoid unsupported flags for your local version (for example: -random-agent).",
                 ],
             )
         )
+        self._add_target_scope_controls(controls)
         controls.add(
             self._create_action_button(
                 "Run Nuclei", Color(138, 43, 226), lambda e: self._run_nuclei()
@@ -1298,6 +1702,7 @@ class BurpExtender(
                 "Stop", Color(255, 140, 0), lambda e: self._stop_nuclei(e)
             )
         )
+        self._add_force_kill_button(controls, lambda: getattr(self, "nuclei_area", None))
         controls.add(
             self._create_action_button(
                 "Export Targets",
@@ -1340,18 +1745,23 @@ class BurpExtender(
 
         httpx_paths = [
             os.path.expanduser("~/go/bin/httpx"),
+            os.path.expanduser("~/go/bin/httpx.exe"),
             "/usr/local/bin/httpx",
+            "httpx.exe" if os.name == "nt" else "httpx",
             "httpx",
         ]
-        default_httpx = next((p for p in httpx_paths if os.path.exists(p)), "httpx")
+        default_httpx = next(
+            (p for p in httpx_paths if os.path.exists(p)),
+            "httpx.exe" if os.name == "nt" else "httpx",
+        )
         self.httpx_path_field = JTextField(default_httpx, 25)
         controls.add(self.httpx_path_field)
-        self.httpx_custom_cmd_checkbox = JCheckBox("Use Custom Cmd", False)
+        self.httpx_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
         controls.add(self.httpx_custom_cmd_checkbox)
-        controls.add(JLabel("Custom:"))
+        controls.add(JLabel("Command:"))
         self.httpx_custom_cmd_field = JTextField("", 35)
         self.httpx_custom_cmd_field.setToolTipText(
-            "Example: cat {urls_file} | {httpx_path} -status-code -nc"
+            "Example: {httpx_path} -l {urls_file} -status-code -nc -silent"
         )
         controls.add(self.httpx_custom_cmd_field)
         controls.add(JLabel("Preset:"))
@@ -1361,17 +1771,17 @@ class BurpExtender(
         httpx_presets = [
             (
                 "Status+NoColor",
-                "cat {urls_file} | {httpx_path} -status-code -nc -silent",
+                "{httpx_path} -l {urls_file} -status-code -nc -silent",
                 "Basic status-code probe with clean output formatting.",
             ),
             (
                 "Status+Title",
-                "cat {urls_file} | {httpx_path} -status-code -title -nc -silent",
+                "{httpx_path} -l {urls_file} -status-code -title -nc -silent",
                 "Adds page titles alongside status codes for faster endpoint review.",
             ),
             (
                 "Tech+Server",
-                "cat {urls_file} | {httpx_path} -status-code -tech-detect -server -nc -silent",
+                "{httpx_path} -l {urls_file} -status-code -tech-detect -server -nc -silent",
                 "Includes technology and server fingerprinting with status codes.",
             ),
         ]
@@ -1409,6 +1819,7 @@ class BurpExtender(
                 "Stop", Color(255, 140, 0), lambda e: self._stop_httpx(e)
             )
         )
+        self._add_force_kill_button(controls, lambda: getattr(self, "httpx_area", None))
         controls.add(
             self._create_action_button(
                 "Export URLs", Color(70, 130, 180), lambda e: self._export_httpx_urls()
@@ -1447,17 +1858,26 @@ class BurpExtender(
         controls.add(JLabel("Katana Path:"))
         import os
 
-        default_katana = os.path.expanduser("~/go/bin/katana")
+        katana_candidates = [
+            os.path.expanduser("~/go/bin/katana"),
+            os.path.expanduser("~/go/bin/katana.exe"),
+            "katana.exe" if os.name == "nt" else "katana",
+            "katana",
+        ]
+        default_katana = next(
+            (p for p in katana_candidates if os.path.exists(p)),
+            "katana.exe" if os.name == "nt" else "katana",
+        )
         self.katana_path_field = JTextField(
-            default_katana if os.path.exists(default_katana) else "katana", 25
+            default_katana, 25
         )
         controls.add(self.katana_path_field)
-        self.katana_custom_cmd_checkbox = JCheckBox("Use Custom Cmd", False)
+        self.katana_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
         controls.add(self.katana_custom_cmd_checkbox)
-        controls.add(JLabel("Custom:"))
+        controls.add(JLabel("Command:"))
         self.katana_custom_cmd_field = JTextField("", 35)
         self.katana_custom_cmd_field.setToolTipText(
-            "Example: cat {urls_file} | {katana_path} -d 1 -jc -silent"
+            "Example: {katana_path} -list {urls_file} -d 1 -jc -silent"
         )
         controls.add(self.katana_custom_cmd_field)
         controls.add(JLabel("Preset:"))
@@ -1467,17 +1887,17 @@ class BurpExtender(
         katana_presets = [
             (
                 "Depth1 JSON",
-                "cat {urls_file} | {katana_path} -d 1 -jc -silent",
+                "{katana_path} -list {urls_file} -d 1 -jc -silent",
                 "Fast shallow crawl (depth 1) with JSON-compatible output lines.",
             ),
             (
                 "Depth2 JSON",
-                "cat {urls_file} | {katana_path} -d 2 -jc -silent",
+                "{katana_path} -list {urls_file} -d 2 -jc -silent",
                 "Balanced crawl depth for wider endpoint discovery.",
             ),
             (
                 "Depth3 URL",
-                "cat {urls_file} | {katana_path} -d 3 -silent",
+                "{katana_path} -list {urls_file} -d 3 -silent",
                 "Deeper crawl for maximum coverage; slower and noisier.",
             ),
         ]
@@ -1505,6 +1925,7 @@ class BurpExtender(
                 ],
             )
         )
+        self._add_target_scope_controls(controls)
         controls.add(
             self._create_action_button(
                 "Crawl Endpoints", Color(156, 39, 176), lambda e: self._run_katana(e)
@@ -1515,6 +1936,7 @@ class BurpExtender(
                 "Stop", Color(255, 140, 0), lambda e: self._stop_katana(e)
             )
         )
+        self._add_force_kill_button(controls, lambda: getattr(self, "katana_area", None))
         controls.add(
             self._create_action_button(
                 "Export Discovered",
@@ -1562,9 +1984,18 @@ class BurpExtender(
         controls.add(JLabel("FFUF Path:"))
         import os
 
-        default_ffuf = os.path.expanduser("~/go/bin/ffuf")
+        ffuf_candidates = [
+            os.path.expanduser("~/go/bin/ffuf"),
+            os.path.expanduser("~/go/bin/ffuf.exe"),
+            "ffuf.exe" if os.name == "nt" else "ffuf",
+            "ffuf",
+        ]
+        default_ffuf = next(
+            (p for p in ffuf_candidates if os.path.exists(p)),
+            "ffuf.exe" if os.name == "nt" else "ffuf",
+        )
         self.ffuf_path_field = JTextField(
-            default_ffuf if os.path.exists(default_ffuf) else "ffuf", 20
+            default_ffuf, 20
         )
         controls.add(self.ffuf_path_field)
         controls.add(JLabel("Wordlist:"))
@@ -1577,6 +2008,7 @@ class BurpExtender(
             default_wordlist = "/usr/share/wordlists/dirb/common.txt"
         self.ffuf_wordlist_field = JTextField(default_wordlist, 20)
         controls.add(self.ffuf_wordlist_field)
+        self._add_target_scope_controls(controls)
         controls.add(
             self._create_action_button(
                 "Fuzz Directories", Color(255, 87, 34), lambda e: self._run_ffuf(e)
@@ -1587,6 +2019,7 @@ class BurpExtender(
                 "Stop", Color(255, 140, 0), lambda e: self._stop_ffuf(e)
             )
         )
+        self._add_force_kill_button(controls, lambda: getattr(self, "ffuf_area", None))
         controls.add(
             self._create_action_button(
                 "Export Results",
@@ -1624,9 +2057,12 @@ class BurpExtender(
 
     def _create_wayback_tab(self):
         """Create Wayback Machine discovery tab"""
+        import os
+
         panel = JPanel(BorderLayout())
         top_panel = JPanel()
         top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+        stdin_prefix = "type" if os.name == "nt" else "cat"
         controls = JPanel(FlowLayout(FlowLayout.LEFT))
         controls.add(JLabel("Wayback:"))
         controls.add(
@@ -1639,6 +2075,7 @@ class BurpExtender(
                 "Stop", Color(255, 140, 0), lambda e: self._stop_wayback(e)
             )
         )
+        self._add_force_kill_button(controls, lambda: getattr(self, "wayback_area", None))
         controls.add(
             self._create_action_button(
                 "Send to Recon",
@@ -1667,14 +2104,14 @@ class BurpExtender(
         self.wayback_to_field = JTextField(str(time.localtime().tm_year), 4)
         controls.add(self.wayback_to_field)
         controls.add(JLabel(" | Limit:"))
-        self.wayback_limit_field = JTextField("100", 3)
+        self.wayback_limit_field = JTextField("50", 3)
         controls.add(self.wayback_limit_field)
-        self.wayback_custom_cmd_checkbox = JCheckBox("Use Custom Cmd", False)
+        self.wayback_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
         controls.add(self.wayback_custom_cmd_checkbox)
-        controls.add(JLabel("Custom:"))
+        controls.add(JLabel("Command:"))
         self.wayback_custom_cmd_field = JTextField("", 45)
         self.wayback_custom_cmd_field.setToolTipText(
-            "Example: cat {targets_file} | waybackurls"
+            "Example: {} \"{{targets_file}}\" | waybackurls".format(stdin_prefix)
         )
         controls.add(self.wayback_custom_cmd_field)
         controls.add(JLabel("Preset:"))
@@ -1684,17 +2121,17 @@ class BurpExtender(
         wayback_presets = [
             (
                 "waybackurls",
-                "cat {targets_file} | waybackurls",
+                "{} \"{{targets_file}}\" | waybackurls".format(stdin_prefix),
                 "Uses waybackurls to pull archived URLs from Wayback index.",
             ),
             (
                 "gau",
-                "cat {targets_file} | gau --subs",
+                "{} \"{{targets_file}}\" | gau --subs".format(stdin_prefix),
                 "Uses gau to gather historical URLs including subdomains.",
             ),
             (
                 "gau+threads",
-                "cat {targets_file} | gau --subs --threads 5",
+                "{} \"{{targets_file}}\" | gau --subs --threads 5".format(stdin_prefix),
                 "Same as gau preset with thread tuning for faster collection.",
             ),
         ]
@@ -1723,6 +2160,7 @@ class BurpExtender(
                 ],
             )
         )
+        self._add_target_scope_controls(controls)
         controls.add(
             self._create_action_button(
                 "Clear", Color(220, 53, 69), lambda e: self.wayback_area.setText("")
@@ -2326,9 +2764,19 @@ class BurpExtender(
             return param_data
         return []
 
+    def _attack_selected(self, attack_type, aliases):
+        """Match selected attack mode while keeping `All` as a superset."""
+        selected = (attack_type or "").strip().lower()
+        if selected == "all":
+            return True
+        for alias in aliases:
+            if selected == str(alias).strip().lower():
+                return True
+        return False
+
     def _check_idor(self, normalized, attack_type):
         """Check if endpoint is vulnerable to IDOR - verify ID params are used"""
-        if attack_type not in ["BOLA", "IDOR", "All"]:
+        if not self._attack_selected(attack_type, ["BOLA", "IDOR"]):
             return None
         path = normalized["path"]
         if "{id}" not in path and "{uuid}" not in path and "{objectid}" not in path:
@@ -2366,7 +2814,7 @@ class BurpExtender(
 
     def _check_bola(self, normalized, attack_type):
         """Check for BOLA-specific attacks (all endpoints with auth)"""
-        if attack_type not in ["BOLA", "All"]:
+        if not self._attack_selected(attack_type, ["BOLA"]):
             return None
         if "None" in normalized["auth"]:
             return None
@@ -2402,7 +2850,7 @@ class BurpExtender(
 
     def _check_auth_bypass(self, normalized, attack_type):
         """Check if endpoint has auth bypass potential"""
-        if attack_type not in ["Auth Bypass", "All"]:
+        if not self._attack_selected(attack_type, ["Auth Bypass"]):
             return None
         if "None" in normalized["auth"]:
             return None
@@ -2421,7 +2869,7 @@ class BurpExtender(
 
     def _check_sqli(self, normalized, attack_type):
         """Check if endpoint has SQLi potential - verify params are used"""
-        if attack_type not in ["SQLi", "All"]:
+        if not self._attack_selected(attack_type, ["SQLi", "SQL Injection"]):
             return None
         params = normalized["params"]
         if not params["url"] and not params["body"]:
@@ -2446,7 +2894,7 @@ class BurpExtender(
 
     def _check_xss(self, normalized, attack_type):
         """Check if endpoint has XSS potential - only for HTML responses"""
-        if attack_type not in ["XSS", "All"]:
+        if not self._attack_selected(attack_type, ["XSS"]):
             return None
         if not normalized["reflected"]:
             return None
@@ -2464,9 +2912,67 @@ class BurpExtender(
             "note": "HTML context detected - reflection in JSON APIs is not XSS"
         }
 
+    def _check_ssrf(self, normalized, attack_type):
+        """Check for SSRF candidates using path/parameter hints."""
+        if not self._attack_selected(attack_type, ["SSRF"]):
+            return None
+        params = normalized["params"]
+        candidate_params = list(params.get("url", [])) + list(params.get("body", [])) + list(
+            params.get("json", [])
+        )
+        candidate_params_lower = [str(x).lower() for x in candidate_params]
+        path = normalized["path"].lower()
+        param_hits = any(
+            any(keyword in name for keyword in self.PASSIVE_CALLBACK_PARAM_KEYWORDS)
+            for name in candidate_params_lower
+        )
+        path_hits = any(
+            marker in path
+            for marker in ["/proxy", "/fetch", "/callback", "/redirect", "/webhook", "/import", "/image", "/url"]
+        )
+        if not param_hits and not path_hits:
+            return None
+        return {
+            "type": "SSRF",
+            "params": candidate_params[:6],
+            "payloads": self._get_ssrf_payloads()[:6],
+            "test": "Probe internal hosts, metadata endpoints, and protocol confusion",
+            "risk": "Internal network access, metadata theft, and pivoting",
+            "note": "Prefer Burp Collaborator/internal canary targets for safe validation",
+        }
+
+    def _check_xxe(self, normalized, attack_type):
+        """Check for XML/XXE candidates from content type, path, and parameter hints."""
+        if not self._attack_selected(attack_type, ["XXE"]):
+            return None
+        content_type = normalized["content_type"].lower()
+        path = normalized["path"].lower()
+        params = normalized["params"]
+        body_like_params = list(params.get("body", [])) + list(params.get("json", []))
+        body_like_lower = [str(x).lower() for x in body_like_params]
+        xml_hints = (
+            "xml" in content_type
+            or "soap" in content_type
+            or any(marker in path for marker in ["/xml", "/soap", "/saml"])
+            or any(
+                any(keyword in name for keyword in ["xml", "soap", "saml", "payload", "doctype", "svg"])
+                for name in body_like_lower
+            )
+        )
+        if not xml_hints:
+            return None
+        return {
+            "type": "XXE",
+            "params": body_like_params[:6],
+            "payloads": self._get_xxe_payloads()[:4],
+            "test": "External entity resolution, file disclosure, and blind XXE callbacks",
+            "risk": "Sensitive file access, SSRF via parser, and parser DoS",
+            "note": "Only test XXE against endpoints that accept XML payloads",
+        }
+
     def _check_nosqli(self, normalized, attack_type):
         """Check if endpoint has NoSQL injection potential"""
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["NoSQL", "NoSQL Injection"]):
             return None
         if "json" not in normalized["content_type"].lower():
             return None
@@ -2481,7 +2987,7 @@ class BurpExtender(
 
     def _check_path_traversal(self, normalized, attack_type):
         """Check if endpoint has path traversal potential"""
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["Path Traversal"]):
             return None
         path = normalized["path"].lower()
         if not any(p in path for p in ["file", "path", "download", "upload"]):
@@ -2494,7 +3000,7 @@ class BurpExtender(
 
     def _check_mass_assignment(self, normalized, attack_type):
         """Check if endpoint has mass assignment potential"""
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["Mass Assignment"]):
             return None
         if normalized["method"] not in ["POST", "PUT", "PATCH"]:
             return None
@@ -2556,6 +3062,212 @@ class BurpExtender(
         lines.append("")  # Blank line between attacks
         return lines
 
+    def _fuzzer_endpoint_is_api_like(self, normalized):
+        """Gate fuzzer candidates to API-like traffic, not static/ad-tech routes."""
+        method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+        path = self._ascii_safe(normalized.get("path") or "/", lower=True).strip()
+        content_type = self._ascii_safe(normalized.get("content_type"), lower=True).strip()
+        auth = [
+            self._ascii_safe(x, lower=True)
+            for x in (normalized.get("auth", []) or [])
+        ]
+
+        first_part = ""
+        parts = [p for p in path.strip("/").split("/") if p]
+        if parts:
+            first_part = parts[0]
+
+        if path.endswith(self.PASSIVE_STATIC_EXTENSIONS):
+            return False
+        if first_part in self.FUZZER_STATIC_PATH_PARTS:
+            return False
+        if self._ffuf_is_noise_path_segment(first_part):
+            return False
+        if (
+            "javascript" in content_type
+            or "ecmascript" in content_type
+            or "text/css" in content_type
+            or content_type.startswith("image/")
+            or content_type.startswith("font/")
+            or content_type.startswith("video/")
+            or content_type.startswith("audio/")
+        ):
+            return False
+
+        has_api_marker = bool(
+            "/api/" in path
+            or "/graphql" in path
+            or "/rest/" in path
+            or "/openapi" in path
+            or "/swagger" in path
+            or "/metadata/" in path
+            or "/oauth" in path
+            or "/auth/" in path
+            or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+        )
+        has_structured_content = bool(
+            (
+                "json" in content_type
+                or "xml" in content_type
+                or "protobuf" in content_type
+                or "x-www-form-urlencoded" in content_type
+                or "multipart/form-data" in content_type
+            )
+            and "javascript" not in content_type
+            and "html" not in content_type
+        )
+
+        params = normalized.get("params", {})
+        param_count = 0
+        for key in ["url", "body", "json", "cookie"]:
+            param_count += len(params.get(key, []))
+
+        has_id_hint = bool(
+            "{id}" in path or "{uuid}" in path or "{objectid}" in path
+        )
+        has_auth_context = any(x != "none" for x in auth)
+        has_write_method = method in ["POST", "PUT", "PATCH", "DELETE"]
+
+        if len(path) > 220 and not (
+            has_api_marker or has_structured_content or has_write_method
+        ):
+            return False
+        if re.search(r"/[a-z0-9_-]{80,}", path) and not (
+            has_api_marker or has_structured_content or has_write_method
+        ):
+            return False
+
+        if has_write_method:
+            return True
+        if has_api_marker or has_structured_content:
+            return True
+        if has_id_hint and has_auth_context:
+            return True
+        if param_count >= 4 and first_part and first_part not in self.FUZZER_STATIC_PATH_PARTS:
+            return True
+        return False
+
+    def _collect_fuzzer_targets(self):
+        """Collect fuzzer targets from first-party/API-like entries only."""
+        raw_snapshot = {}
+        with self.lock:
+            for key, raw_entries in self.api_data.items():
+                if isinstance(raw_entries, list):
+                    raw_snapshot[key] = list(raw_entries)
+                elif isinstance(raw_entries, dict):
+                    raw_snapshot[key] = [raw_entries]
+
+        filter_cfg = self._build_passive_filter_config(raw_snapshot)
+        filtered = {}
+        excluded_endpoints = 0
+
+        for key, entries in raw_snapshot.items():
+            kept_entries = []
+            entries_list = entries if isinstance(entries, list) else [entries]
+            for entry in entries_list:
+                if not isinstance(entry, dict):
+                    continue
+                if not self._passive_entry_allowed(entry, filter_cfg):
+                    continue
+                normalized = self._normalize_endpoint_data(entry)
+                status = int(normalized.get("response_status", 200) or 200)
+                if status == 404:
+                    continue
+                if not self._fuzzer_endpoint_is_api_like(normalized):
+                    continue
+                kept_entries.append(entry)
+
+            if kept_entries:
+                filtered[key] = kept_entries
+            else:
+                excluded_endpoints += 1
+
+        return filtered, {
+            "raw_endpoints": len(raw_snapshot),
+            "filtered_endpoints": len(filtered),
+            "excluded_endpoints": excluded_endpoints,
+        }
+
+    def _path_contains_noise_marker(self, path, markers):
+        """Check whether path contains any marker from a marker list."""
+        text = self._ascii_safe(path, lower=True).strip()
+        if not text:
+            return False
+        return any(marker in text for marker in markers)
+
+    def _collect_param_targets(self):
+        """Collect Param Miner targets with first-party/API-like and ad-tech noise filtering."""
+        base_targets, base_meta = self._collect_fuzzer_targets()
+        filtered = {}
+        excluded_method = 0
+        excluded_noise = 0
+
+        for key, entries in base_targets.items():
+            entry = self._get_entry(entries)
+            normalized = self._normalize_endpoint_data(entry)
+            method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+            if method not in ["GET", "POST", "PUT", "PATCH", "DELETE"]:
+                excluded_method += 1
+                continue
+
+            path = self._ascii_safe(normalized.get("path") or "/", lower=True)
+            auth = [
+                self._ascii_safe(x, lower=True)
+                for x in (normalized.get("auth", []) or [])
+            ]
+            has_auth_context = any(x != "none" for x in auth)
+            if (not has_auth_context) and self._path_contains_noise_marker(
+                path, self.PARAM_MINER_NOISE_PATH_MARKERS
+            ):
+                excluded_noise += 1
+                continue
+
+            filtered[key] = entries
+
+        return filtered, {
+            "raw_endpoints": base_meta.get("raw_endpoints", 0),
+            "filtered_endpoints": len(filtered),
+            "excluded_endpoints": base_meta.get("excluded_endpoints", 0)
+            + excluded_method
+            + excluded_noise,
+            "excluded_method": excluded_method,
+            "excluded_noise": excluded_noise,
+        }
+
+    def _collect_version_targets(self):
+        """Collect Version Scanner targets from Param Miner scoped target set."""
+        param_targets, param_meta = self._collect_param_targets()
+        filtered = {}
+        excluded_versioned = 0
+        excluded_non_api = 0
+
+        for key, entries in param_targets.items():
+            entry = self._get_entry(entries)
+            path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True)
+            method = self._ascii_safe(entry.get("method"), lower=True).strip().upper()
+
+            # Skip already-versioned paths
+            if any(v in path for v in ["/v1/", "/v2/", "/v3/", "/v4/", "/v5/", "/api/v"]):
+                excluded_versioned += 1
+                continue
+
+            api_marker = any(x in path for x in ["/api/", "/svc/", "/rest/", "/graphql"])
+            if (not api_marker) and method not in ["POST", "PUT", "PATCH", "DELETE"]:
+                excluded_non_api += 1
+                continue
+
+            filtered[key] = entries
+
+        return filtered, {
+            "raw_endpoints": param_meta.get("raw_endpoints", 0),
+            "filtered_endpoints": len(filtered),
+            "excluded_endpoints": param_meta.get("excluded_endpoints", 0)
+            + excluded_versioned
+            + excluded_non_api,
+            "excluded_versioned": excluded_versioned,
+            "excluded_non_api": excluded_non_api,
+        }
+
     def _generate_fuzzing_attacks(self, endpoints, attack_type):
         """Core fuzzing logic - pure function for testing"""
         attacks = []
@@ -2579,6 +3291,8 @@ class BurpExtender(
                     self._check_auth_bypass(normalized, attack_type),
                     self._check_sqli(normalized, attack_type),
                     self._check_xss(normalized, attack_type),
+                    self._check_ssrf(normalized, attack_type),
+                    self._check_xxe(normalized, attack_type),
                     self._check_nosqli(normalized, attack_type),
                     self._check_path_traversal(normalized, attack_type),
                     self._check_mass_assignment(normalized, attack_type),
@@ -2600,7 +3314,7 @@ class BurpExtender(
         return attacks
 
     def _check_race_condition(self, normalized, attack_type):
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["Race Condition"]):
             return None
         if normalized["method"] not in ["POST", "PUT", "PATCH", "DELETE"]:
             return None
@@ -2619,7 +3333,7 @@ class BurpExtender(
         }
 
     def _check_graphql(self, normalized, attack_type):
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["GraphQL"]):
             return None
         if "graphql" not in normalized["path"].lower():
             return None
@@ -2638,7 +3352,7 @@ class BurpExtender(
         }
 
     def _check_jwt(self, normalized, attack_type):
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["JWT"]):
             return None
         if "Bearer Token" not in normalized["auth"]:
             return None
@@ -2652,7 +3366,7 @@ class BurpExtender(
         }
 
     def _check_ssti(self, normalized, attack_type):
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["SSTI"]):
             return None
         params = normalized["params"]
         if not params["url"] and not params["body"]:
@@ -2665,7 +3379,7 @@ class BurpExtender(
         }
 
     def _check_deserialization(self, normalized, attack_type):
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["Deserialization"]):
             return None
         ct = normalized["content_type"].lower()
         if "java" not in ct and "serializ" not in ct and "application/octet" not in ct:
@@ -2678,7 +3392,7 @@ class BurpExtender(
         }
 
     def _check_business_logic(self, normalized, attack_type):
-        if attack_type != "All":
+        if not self._attack_selected(attack_type, ["Business Logic"]):
             return None
         path = normalized["path"].lower()
         if not any(
@@ -2716,7 +3430,7 @@ class BurpExtender(
     
     def _check_waf_bypass(self, normalized, attack_type):
         """Check if endpoint should be tested for WAF bypass (pure function)"""
-        if attack_type not in ["WAF Bypass", "All"]:
+        if not self._attack_selected(attack_type, ["WAF Bypass"]):
             return None
 
         return {
@@ -2785,38 +3499,20 @@ class BurpExtender(
             self.log_to_ui("[!] No endpoints to fuzz")
             return
 
-        # Filter to API endpoints only
-        api_endpoints = {}
-        for key, entries in self.api_data.items():
-            entry = self._get_entry(entries)
-            path = entry["normalized_path"].lower()
-
-            # Skip static files
-            if any(
-                path.endswith(ext) for ext in [".js", ".css", ".html", ".json", ".xml"]
-            ):
-                continue
-
-            # Skip static resource paths
-            if any(
-                x in path
-                for x in ["/dist/", "/static/", "/css/", "/shreddit/", "/recaptcha/"]
-            ):
-                continue
-
-            api_endpoints[key] = entries
+        api_endpoints, filter_meta = self._collect_fuzzer_targets()
+        excluded_count = int(filter_meta.get("excluded_endpoints", 0))
 
         if not api_endpoints:
             self.fuzzer_area.setText(
-                "[!] No API endpoints found (filtered out {} static files)\n".format(
-                    len(self.api_data)
+                "[!] No API-like endpoints found after scope/noise filtering (excluded {})\n".format(
+                    excluded_count
                 )
             )
             return
 
         self.log_to_ui(
-            "[*] Fuzzing {} API endpoints (filtered {} static)".format(
-                len(api_endpoints), len(self.api_data) - len(api_endpoints)
+            "[*] Fuzzing {} API-like endpoints (excluded {})".format(
+                len(api_endpoints), excluded_count
             )
         )
 
@@ -2834,7 +3530,7 @@ class BurpExtender(
                 attack_types[atype] = attack_types.get(atype, 0) + 1
 
                 # Count severity
-                if atype in ["IDOR/BOLA", "BOLA", "Auth Bypass", "SQL Injection"]:
+                if atype in ["IDOR/BOLA", "BOLA", "Auth Bypass", "SQL Injection", "SSRF", "XXE"]:
                     critical_count += 1
                 elif atype in ["XSS", "NoSQL Injection", "SSTI", "Deserialization"]:
                     high_count += 1
@@ -2846,8 +3542,8 @@ class BurpExtender(
             summary.append("="*80)
             summary.append("")
             summary.append(
-                "[*] Filtered: {} API endpoints (excluded {} static files)".format(
-                    len(api_endpoints), len(self.api_data) - len(api_endpoints)
+                "[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(
+                    len(api_endpoints), excluded_count
                 )
             )
             summary.append(
@@ -2985,7 +3681,7 @@ class BurpExtender(
                     for bypass_header in attack["bypass_headers"][:3]:
                         headers[bypass_header.split(":")[0]] = bypass_header.split(":", 1)[1].strip()
 
-            if attack["type"] in ["SQL Injection", "XSS", "SSTI"]:
+            if attack["type"] in ["SQL Injection", "XSS", "SSTI", "SSRF", "XXE"]:
                 # Mark parameters
                 if "params" in attack and attack["params"]:
                     for param in attack["params"]:
@@ -3023,6 +3719,9 @@ class BurpExtender(
                     "SQL Injection",
                     "NoSQL Injection",
                     "Mass Assignment",
+                    "SSTI",
+                    "SSRF",
+                    "XXE",
                 ]:
                     body = (
                         body.replace('":', '":§').replace(",", "§,").replace("}", "§}")
@@ -3420,6 +4119,200 @@ def handleResponse(req, interesting):
             return
         self.nuclei_area.append("\n[!] Results displayed above\n")
 
+    def _collect_nuclei_targets(self):
+        """Collect scoped Nuclei targets without cross-host path cartesian expansion."""
+        static_skip_parts = set(
+            [
+                "js",
+                "css",
+                "static",
+                "dist",
+                "assets",
+                "images",
+                "img",
+                "fonts",
+                "cdn-cgi",
+                "captcha",
+                "recaptcha",
+                "player",
+            ]
+        )
+
+        with self.lock:
+            entries_snapshot = [self._get_entry(entries) for entries in self.api_data.values()]
+
+        scope_override = self._get_target_scope_override()
+        host_counts = {}
+        base_scores = {}
+        for entry in entries_snapshot:
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                continue
+            if scope_override.get("enabled") and not self._host_matches_target_scope(
+                host, scope_override
+            ):
+                continue
+            host_counts[host] = host_counts.get(host, 0) + 1
+            if (not scope_override.get("enabled")) and self._is_wayback_noise_host(host):
+                continue
+
+            base = self._infer_base_domain(host)
+            if not base:
+                continue
+
+            score = 1
+            method = self._ascii_safe(entry.get("method"), lower=True).strip()
+            if method in ["post", "put", "patch", "delete"]:
+                score += 2
+
+            path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True)
+            parts = [p for p in path.strip("/").split("/") if p]
+            if parts:
+                first_part = parts[0]
+                if first_part.startswith("api") or first_part in [
+                    "v1",
+                    "v2",
+                    "v3",
+                    "v4",
+                    "graphql",
+                    "rest",
+                    "svc",
+                    "internal",
+                    "auth",
+                    "oauth",
+                ]:
+                    score += 3
+            base_scores[base] = base_scores.get(base, 0) + score
+
+        if scope_override.get("enabled"):
+            selected_host = "target-bases"
+            force_host = False
+            allowed_bases = set(scope_override.get("bases", set()))
+        else:
+            selected_host = "all"
+            try:
+                if hasattr(self, "host_filter") and self.host_filter is not None:
+                    selected_host = self._ascii_safe(
+                        str(self.host_filter.getSelectedItem()), lower=True
+                    ).strip()
+            except Exception as e:
+                self._callbacks.printError("Nuclei host-filter read error: {}".format(str(e)))
+                selected_host = "all"
+            force_host = bool(selected_host and selected_host != "all")
+
+            sorted_bases = sorted(base_scores.items(), key=lambda item: (-item[1], item[0]))
+            allowed_bases = set([base for base, _ in sorted_bases[:1]])
+            if not allowed_bases:
+                fallback_bases = {}
+                for host, count in host_counts.items():
+                    if self._is_wayback_noise_host(host):
+                        continue
+                    base = self._infer_base_domain(host)
+                    if not base:
+                        continue
+                    fallback_bases[base] = fallback_bases.get(base, 0) + count
+                fallback_sorted = sorted(
+                    fallback_bases.items(), key=lambda item: (-item[1], item[0])
+                )
+                allowed_bases = set([base for base, _ in fallback_sorted[:1]])
+
+        dropped_noise_host = 0
+        dropped_scope_host = 0
+        dropped_path = 0
+        inspected_entries = 0
+        candidates = set()
+        for entry in entries_snapshot:
+            inspected_entries += 1
+            protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                dropped_scope_host += 1
+                continue
+
+            if scope_override.get("enabled"):
+                if not self._host_matches_target_scope(host, scope_override):
+                    dropped_scope_host += 1
+                    continue
+            elif force_host:
+                if host != selected_host:
+                    dropped_scope_host += 1
+                    continue
+            else:
+                if self._is_wayback_noise_host(host):
+                    dropped_noise_host += 1
+                    continue
+                host_base = self._infer_base_domain(host)
+                if allowed_bases and host_base not in allowed_bases:
+                    dropped_scope_host += 1
+                    continue
+
+            port = entry.get("port", -1)
+            if port == -1:
+                port = 443 if protocol == "https" else 80
+            if (protocol == "https" and port == 443) or (
+                protocol == "http" and port == 80
+            ):
+                base = "{}://{}".format(protocol, host)
+            else:
+                base = "{}://{}:{}".format(protocol, host, port)
+
+            candidates.add(base)
+
+            raw_path = self._ascii_safe(entry.get("normalized_path") or "/")
+            parts = [self._ascii_safe(part, lower=True).strip() for part in raw_path.strip("/").split("/") if part]
+            if not parts:
+                continue
+
+            first_part = parts[0]
+            if first_part in static_skip_parts or self._ffuf_is_noise_path_segment(first_part):
+                dropped_path += 1
+                continue
+
+            candidates.add(base + "/" + first_part)
+
+            if first_part == "api" and len(parts) > 1:
+                second_part = parts[1]
+                if (
+                    second_part
+                    and second_part not in static_skip_parts
+                    and not self._ffuf_is_noise_path_segment(second_part)
+                ):
+                    candidates.add(base + "/api/" + second_part)
+
+            if first_part.startswith("v") and len(parts) > 1:
+                second_part = parts[1]
+                if (
+                    second_part
+                    and second_part not in static_skip_parts
+                    and not self._ffuf_is_noise_path_segment(second_part)
+                ):
+                    candidates.add(base + "/" + first_part + "/" + second_part)
+
+        ordered = sorted(candidates)
+        raw_candidates = len(ordered)
+        truncated = 0
+        if raw_candidates > self.NUCLEI_MAX_TARGETS:
+            truncated = raw_candidates - self.NUCLEI_MAX_TARGETS
+            ordered = ordered[: self.NUCLEI_MAX_TARGETS]
+
+        meta = {
+            "inspected_entries": inspected_entries,
+            "raw_candidates": raw_candidates,
+            "dropped_noise_host": dropped_noise_host,
+            "dropped_scope_host": dropped_scope_host,
+            "dropped_path": dropped_path,
+            "truncated": truncated,
+            "force_host": force_host,
+            "selected_host": selected_host,
+            "allowed_bases": sorted(list(allowed_bases)),
+            "manual_scope_enabled": bool(scope_override.get("enabled")),
+            "manual_scope_line_count": len(scope_override.get("lines", [])),
+            "manual_scope_host_count": len(scope_override.get("hosts", set())),
+            "manual_scope_base_count": len(scope_override.get("bases", set())),
+            "manual_scope_preview": list(scope_override.get("lines", []))[:3],
+        }
+        return ordered, meta
+
     def _run_nuclei(self):
         """Run Nuclei scanner on endpoints from Recon tab"""
         import os
@@ -3452,48 +4345,20 @@ def handleResponse(req, interesting):
         output_file = os.path.join(temp_dir, "results.txt")
         json_file = os.path.join(temp_dir, "results.json")
 
-        # Write base URLs + discovery paths for NEW endpoint discovery
+        targets, target_meta = self._collect_nuclei_targets()
+        if not targets:
+            self._cleanup_temp_dir(temp_dir, "nuclei empty target set")
+            self.nuclei_area.setText(
+                "[!] No Nuclei targets after filtering. Capture more first-party API traffic or adjust host filter.\n"
+            )
+            return
+
+        # Write scoped targets for endpoint discovery
         writer = None
         try:
             writer = FileWriter(targets_file)
-            with self.lock:
-                data_snapshot = list(self.api_data.items())
-
-            # Extract unique base URLs and API paths
-            base_urls = set()
-            api_paths = set()
-            for _, entries in data_snapshot:
-                entry = self._get_entry(entries)
-                protocol = entry.get("protocol", "https")
-                host = entry.get("host", "")
-                port = entry.get("port", -1)
-                if port == -1:
-                    port = 443 if protocol == "https" else 80
-
-                # Base URL
-                if (protocol == "https" and port == 443) or (protocol == "http" and port == 80):
-                    base = "{}://{}".format(protocol, host)
-                else:
-                    base = "{}://{}:{}".format(protocol, host, port)
-                base_urls.add(base)
-
-                # Extract API base paths
-                path = entry.get("normalized_path", "/")
-                parts = path.strip("/").split("/")
-                if len(parts) > 0 and parts[0]:
-                    api_paths.add("/" + parts[0])
-
-            target_count = 0
-            # Write base URLs for root discovery
-            for base in sorted(base_urls):
-                writer.write(base + "\n")
-                target_count += 1
-
-            # Write API base paths for deeper discovery
-            for base in sorted(base_urls):
-                for api_path in sorted(api_paths):
-                    writer.write(base + api_path + "\n")
-                    target_count += 1
+            for target in targets:
+                writer.write(target + "\n")
         finally:
             if writer:
                 try:
@@ -3502,6 +4367,7 @@ def handleResponse(req, interesting):
                     self._callbacks.printError(
                         "Error closing nuclei scan targets file: {}".format(str(e))
                     )
+        target_count = len(targets)
 
         use_custom_nuclei, custom_nuclei_command = self._resolve_custom_command(
             "Nuclei",
@@ -3519,31 +4385,98 @@ def handleResponse(req, interesting):
             self._cleanup_temp_dir(temp_dir, "nuclei custom command validation")
             return
 
-        self.log_to_ui("[*] Nuclei discovery: {} base URLs + API paths".format(target_count))
+        probe_ok, help_text, _ = self._probe_binary_help(nuclei_path)
+        supports_jsonl_export = bool(
+            probe_ok and "-jsonl-export" in (help_text or "").lower()
+        )
+        help_text_lower = (help_text or "").lower()
+        supports_max_host_error = bool(probe_ok and "-max-host-error" in help_text_lower)
+        supports_bulk_size = bool(probe_ok and "-bulk-size" in help_text_lower)
+        supports_scan_strategy = bool(probe_ok and "-scan-strategy" in help_text_lower)
+        supports_no_httpx = bool(probe_ok and "-no-httpx" in help_text_lower)
+        supports_project_mode = bool(probe_ok and "-project" in help_text_lower)
+
+        self.log_to_ui("[*] Nuclei discovery: {} scoped targets".format(target_count))
         self.log_to_ui("[*] Targets: {}".format(targets_file))
         self.log_to_ui("[*] Output: {}".format(output_file))
         self.nuclei_area.setText("[*] Initializing Nuclei (WAF EVASION MODE)...\n")
-        self.nuclei_area.append("[*] Discovery targets: {} (base URLs + API paths)\n".format(target_count))
         self.nuclei_area.append(
-            "[*] Tags: exposure,config,api,swagger,graphql,jwt,auth,keys,debug,logs (max coverage)\n"
+            "[*] Discovery targets: {} (scoped first-party hosts/paths)\n".format(
+                target_count
+            )
+        )
+        if target_meta.get("manual_scope_enabled"):
+            self.nuclei_area.append(
+                "[*] Target base scope: {} lines | hosts={} | bases={}\n".format(
+                    target_meta.get("manual_scope_line_count", 0),
+                    target_meta.get("manual_scope_host_count", 0),
+                    target_meta.get("manual_scope_base_count", 0),
+                )
+            )
+            preview = target_meta.get("manual_scope_preview", [])
+            if preview:
+                self.nuclei_area.append(
+                    "[*] Scope preview: {}\n".format(", ".join(preview))
+                )
+        elif target_meta.get("force_host"):
+            self.nuclei_area.append(
+                "[*] Host scope: {}\n".format(target_meta.get("selected_host", "unknown"))
+            )
+        else:
+            allowed_bases = target_meta.get("allowed_bases", [])
+            if allowed_bases:
+                self.nuclei_area.append(
+                    "[*] First-party base scope: {}\n".format(", ".join(allowed_bases))
+                )
+        self.nuclei_area.append(
+            "[*] Filtered out: noise-host={} scope-host={} path-noise={}\n".format(
+                target_meta.get("dropped_noise_host", 0),
+                target_meta.get("dropped_scope_host", 0),
+                target_meta.get("dropped_path", 0),
+            )
+        )
+        if target_meta.get("truncated", 0) > 0:
+            self.nuclei_area.append(
+                "[*] Target cap applied: {} skipped (max {})\n".format(
+                    target_meta.get("truncated", 0), self.NUCLEI_MAX_TARGETS
+                )
+            )
+        self.nuclei_area.append(
+            "[*] Tags: exposure,api,swagger,openapi (optimized for speed)\n"
         )
         self.nuclei_area.append(
             "[*] Excluding: dos,intrusive,headless only\n"
         )
-        self.nuclei_area.append("[*] Timeout: 5s, Retries: 1 (speed optimized)\n")
-        self.nuclei_area.append("[*] Rate: 150 req/s, Concurrency: 25 (fast mode)\n")
+        self.nuclei_area.append(
+            "[*] Timeout: {}s, Retries: {} (resilient mode)\n".format(
+                self.NUCLEI_REQUEST_TIMEOUT_SECONDS, self.NUCLEI_RETRIES
+            )
+        )
+        self.nuclei_area.append(
+            "[*] Rate: {} req/s, Concurrency: {} (balanced mode)\n".format(
+                self.NUCLEI_RATE_LIMIT, self.NUCLEI_CONCURRENCY
+            )
+        )
+        self.nuclei_area.append(
+            "[*] Scan strategy: {} | Bulk size: {} | Max host errors: {}\n".format(
+                self.NUCLEI_SCAN_STRATEGY,
+                self.NUCLEI_BULK_SIZE,
+                self.NUCLEI_MAX_HOST_ERROR,
+            )
+        )
         self.nuclei_area.append("[*] Evasion: Header-based spoofing (X-Forwarded-For)\n\n")
         self._clear_tool_cancel("nuclei")
 
         def run_scan():
             process = None
             try:
-                # Discovery-focused: find NEW endpoints
-                include_tags = "exposure,config,api,swagger,openapi,graphql,jwt,panel,debug,backup,logs,trace,files,paths"
-                exclude_tags = "dos,intrusive,headless,cve,fuzz"
+                # Discovery-focused: FAST API endpoint discovery only
+                include_tags = "exposure,api,swagger,openapi"
+                exclude_tags = "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force"
+                parse_file = json_file
 
                 if use_custom_nuclei and custom_nuclei_command:
-                    cmd = ["bash", "-c", custom_nuclei_command]
+                    cmd = self._build_shell_command(custom_nuclei_command)
                     display_cmd = custom_nuclei_command
                     SwingUtilities.invokeLater(
                         lambda: self.nuclei_area.append(
@@ -3557,26 +4490,44 @@ def handleResponse(req, interesting):
                         targets_file,
                         "-o",
                         output_file,
-                        "-jsonl",
-                        json_file,
                         "-tags",
                         include_tags,
                         "-etags",
                         exclude_tags,
                         "-no-color",
                         "-timeout",
-                        "5",
+                        str(self.NUCLEI_REQUEST_TIMEOUT_SECONDS),
                         "-retries",
-                        "1",
+                        str(self.NUCLEI_RETRIES),
                         "-rate-limit",
-                        "150",
+                        str(self.NUCLEI_RATE_LIMIT),
                         "-c",
-                        "25",
-                        "-silent",
+                        str(self.NUCLEI_CONCURRENCY),
                         "-disable-update-check",
+                        "-silent",
                         "-header",
                         "X-Forwarded-For: 127.0.0.1",
                     ]
+                    if supports_bulk_size:
+                        cmd.extend(["-bs", str(self.NUCLEI_BULK_SIZE)])
+                    if supports_max_host_error:
+                        cmd.extend(["-mhe", str(self.NUCLEI_MAX_HOST_ERROR)])
+                    if supports_scan_strategy:
+                        cmd.extend(["-ss", self.NUCLEI_SCAN_STRATEGY])
+                    if supports_no_httpx:
+                        cmd.append("-no-httpx")
+                    if supports_project_mode:
+                        cmd.extend(["-project", "-project-path", temp_dir])
+                    if supports_jsonl_export:
+                        cmd.extend(["-jsonl-export", json_file])
+                    else:
+                        cmd.append("-jsonl")
+                        parse_file = output_file
+                        SwingUtilities.invokeLater(
+                            lambda: self.nuclei_area.append(
+                                "[*] Compatibility: using -jsonl fallback (upgrade nuclei for -jsonl-export)\n"
+                            )
+                        )
                     display_cmd = " ".join(cmd)
                 SwingUtilities.invokeLater(
                     lambda: self.nuclei_area.append(
@@ -3587,30 +4538,35 @@ def handleResponse(req, interesting):
                     lambda: self.log_to_ui("[*] Nuclei cmd: {}".format(display_cmd))
                 )
                 SwingUtilities.invokeLater(
-                    lambda: self.nuclei_area.append("[*] Discovery mode: Scanning base URLs to find NEW endpoints\n\n")
+                    lambda: self.nuclei_area.append(
+                        "[*] Discovery mode: Scanning scoped targets to find NEW endpoints\n\n"
+                    )
                 )
 
                 import time as time_module
 
                 start_time = time_module.time()
+                timed_out = False
                 try:
                     process = subprocess.Popen(  # nosec B603
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
                     )
                     self._set_active_tool_process("nuclei", process)
                 except Exception as e:
+                    err_msg = str(e)
                     SwingUtilities.invokeLater(
-                        lambda: self.nuclei_area.append(
-                            "[!] Failed to start nuclei: {}\n".format(str(e))
+                        lambda m=err_msg: self.nuclei_area.append(
+                            "[!] Failed to start nuclei: {}\n".format(m)
                         )
                     )
                     return
 
-                max_timeout = 600  # 10 min max
+                adaptive_timeout = max(360, target_count * 30)
+                max_timeout = min(self.NUCLEI_MAX_SCAN_SECONDS, adaptive_timeout)
 
                 SwingUtilities.invokeLater(
-                    lambda: self.nuclei_area.append(
-                        "[*] Scanning (max 10min)...\n\n"
+                    lambda t=max_timeout, c=target_count: self.nuclei_area.append(
+                        "[*] Scanning (max {}s for {} targets)...\n\n".format(t, c)
                     )
                 )
 
@@ -3626,14 +4582,17 @@ def handleResponse(req, interesting):
                         self._terminate_process_cross_platform(process, "Nuclei")
                         break
                     if elapsed > max_timeout:
+                        timed_out = True
                         try:
                             process.kill()
                             process.wait()
                         except Exception as e:
                             self._callbacks.printError("Kill failed: {}".format(str(e)))
                         SwingUtilities.invokeLater(
-                            lambda: self.nuclei_area.append(
-                                "\n[!] Timeout after {}min\n".format(max_timeout/60)
+                            lambda t=max_timeout: self.nuclei_area.append(
+                                "\n[!] Timeout after {}s\n".format(
+                                    t
+                                )
                             )
                         )
                         break
@@ -3649,24 +4608,8 @@ def handleResponse(req, interesting):
 
                 process.wait()
                 elapsed = int(time_module.time() - start_time)
-                stdout_data = process.stdout.read() if process.stdout else ""
-                stderr_data = process.stderr.read() if process.stderr else ""
-                if not isinstance(stdout_data, str):
-                    try:
-                        stdout_data = stdout_data.decode("utf-8", errors="ignore")
-                    except Exception as e:
-                        self._callbacks.printError(
-                            "Nuclei stdout decode error: {}".format(str(e))
-                        )
-                        stdout_data = str(stdout_data)
-                if not isinstance(stderr_data, str):
-                    try:
-                        stderr_data = stderr_data.decode("utf-8", errors="ignore")
-                    except Exception as e:
-                        self._callbacks.printError(
-                            "Nuclei stderr decode error: {}".format(str(e))
-                        )
-                        stderr_data = str(stderr_data)
+                stdout_data = self._safe_pipe_read(process.stdout, "Nuclei stdout")
+                stderr_data = self._safe_pipe_read(process.stderr, "Nuclei stderr")
 
                 if cancelled_by_user:
                     SwingUtilities.invokeLater(
@@ -3687,49 +4630,97 @@ def handleResponse(req, interesting):
                     )
                 )
 
+                partial_results_mode = False
                 if process.returncode != 0:
-                    fail_lines = [
-                        "",
-                        "[!] Nuclei command failed",
-                        "[!] Exit code: {}".format(process.returncode),
-                        "[!] Command: {}".format(display_cmd),
-                    ]
-                    if stderr_data and stderr_data.strip():
-                        fail_lines.append("[!] STDERR:")
-                        fail_lines.append(stderr_data.strip()[:3000])
-                    elif stdout_data and stdout_data.strip():
-                        fail_lines.append("[!] Output:")
-                        fail_lines.append(stdout_data.strip()[:3000])
-                    combined_output = "{}\n{}".format(stdout_data or "", stderr_data or "")
-                    if "flag provided but not defined" in combined_output:
-                        fail_lines.append(
-                            "[*] Tip: your Nuclei version does not support one of these flags."
+                    partial_parse_file = None
+                    try:
+                        if os.path.exists(json_file) and os.path.getsize(json_file) > 0:
+                            partial_parse_file = json_file
+                        elif os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                            partial_parse_file = output_file
+                    except Exception as partial_err:
+                        self._callbacks.printError(
+                            "Nuclei partial-results check failed: {}".format(str(partial_err))
                         )
-                        fail_lines.append(
-                            "[*] Try removing unsupported flags from Custom Cmd (for example: -random-agent)."
-                        )
-                    if use_custom_nuclei:
-                        fail_lines.append(
-                            "[*] Tip: ensure custom command writes JSON lines to {json_file}"
-                        )
-                    fail_text = "\n".join(fail_lines) + "\n"
-                    SwingUtilities.invokeLater(
-                        lambda t=fail_text: self.nuclei_area.append(t)
+
+                    can_parse_partial = bool(
+                        partial_parse_file and (timed_out or process.returncode in [137, 143])
                     )
-                    SwingUtilities.invokeLater(
-                        lambda: self.log_to_ui(
-                            "[!] Nuclei failed with exit code {}".format(
+                    if can_parse_partial:
+                        partial_results_mode = True
+                        parse_file = partial_parse_file
+                        partial_notice = [
+                            "",
+                            "[!] Nuclei did not exit cleanly (code: {})".format(
                                 process.returncode
+                            ),
+                            "[*] Continuing with partial results from: {}".format(
+                                parse_file
+                            ),
+                        ]
+                        SwingUtilities.invokeLater(
+                            lambda t="\n".join(partial_notice) + "\n": self.nuclei_area.append(t)
+                        )
+                        SwingUtilities.invokeLater(
+                            lambda: self.log_to_ui(
+                                "[*] Nuclei partial-parse mode enabled (exit {})".format(
+                                    process.returncode
+                                )
                             )
                         )
-                    )
-                    return
+                    else:
+                        fail_lines = [
+                            "",
+                            "[!] Nuclei command failed",
+                            "[!] Exit code: {}".format(process.returncode),
+                            "[!] Command: {}".format(display_cmd),
+                        ]
+                        if stderr_data and stderr_data.strip():
+                            fail_lines.append("[!] STDERR:")
+                            fail_lines.append(stderr_data.strip()[:3000])
+                        elif stdout_data and stdout_data.strip():
+                            fail_lines.append("[!] Output:")
+                            fail_lines.append(stdout_data.strip()[:3000])
+                        combined_output = "{}\n{}".format(stdout_data or "", stderr_data or "")
+                        if "flag provided but not defined" in combined_output:
+                            fail_lines.append(
+                                "[*] Tip: your Nuclei version does not support one of these flags."
+                            )
+                            fail_lines.append(
+                                "[*] Try removing unsupported flags from Custom Cmd (for example: -random-agent)."
+                            )
+                        if use_custom_nuclei:
+                            fail_lines.append(
+                                "[*] Tip: ensure custom command writes JSON lines to {json_file}"
+                            )
+                        fail_text = "\n".join(fail_lines) + "\n"
+                        SwingUtilities.invokeLater(
+                            lambda t=fail_text: self.nuclei_area.append(t)
+                        )
+                        SwingUtilities.invokeLater(
+                            lambda: self.log_to_ui(
+                                "[!] Nuclei failed with exit code {}".format(
+                                    process.returncode
+                                )
+                            )
+                        )
+                        return
 
-                if not os.path.exists(json_file):
+                if os.path.exists(json_file):
+                    parse_file = json_file
+                elif os.path.exists(output_file):
+                    parse_file = output_file
+                    SwingUtilities.invokeLater(
+                        lambda: self.nuclei_area.append(
+                            "[*] Using output fallback parser: {}\n".format(output_file)
+                        )
+                    )
+                else:
                     warn_lines = [
                         "",
                         "[!] Nuclei completed but expected results file was not created",
                         "[!] Expected JSON file: {}".format(json_file),
+                        "[!] Fallback output file: {}".format(output_file),
                         "[!] Command: {}".format(display_cmd),
                     ]
                     if stderr_data and stderr_data.strip():
@@ -3753,14 +4744,15 @@ def handleResponse(req, interesting):
                 # Parse JSON results and group by severity
                 findings_by_severity = {'critical': [], 'high': [], 'medium': [], 'low': [], 'info': []}
                 vuln_count = 0
+                json_parse_errors = 0
 
                 try:
-                    with open(json_file, "r") as f:
+                    with open(parse_file, "r") as f:
                         for line in f:
                             if line.strip():
-                                vuln_count += 1
                                 try:
                                     vuln = json.loads(line)
+                                    vuln_count += 1
                                     severity = vuln.get('info', {}).get('severity', 'info').lower()
                                     template = vuln.get('template-id', 'unknown')
                                     matched = vuln.get('matched-at', vuln.get('host', ''))
@@ -3768,13 +4760,16 @@ def handleResponse(req, interesting):
                                         "[{}] {}".format(template, matched)
                                     )
                                 except Exception as json_err:
+                                    json_parse_errors += 1
                                     self._callbacks.printError(
                                         "Nuclei JSON parse error: {}".format(str(json_err))
                                     )
                 except Exception as e:
                     self._callbacks.printError("Error reading JSON: {}".format(str(e)))
                     read_fail = (
-                        "\n[!] Failed to read Nuclei JSON results: {}\n".format(str(e))
+                        "\n[!] Failed to read Nuclei JSON results from {}: {}\n".format(
+                            parse_file, str(e)
+                        )
                     )
                     SwingUtilities.invokeLater(
                         lambda t=read_fail: self.nuclei_area.append(t)
@@ -3793,6 +4788,17 @@ def handleResponse(req, interesting):
                 result.append("[*] Scan Time: {}s".format(elapsed))
                 result.append("[*] Targets: {}".format(target_summary))
                 result.append("[*] Total Findings: {}".format(vuln_count))
+                result.append("[*] Parsed results file: {}".format(parse_file))
+                if partial_results_mode:
+                    result.append(
+                        "[*] Run status: partial results (process exited {})".format(
+                            process.returncode
+                        )
+                    )
+                if json_parse_errors > 0:
+                    result.append(
+                        "[*] Ignored non-JSON lines: {}".format(json_parse_errors)
+                    )
                 result.append("")
 
                 if vuln_count > 0:
@@ -3823,7 +4829,7 @@ def handleResponse(req, interesting):
                         result.append("    - Address {} critical vulnerabilities immediately".format(len(findings_by_severity['critical'])))
                     if findings_by_severity['high']:
                         result.append("    - Review {} high severity findings".format(len(findings_by_severity['high'])))
-                    result.append("    - Full results: {}".format(json_file))
+                    result.append("    - Full results: {}".format(parse_file))
 
                     SwingUtilities.invokeLater(
                         lambda: self.log_to_ui("[+] Found {} vulnerabilities".format(vuln_count))
@@ -3856,8 +4862,9 @@ def handleResponse(req, interesting):
             except Exception as e:
                 err = "[!] Failed: {}\n\nCheck: nuclei -version".format(str(e))
                 SwingUtilities.invokeLater(lambda: self.nuclei_area.setText(err))
+                err_msg = str(e)
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[!] Error: {}".format(str(e)))
+                    lambda m=err_msg: self.log_to_ui("[!] Error: {}".format(m))
                 )
             finally:
                 self._clear_active_tool_process("nuclei", process)
@@ -5104,6 +6111,142 @@ Generate a complete Burp extension that:
         if current in hosts or current == "All":
             self.host_filter.setSelectedItem(current)
 
+    def _open_target_base_scope_popup(self):
+        """Open popup editor for multiline base URL/host targeting scope."""
+        current_text = "\n".join(self.target_base_scope_lines)
+        editor = JTextArea(current_text, 12, 60)
+        editor.setLineWrap(False)
+        editor.setWrapStyleWord(False)
+
+        content = JPanel(BorderLayout(0, 6))
+        content.add(
+            JLabel(
+                "Enter one base URL/host per line (examples: https://www.allocine.fr, allocine.fr)"
+            ),
+            BorderLayout.NORTH,
+        )
+        content.add(JScrollPane(editor), BorderLayout.CENTER)
+
+        decision = JOptionPane.showConfirmDialog(
+            self._panel,
+            content,
+            "Target Base URLs",
+            JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.PLAIN_MESSAGE,
+        )
+        if decision != JOptionPane.OK_OPTION:
+            return
+
+        parsed = self._parse_target_base_scope_text(editor.getText())
+        self.target_base_scope_lines = parsed["lines"]
+        self.target_base_scope_hosts = parsed["hosts"]
+        self.target_base_scope_bases = parsed["bases"]
+
+        line_count = len(self.target_base_scope_lines)
+        if line_count == 0:
+            self.log_to_ui("[*] Target base scope cleared")
+            return
+
+        scope_msg = (
+            "[+] Target base scope updated: {} lines, {} hosts, {} base domains".format(
+                line_count,
+                len(self.target_base_scope_hosts),
+                len(self.target_base_scope_bases),
+            )
+        )
+        if parsed["invalid_count"] > 0:
+            scope_msg += " ({} invalid ignored)".format(parsed["invalid_count"])
+        self.log_to_ui(scope_msg)
+
+    def _parse_target_base_scope_text(self, text):
+        """Parse multiline target scope input into host/base-domain sets."""
+        lines = []
+        hosts = set()
+        bases = set()
+        invalid_count = 0
+        seen = set()
+        for raw_line in self._ascii_safe(text).splitlines():
+            line = self._ascii_safe(raw_line).strip()
+            if not line or line.startswith("#"):
+                continue
+            if line in seen:
+                continue
+            seen.add(line)
+            host = self._extract_scope_host(line)
+            if not host:
+                invalid_count += 1
+                continue
+            lines.append(line)
+            hosts.add(host)
+            base = self._infer_base_domain(host)
+            if base:
+                bases.add(base)
+        return {
+            "lines": lines,
+            "hosts": hosts,
+            "bases": bases,
+            "invalid_count": invalid_count,
+        }
+
+    def _extract_scope_host(self, value):
+        """Extract host from URL/host text for manual scope filtering."""
+        text = self._ascii_safe(value, lower=True).strip()
+        if not text:
+            return ""
+
+        probe = text
+        if "://" not in probe:
+            probe = "https://" + probe.lstrip("/")
+        host = ""
+        try:
+            parsed = URL(probe)
+            host = self._ascii_safe(parsed.getHost(), lower=True).strip()
+        except Exception as e:
+            self._callbacks.printError(
+                "Target scope parser fallback for '{}': {}".format(probe, str(e))
+            )
+            host = ""
+
+        if not host:
+            fallback = text.split("/")[0].split("?")[0].split("#")[0].strip()
+            host = self._ascii_safe(fallback, lower=True).strip()
+
+        if not host:
+            return ""
+
+        if host.endswith("."):
+            host = host[:-1]
+        if ":" in host and host.count(":") == 1:
+            host = host.split(":", 1)[0].strip()
+        if not host or " " in host:
+            return ""
+        return host
+
+    def _get_target_scope_override(self):
+        """Return effective manual scope override state for external scans."""
+        lines = list(self.target_base_scope_lines)
+        hosts = set(self.target_base_scope_hosts)
+        bases = set(self.target_base_scope_bases)
+        enabled = bool(self.target_base_scope_only_enabled and (hosts or bases))
+        return {
+            "enabled": enabled,
+            "lines": lines,
+            "hosts": hosts,
+            "bases": bases,
+        }
+
+    def _host_matches_target_scope(self, host, scope_override):
+        """Check if a host belongs to manual base URL scope (exact or derivative)."""
+        text = self._ascii_safe(host, lower=True).strip()
+        if not text:
+            return False
+        if text in scope_override.get("hosts", set()):
+            return True
+        base = self._infer_base_domain(text)
+        if not base:
+            return False
+        return base in scope_override.get("bases", set())
+
     def export_by_host(self):
         """Export endpoints for selected host only"""
         host = str(self.host_filter.getSelectedItem())
@@ -5477,7 +6620,11 @@ Generate a complete Burp extension that:
             if "exp" in payload:
                 import time
                 exp = payload.get("exp")
-                if isinstance(exp, (int, long)):
+                try:
+                    integer_types = (int, long)  # noqa: F821 (Python2/Jython)
+                except NameError:
+                    integer_types = (int,)
+                if isinstance(exp, integer_types):
                     if exp < time.time():
                         details.append("  [WARNING] Token is EXPIRED")
                     else:
@@ -5699,11 +6846,7 @@ Generate a complete Burp extension that:
 
                     line = process.stdout.readline()
                     if line:
-                        if not isinstance(line, str):
-                            try:
-                                line = line.decode("utf-8", errors="ignore")
-                            except Exception:
-                                line = str(line)
+                        line = self._decode_process_data(line, "{} stdout line".format(tool_name))
                         if line.strip():
                             # Strip ANSI escape codes using pre-compiled pattern
                             clean_line = self.ANSI_ESCAPE_PATTERN.sub("", line)
@@ -5718,22 +6861,19 @@ Generate a complete Burp extension that:
                 remaining = process.stdout.read()
                 process.wait()
                 if remaining:
-                    if not isinstance(remaining, str):
-                        try:
-                            remaining = remaining.decode("utf-8", errors="ignore")
-                        except Exception:
-                            remaining = str(remaining)
+                    remaining = self._decode_process_data(
+                        remaining, "{} stdout tail".format(tool_name)
+                    )
                     if remaining.strip():
                         SwingUtilities.invokeLater(
                             lambda r=remaining: output_area.append(r)
                         )
 
                 stderr = process.stderr.read()
-                if stderr and not isinstance(stderr, str):
-                    try:
-                        stderr = stderr.decode("utf-8", errors="ignore")
-                    except Exception:
-                        stderr = str(stderr)
+                if stderr:
+                    stderr = self._decode_process_data(
+                        stderr, "{} stderr".format(tool_name)
+                    )
 
                 total_time = int(time_module.time() - start_time)
 
@@ -5836,8 +6976,6 @@ Generate a complete Burp extension that:
 
     def _export_httpx_urls(self):
         """Export URLs for HTTPX probing - only saves when user clicks Export"""
-        import os
-
         if not self.api_data:
             self.httpx_area.setText("[!] No endpoints to export\n")
             return
@@ -5878,6 +7016,8 @@ Generate a complete Burp extension that:
 
     def _resolve_custom_command(self, tool_name, checkbox, field, context, output_area):
         """Resolve command template when custom command override is enabled."""
+        import os
+
         use_custom = checkbox.isSelected()
         if not use_custom:
             return False, None
@@ -5887,7 +7027,9 @@ Generate a complete Burp extension that:
             output_area.setText(
                 "[!] {} custom command enabled but empty\n".format(tool_name)
             )
-            output_area.append("[*] Uncheck custom mode or provide a command\n")
+            output_area.append(
+                "[*] Uncheck 'Enable Custom' or provide a command\n"
+            )
             return True, None
 
         try:
@@ -5918,7 +7060,7 @@ Generate a complete Burp extension that:
             return True, None
 
         try:
-            shlex.split(rendered_command)
+            shlex.split(rendered_command, posix=(os.name != "nt"))
         except Exception as e:
             output_area.setText(
                 "[!] {} custom command is invalid: {}\n".format(tool_name, str(e))
@@ -5926,6 +7068,19 @@ Generate a complete Burp extension that:
             return True, None
 
         return True, rendered_command
+
+    def _build_shell_command(self, command_text):
+        """Build OS-aware shell command wrapper for custom command execution."""
+        import os
+
+        if os.name == "nt":
+            return ["cmd", "/c", command_text]
+
+        if os.path.exists("/bin/bash"):
+            return ["/bin/bash", "-lc", command_text]
+        if os.path.exists("/bin/sh"):
+            return ["/bin/sh", "-lc", command_text]
+        return ["sh", "-lc", command_text]
 
     def _decode_process_data(self, data, context):
         """Decode subprocess output safely for Jython/Python compatibility."""
@@ -5937,13 +7092,63 @@ Generate a complete Burp extension that:
             self._callbacks.printError("{} decode error: {}".format(context, str(e)))
             return str(data)
 
+    def _safe_pipe_read(self, pipe, context):
+        """Read subprocess pipe safely and decode, tolerating already-closed streams."""
+        if not pipe:
+            return ""
+        try:
+            data = pipe.read()
+        except (IOError, OSError, ValueError) as e:
+            self._callbacks.printError("{} read error: {}".format(context, str(e)))
+            return ""
+        return self._decode_process_data(data, context)
+
+    def _ascii_safe(self, value, lower=False, max_len=None):
+        """Return ASCII-safe text to prevent Unicode encode errors under Jython/Python2."""
+        if value is None:
+            text = ""
+        else:
+            text = value
+        try:
+            text_type = unicode  # noqa: F821 (Python2/Jython)
+            if isinstance(text, text_type):
+                normalized = text
+            elif isinstance(text, str):
+                try:
+                    normalized = text.decode("utf-8", errors="replace")
+                except (AttributeError, TypeError, ValueError, UnicodeDecodeError):
+                    normalized = text_type(text)
+            else:
+                normalized = text_type(text)
+            safe = normalized.encode("ascii", "backslashreplace")
+        except NameError:
+            # Python 3 path
+            if isinstance(text, bytes):
+                normalized = text.decode("utf-8", errors="replace")
+            else:
+                normalized = str(text)
+            safe = normalized.encode("ascii", "backslashreplace").decode("ascii")
+        except (TypeError, ValueError, UnicodeError):
+            try:
+                safe = repr(text)
+            except (TypeError, ValueError):
+                safe = "<unprintable>"
+
+        if lower:
+            safe = safe.lower()
+        if max_len is not None and len(safe) > max_len:
+            safe = safe[:max_len]
+        return safe
+
     def _probe_binary_help(self, binary_path):
         """Run lightweight binary help probes and cache result per path."""
         cache_key = "help::{}".format(binary_path)
         if cache_key in self._tool_help_cache:
             return self._tool_help_cache[cache_key]
 
+        import os
         import subprocess
+        import tempfile
         import time as time_module
 
         best_output = ""
@@ -5951,15 +7156,42 @@ Generate a complete Burp extension that:
 
         for help_flag in ["-h", "--help"]:
             cmd = [binary_path, help_flag]
+            capture_path = None
+            capture_handle = None
+            process = None
+            timed_out = False
             try:
+                fd, capture_path = tempfile.mkstemp(
+                    prefix="burp_help_probe_", suffix=".log"
+                )
+                os.close(fd)
+                capture_handle = open(capture_path, "wb")
                 process = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stdout=capture_handle,
+                    stderr=subprocess.STDOUT,
                     shell=False,
                 )
             except Exception as e:
                 last_error = str(e)
+                if capture_handle:
+                    try:
+                        capture_handle.close()
+                    except Exception as close_err:
+                        self._callbacks.printError(
+                            "Help probe file close error ({}): {}".format(
+                                binary_path, str(close_err)
+                            )
+                        )
+                if capture_path:
+                    try:
+                        os.remove(capture_path)
+                    except Exception as rm_err:
+                        self._callbacks.printError(
+                            "Help probe file cleanup error ({}): {}".format(
+                                binary_path, str(rm_err)
+                            )
+                        )
                 continue
 
             timeout_seconds = 8
@@ -5976,18 +7208,44 @@ Generate a complete Burp extension that:
                             )
                         )
                     last_error = "timed out after {}s".format(timeout_seconds)
+                    timed_out = True
                     break
                 time_module.sleep(0.1)
 
-            stdout_data = process.stdout.read() if process.stdout else ""
-            stderr_data = process.stderr.read() if process.stderr else ""
-            stdout_text = self._decode_process_data(
-                stdout_data, "Help probe stdout ({})".format(binary_path)
-            )
-            stderr_text = self._decode_process_data(
-                stderr_data, "Help probe stderr ({})".format(binary_path)
-            )
-            combined = "{}\n{}".format(stdout_text or "", stderr_text or "").strip()
+            if capture_handle:
+                try:
+                    capture_handle.close()
+                except Exception as close_err:
+                    self._callbacks.printError(
+                        "Help probe file close error ({}): {}".format(
+                            binary_path, str(close_err)
+                        )
+                    )
+
+            combined = ""
+            if capture_path:
+                try:
+                    with open(capture_path, "rb") as reader:
+                        combined_data = reader.read()
+                    combined = self._decode_process_data(
+                        combined_data, "Help probe output ({})".format(binary_path)
+                    ).strip()
+                except Exception as read_err:
+                    self._callbacks.printError(
+                        "Help probe read error ({}): {}".format(
+                            binary_path, str(read_err)
+                        )
+                    )
+                finally:
+                    try:
+                        os.remove(capture_path)
+                    except Exception as rm_err:
+                        self._callbacks.printError(
+                            "Help probe file cleanup error ({}): {}".format(
+                                binary_path, str(rm_err)
+                            )
+                        )
+
             if combined and len(combined) > len(best_output):
                 best_output = combined
 
@@ -5997,12 +7255,13 @@ Generate a complete Burp extension that:
                 or "flags:" in help_markers
                 or "options" in help_markers
             )
-            if process.returncode == 0 or has_help_text:
+            if (not timed_out) and (process.returncode == 0 or has_help_text):
                 result = (True, best_output or combined, None)
                 self._tool_help_cache[cache_key] = result
                 return result
 
-            last_error = "exit code {}".format(process.returncode)
+            if not timed_out:
+                last_error = "exit code {}".format(process.returncode)
 
         result = (False, best_output, last_error or "unable to execute command")
         self._tool_help_cache[cache_key] = result
@@ -6068,9 +7327,11 @@ Generate a complete Burp extension that:
 
     def _extract_command_executables(self, command_text):
         """Extract executable tokens from simple shell command chains."""
+        import os
+
         executables = []
         try:
-            tokens = shlex.split(command_text)
+            tokens = shlex.split(command_text, posix=(os.name != "nt"))
         except Exception as e:
             self._callbacks.printError(
                 "Command executable parse error: {}".format(str(e))
@@ -6254,6 +7515,95 @@ Generate a complete Burp extension that:
         else:
             output_area.append("[!] Failed to stop {}: {}\n".format(tool_name, message))
             self.log_to_ui("[!] {} stop failed: {}".format(tool_name, message))
+
+    def _pkill_external_tools(self, output_area=None):
+        """Emergency stop: kill all scanner tools and orphan processes by name."""
+        import os
+        import platform
+        import subprocess
+
+        tool_specs = [
+            ("nuclei", "Nuclei"),
+            ("httpx", "HTTPX"),
+            ("katana", "Katana"),
+            ("ffuf", "FFUF"),
+            ("wayback", "Wayback"),
+        ]
+
+        lines = [
+            "[!] Emergency kill requested for external tools",
+            "[*] Platform: {}".format(platform.system() or os.name),
+        ]
+
+        # Stop tracked processes first.
+        for tool_key, tool_name in tool_specs:
+            self._set_tool_cancel(tool_key)
+            process_obj = self._get_active_tool_process(tool_key)
+            if not process_obj:
+                continue
+            stopped, message = self._terminate_process_cross_platform(process_obj, tool_name)
+            self._clear_active_tool_process(tool_key, process_obj)
+            if stopped:
+                lines.append("[+] {}: stopped tracked process".format(tool_name))
+            else:
+                lines.append("[!] {}: {}".format(tool_name, message))
+
+        # Sweep orphan processes by executable pattern.
+        if os.name == "nt":
+            kill_names = [
+                "nuclei.exe",
+                "httpx.exe",
+                "katana.exe",
+                "ffuf.exe",
+                "waybackurls.exe",
+                "gau.exe",
+            ]
+            for name in kill_names:
+                try:
+                    process = subprocess.Popen(
+                        ["taskkill", "/IM", name, "/F", "/T"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        shell=False,
+                    )
+                    process.wait()
+                except Exception as e:
+                    lines.append("[!] taskkill {} failed: {}".format(name, str(e)))
+        else:
+            kill_patterns = ["nuclei", "httpx", "katana", "ffuf", "waybackurls", "gau"]
+            for pattern in kill_patterns:
+                try:
+                    process = subprocess.Popen(
+                        ["pkill", "-TERM", "-f", pattern],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        shell=False,
+                    )
+                    process.wait()
+                except OSError as e:
+                    # Fallback for minimal systems lacking pkill.
+                    try:
+                        process = subprocess.Popen(
+                            ["killall", "-q", pattern],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            shell=False,
+                        )
+                        process.wait()
+                        lines.append("[*] killall fallback used for {}".format(pattern))
+                    except Exception as fallback_err:
+                        lines.append(
+                            "[!] pkill/killall {} failed: {} | {}".format(
+                                pattern, str(e), str(fallback_err)
+                            )
+                        )
+                except Exception as e:
+                    lines.append("[!] pkill {} failed: {}".format(pattern, str(e)))
+
+        summary = "\n".join(lines) + "\n"
+        if output_area is not None:
+            output_area.append(summary)
+        self.log_to_ui("[!] Emergency kill executed for nuclei/httpx/katana/ffuf/wayback")
 
     def _stop_nuclei(self, event):
         self._stop_tool_run("nuclei", "Nuclei", self.nuclei_area)
@@ -7093,8 +8443,9 @@ Generate a complete Burp extension that:
             except Exception as e:
                 err = "[!] Auth Replay failed: {}\n".format(str(e))
                 SwingUtilities.invokeLater(lambda t=err: self.auth_replay_area.append(t))
+                err_msg = str(e)
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[!] Auth Replay error: {}".format(str(e)))
+                    lambda m=err_msg: self.log_to_ui("[!] Auth Replay error: {}".format(m))
                 )
             finally:
                 self._clear_tool_cancel("authreplay")
@@ -7102,6 +8453,1264 @@ Generate a complete Burp extension that:
         thread = threading.Thread(target=run_replay)
         thread.daemon = True
         thread.start()
+
+    def _run_passive_discovery(self, event):
+        """Run passive API3/API4/API5/API6/API9/API10 heuristics from captured history."""
+        if not self.api_data:
+            self.passive_area.setText(
+                "[!] No endpoints in Recon tab. Capture or import first\n"
+            )
+            return
+
+        max_text = self.passive_max_field.getText().strip() or "250"
+        try:
+            max_count = int(max_text)
+            if max_count < 1:
+                max_count = 1
+            if max_count > 1000:
+                max_count = 1000
+        except ValueError:
+            max_count = 250
+
+        scope = str(self.passive_scope_combo.getSelectedItem())
+        mode = str(self.passive_mode_combo.getSelectedItem())
+        endpoint_keys, total_available = self._collect_auth_replay_targets(scope, max_count)
+        if not endpoint_keys:
+            self.passive_area.setText(
+                "[!] No endpoints found for scope '{}'\n".format(scope)
+            )
+            return
+
+        self.passive_area.setText("[*] Starting passive discovery...\n")
+        self.passive_area.append(
+            "[*] Scope: {} | Mode: {} | Targets: {} of {}\n\n".format(
+                scope, mode, len(endpoint_keys), total_available
+            )
+        )
+
+        def run_passive():
+            try:
+                snapshot = self._collect_passive_snapshot(endpoint_keys)
+                findings = self._run_passive_mode_handlers(mode, snapshot)
+                findings = self._sort_and_store_passive_findings(findings)
+
+                text = self._format_passive_discovery_output(
+                    findings, len(snapshot), total_available, mode
+                )
+                SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui(
+                        "[+] Passive discovery complete ({} findings)".format(
+                            len(findings)
+                        )
+                    )
+                )
+            except Exception as e:
+                err_msg = self._ascii_safe(e)
+                err = "[!] Passive discovery failed: {}\n".format(err_msg)
+                SwingUtilities.invokeLater(lambda t=err: self.passive_area.append(t))
+                SwingUtilities.invokeLater(
+                    lambda m=err_msg: self.log_to_ui(
+                        "[!] Passive discovery error: {}".format(m)
+                    )
+                )
+
+        worker = threading.Thread(target=run_passive)
+        worker.daemon = True
+        worker.start()
+
+    def _collect_passive_snapshot(self, endpoint_keys):
+        """Collect immutable-ish endpoint snapshot for passive processing."""
+        raw_snapshot = {}
+        with self.lock:
+            for key in endpoint_keys:
+                raw_entries = self.api_data.get(key)
+                if not raw_entries:
+                    continue
+                if isinstance(raw_entries, list):
+                    raw_snapshot[key] = list(raw_entries)
+                elif isinstance(raw_entries, dict):
+                    raw_snapshot[key] = [raw_entries]
+                else:
+                    self._callbacks.printError(
+                        "Passive snapshot skip {} (unsupported type: {})".format(
+                            key, type(raw_entries)
+                        )
+                    )
+        filter_cfg = self._build_passive_filter_config(raw_snapshot)
+        snapshot = {}
+        for key, entries in raw_snapshot.items():
+            filtered_entries = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if self._passive_entry_allowed(entry, filter_cfg):
+                    filtered_entries.append(entry)
+            if filtered_entries:
+                snapshot[key] = filtered_entries
+        return snapshot
+
+    def _build_passive_filter_config(self, snapshot):
+        """Build passive filtering config to focus heuristics on API-like first-party traffic."""
+        scope_override = self._get_target_scope_override()
+        selected_host = "all"
+        force_host = False
+        if not scope_override.get("enabled"):
+            try:
+                if hasattr(self, "host_filter") and self.host_filter is not None:
+                    selected_host = self._ascii_safe(
+                        str(self.host_filter.getSelectedItem()), lower=True
+                    ).strip() or "all"
+            except Exception as e:
+                self._callbacks.printError("Passive host-filter read error: {}".format(str(e)))
+                selected_host = "all"
+            force_host = bool(selected_host and selected_host != "all")
+
+        entries_snapshot = []
+        for entries in snapshot.values():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            for entry in entries_list:
+                if isinstance(entry, dict):
+                    entries_snapshot.append(entry)
+
+        host_counts = {}
+        base_scores = {}
+        for entry in entries_snapshot:
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                continue
+            if scope_override.get("enabled") and not self._host_matches_target_scope(
+                host, scope_override
+            ):
+                continue
+            host_counts[host] = host_counts.get(host, 0) + 1
+            if (not scope_override.get("enabled")) and self._is_wayback_noise_host(host):
+                continue
+            base = self._infer_base_domain(host)
+            if not base:
+                continue
+
+            score = 1
+            method = self._ascii_safe(entry.get("method"), lower=True).strip()
+            if method in ["post", "put", "patch", "delete"]:
+                score += 3
+
+            path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True)
+            if (
+                "/api/" in path
+                or "/graphql" in path
+                or "/rest/" in path
+                or "/openapi" in path
+                or "/swagger" in path
+                or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+            ):
+                score += 3
+
+            content_type = self._ascii_safe(entry.get("content_type"), lower=True)
+            if "json" in content_type or "xml" in content_type:
+                score += 2
+
+            api_patterns = [
+                self._ascii_safe(x, lower=True)
+                for x in (entry.get("api_patterns", []) or [])
+            ]
+            if any(hint in api_patterns for hint in self.PASSIVE_API_PATTERN_HINTS):
+                score += 2
+
+            base_scores[base] = base_scores.get(base, 0) + score
+
+        if scope_override.get("enabled"):
+            allowed_bases = set(scope_override.get("bases", set()))
+        elif force_host:
+            base = self._infer_base_domain(selected_host)
+            allowed_bases = set([base]) if base else set()
+        else:
+            sorted_bases = sorted(base_scores.items(), key=lambda item: (-item[1], item[0]))
+            allowed_bases = set([base for base, _ in sorted_bases[:1]])
+            if not allowed_bases:
+                fallback_bases = {}
+                for host, count in host_counts.items():
+                    if self._is_wayback_noise_host(host):
+                        continue
+                    base = self._infer_base_domain(host)
+                    if not base:
+                        continue
+                    fallback_bases[base] = fallback_bases.get(base, 0) + count
+                fallback_sorted = sorted(
+                    fallback_bases.items(), key=lambda item: (-item[1], item[0])
+                )
+                allowed_bases = set([base for base, _ in fallback_sorted[:1]])
+
+        return {
+            "scope_override_enabled": bool(scope_override.get("enabled")),
+            "scope_override": scope_override,
+            "force_host": force_host,
+            "selected_host": selected_host,
+            "allowed_bases": allowed_bases,
+        }
+
+    def _passive_entry_is_api_like(self, entry):
+        """Heuristic gate to keep passive checks focused on API-like traffic."""
+        method = self._ascii_safe(entry.get("method"), lower=True).strip().upper()
+        path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True).strip()
+        content_type = self._ascii_safe(entry.get("content_type"), lower=True).strip()
+        api_patterns = [
+            self._ascii_safe(x, lower=True)
+            for x in (entry.get("api_patterns", []) or [])
+        ]
+
+        first_part = ""
+        parts = [p for p in path.strip("/").split("/") if p]
+        if parts:
+            first_part = parts[0]
+
+        has_api_marker = bool(
+            "/api/" in path
+            or "/graphql" in path
+            or "/rest/" in path
+            or "/openapi" in path
+            or "/swagger" in path
+            or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+        )
+        has_structured_content = bool(
+            ("json" in content_type or "xml" in content_type or "protobuf" in content_type)
+            and ("javascript" not in content_type)
+            and ("html" not in content_type)
+        )
+        has_api_pattern = any(
+            hint in api_patterns for hint in self.PASSIVE_API_PATTERN_HINTS
+        )
+        has_write_method = method in ["POST", "PUT", "PATCH", "DELETE"]
+
+        query_text = self._ascii_safe(entry.get("query_string") or "")
+        query_count = len([p for p in query_text.split("&") if p]) if query_text else 0
+        param_count = query_count
+        params = entry.get("parameters", {}) or {}
+        if isinstance(params, dict):
+            for value in params.values():
+                if isinstance(value, dict):
+                    param_count += len(value)
+                elif isinstance(value, list):
+                    param_count += len(value)
+
+        if method in ["GET", "HEAD", "OPTIONS"]:
+            if path.endswith(self.PASSIVE_STATIC_EXTENSIONS):
+                return False
+            if first_part in self.PASSIVE_STATIC_PATH_PARTS:
+                return False
+            if self._ffuf_is_noise_path_segment(first_part):
+                return False
+            if (
+                "javascript" in content_type
+                or "ecmascript" in content_type
+                or "text/css" in content_type
+                or content_type.startswith("image/")
+                or content_type.startswith("font/")
+                or content_type.startswith("video/")
+                or content_type.startswith("audio/")
+            ):
+                return False
+            if (
+                "html" in content_type
+                and not has_api_marker
+                and not has_structured_content
+                and param_count < 5
+            ):
+                return False
+
+        if len(path) > 220 and not (has_api_marker or has_structured_content or has_write_method):
+            return False
+        if re.search(r"/[a-z0-9_-]{80,}", path) and not (
+            has_api_marker or has_structured_content or has_write_method
+        ):
+            return False
+
+        if has_write_method:
+            return True
+        if has_api_marker or has_structured_content or has_api_pattern:
+            return True
+        if param_count >= 6 and first_part and first_part not in self.PASSIVE_STATIC_PATH_PARTS:
+            return True
+        return False
+
+    def _passive_entry_allowed(self, entry, filter_cfg):
+        """Enforce passive host scope + API-likeness filtering."""
+        host = self._ascii_safe(entry.get("host"), lower=True).strip()
+        if not host:
+            return False
+
+        scope_override_enabled = bool(filter_cfg.get("scope_override_enabled"))
+        scope_override = filter_cfg.get("scope_override", {})
+        if scope_override_enabled:
+            if not self._host_matches_target_scope(host, scope_override):
+                return False
+        elif filter_cfg.get("force_host"):
+            if host != filter_cfg.get("selected_host"):
+                return False
+        else:
+            if self._is_wayback_noise_host(host):
+                return False
+            allowed_bases = set(filter_cfg.get("allowed_bases", set()))
+            if allowed_bases:
+                host_base = self._infer_base_domain(host)
+                if host_base not in allowed_bases:
+                    return False
+
+        return self._passive_entry_is_api_like(entry)
+
+    def _run_passive_mode_handlers(self, mode, snapshot):
+        """Run passive discovery handlers selected by UI mode."""
+        findings = []
+        handlers = [
+            ("API5 (BFLA)", self._passive_discover_api5),
+            ("API3 (Data)", self._passive_discover_api3),
+            ("API4 (Resource)", self._passive_discover_api4),
+            ("API6 (Flows)", self._passive_discover_api6),
+            ("API9 (Version)", self._passive_discover_api9),
+            ("API10 (Consumption)", self._passive_discover_api10),
+        ]
+        for mode_name, handler in handlers:
+            if mode in ["All", mode_name]:
+                findings.extend(handler(snapshot))
+        return findings
+
+    def _sort_and_store_passive_findings(self, findings):
+        """Sort and persist passive findings snapshot for export."""
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "info": 3}
+        ordered = sorted(
+            findings,
+            key=lambda x: (
+                severity_order.get(
+                    self._ascii_safe(x.get("severity", "info"), lower=True), 4
+                ),
+                self._ascii_safe(x.get("category", ""), lower=True),
+                self._ascii_safe(x.get("endpoint", ""), lower=True),
+            ),
+        )
+        with self.passive_discovery_lock:
+            self.passive_discovery_findings = list(ordered)
+        return ordered
+
+    def _passive_discover_api5(self, snapshot):
+        """Heuristic passive API5/BFLA detection from endpoint history."""
+        findings = []
+        success_codes = set([200, 201, 202, 204, 206])
+        write_methods = set(["POST", "PUT", "PATCH", "DELETE"])
+
+        for endpoint_key, entries in snapshot.items():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            if not entries_list:
+                continue
+            entry = self._get_entry(entries_list)
+            path = self._ascii_safe(entry.get("normalized_path", "") or "", lower=True)
+            method = self._ascii_safe(entry.get("method", "") or "").upper()
+            id_like_path = bool(re.search(r"/{id}|/{uuid}|/{objectid}", path))
+            sensitive_path = bool(self.PASSIVE_ADMIN_PATH_PATTERN.search(path)) or id_like_path
+            if not sensitive_path and method not in write_methods:
+                continue
+
+            success_entries = [
+                e
+                for e in entries_list
+                if int(e.get("response_status", 0) or 0) in success_codes
+            ]
+            if not success_entries:
+                continue
+
+            fp_to_sigs = {}
+            for e in success_entries:
+                fp = self._passive_auth_fingerprint(e)
+                sig = self._passive_body_signature(e.get("response_body", ""))
+                if fp not in fp_to_sigs:
+                    fp_to_sigs[fp] = set()
+                fp_to_sigs[fp].add(sig)
+
+            auth_fps = sorted(fp_to_sigs.keys())
+            if sensitive_path and "none" in fp_to_sigs:
+                findings.append(
+                    {
+                        "category": "API5",
+                        "severity": "high",
+                        "endpoint": endpoint_key,
+                        "issue": "Sensitive/admin-like endpoint returns success without explicit auth signal",
+                        "evidence": "Success fingerprints: {}".format(", ".join(auth_fps)),
+                    }
+                )
+
+            if len(auth_fps) >= 2 and sensitive_path:
+                shared_sig = None
+                all_sigs = [fp_to_sigs.get(fp, set()) for fp in auth_fps]
+                if all_sigs:
+                    intersection = set(all_sigs[0])
+                    for sigs in all_sigs[1:]:
+                        intersection &= sigs
+                    if intersection:
+                        shared_sig = list(intersection)[0]
+
+                if shared_sig:
+                    findings.append(
+                        {
+                            "category": "API5",
+                            "severity": "high",
+                            "endpoint": endpoint_key,
+                            "issue": "Multiple auth contexts received highly similar success responses",
+                            "evidence": "Auth contexts: {} | Shared response signature: {}".format(
+                                ", ".join(auth_fps), shared_sig[:90]
+                            ),
+                        }
+                    )
+                elif method in write_methods:
+                    findings.append(
+                        {
+                            "category": "API5",
+                            "severity": "medium",
+                            "endpoint": endpoint_key,
+                            "issue": "Write/admin-like endpoint succeeds across multiple auth contexts",
+                            "evidence": "Auth contexts: {} | Samples: {}".format(
+                                ", ".join(auth_fps), len(success_entries)
+                            ),
+                        }
+                    )
+
+        return findings
+
+    def _passive_discover_api3(self, snapshot):
+        """Passive API3 data exposure discovery via JSON field-set drift."""
+        findings = []
+        for endpoint_key, entries in snapshot.items():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            context_fields = self._passive_context_json_fields(entries_list)
+            if len(context_fields) < 2:
+                continue
+
+            union_fields = set()
+            field_sets = list(context_fields.values())
+            common_fields = set(field_sets[0])
+            for field_set in field_sets:
+                union_fields |= set(field_set)
+                common_fields &= set(field_set)
+
+            variable_fields = sorted(list(union_fields - common_fields))
+            if not variable_fields:
+                continue
+
+            min_fields = min([len(x) for x in field_sets])
+            max_fields = max([len(x) for x in field_sets])
+            sensitive_delta = [
+                field for field in variable_fields if self._field_is_sensitive(field)
+            ]
+            contexts = sorted(list(context_fields.keys()))
+
+            if sensitive_delta:
+                findings.append(
+                    {
+                        "category": "API3",
+                        "severity": "high",
+                        "endpoint": endpoint_key,
+                        "issue": "Cross-context JSON field drift includes sensitive/PII-like attributes",
+                        "evidence": "Contexts: {} | Field count range: {}-{} | Sensitive variable fields: {}".format(
+                            ", ".join(contexts[:4]),
+                            min_fields,
+                            max_fields,
+                            ", ".join(sensitive_delta[:8]),
+                        ),
+                    }
+                )
+            elif (max_fields - min_fields) >= 5 and len(variable_fields) >= 4:
+                findings.append(
+                    {
+                        "category": "API3",
+                        "severity": "medium",
+                        "endpoint": endpoint_key,
+                        "issue": "Large cross-context JSON field drift detected",
+                        "evidence": "Contexts: {} | Field count range: {}-{} | Variable fields: {}".format(
+                            ", ".join(contexts[:4]),
+                            min_fields,
+                            max_fields,
+                            ", ".join(variable_fields[:8]),
+                        ),
+                    }
+                )
+
+        return findings
+
+    def _entry_param_names_lower(self, entry):
+        """Extract request parameter names in lowercase with bounded parsing."""
+        names = set()
+        params = entry.get("parameters", {}) or {}
+        for param_type in ["url", "body", "json", "cookie"]:
+            raw = params.get(param_type, [])
+            if isinstance(raw, dict):
+                iterable = raw.keys()
+            elif isinstance(raw, list):
+                iterable = raw
+            else:
+                iterable = []
+            count = 0
+            for name in iterable:
+                if count >= 80:
+                    break
+                count += 1
+                if name is None:
+                    continue
+                safe_name = self._ascii_safe(name, lower=True).strip()
+                if safe_name:
+                    names.add(safe_name)
+
+        query = (entry.get("query_string", "") or "")
+        if query:
+            for part in query.split("&")[:80]:
+                if not part:
+                    continue
+                name = self._ascii_safe(part.split("=", 1)[0], lower=True).strip()
+                if name:
+                    names.add(name)
+        return names
+
+    def _entry_header_names_lower(self, entry):
+        """Extract request header names in lowercase with bounded parsing."""
+        headers = entry.get("headers", {}) or {}
+        out = set()
+        count = 0
+        for key in headers.keys():
+            if count >= 40:
+                break
+            count += 1
+            safe_key = self._ascii_safe(key, lower=True).strip()
+            if safe_key:
+                out.add(safe_key)
+        return out
+
+    def _entry_limit_values(self, entry):
+        """Extract numeric pagination limits from query string."""
+        query = self._ascii_safe(entry.get("query_string", "") or "", lower=True)
+        if not query:
+            return []
+        values = []
+        for value_text in self.PASSIVE_LIMIT_QUERY_PATTERN.findall(query)[:8]:
+            try:
+                value = int(value_text)
+            except (TypeError, ValueError):
+                continue
+            if value >= 0:
+                values.append(value)
+        return values
+
+    def _passive_discover_api4(self, snapshot):
+        """Passive API4 resource-consumption heuristics from captured history."""
+        findings = []
+        pagination_keys = set(["limit", "page", "page_size", "pagesize", "offset", "cursor", "per_page"])
+        throttled_codes = set([429, 503])
+
+        for endpoint_key, entries in snapshot.items():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            if not entries_list:
+                continue
+            entry = self._get_entry(entries_list)
+            path = self._ascii_safe(entry.get("normalized_path", "") or "", lower=True)
+            method = self._ascii_safe(entry.get("method", "") or "").upper()
+
+            success_entries = []
+            throttled_count = 0
+            max_response_length = 0
+            slow_success_count = 0
+            max_limit = 0
+            param_names = set()
+
+            for sample in entries_list[:40]:
+                status = int(sample.get("response_status", 0) or 0)
+                if status in throttled_codes:
+                    throttled_count += 1
+                if 200 <= status < 300:
+                    success_entries.append(sample)
+                    resp_len = int(sample.get("response_length", 0) or 0)
+                    if resp_len > max_response_length:
+                        max_response_length = resp_len
+                    resp_time = int(sample.get("response_time_ms", 0) or 0)
+                    if resp_time >= 4000:
+                        slow_success_count += 1
+                param_names.update(self._entry_param_names_lower(sample))
+                for limit_value in self._entry_limit_values(sample):
+                    if limit_value > max_limit:
+                        max_limit = limit_value
+
+            if not success_entries:
+                continue
+
+            resource_like = bool(self.PASSIVE_RESOURCE_PATH_PATTERN.search(path))
+            has_pagination = any(name in pagination_keys for name in param_names)
+            if not resource_like and not has_pagination and method not in ["GET", "POST"]:
+                continue
+
+            if max_limit >= 1000:
+                findings.append(
+                    {
+                        "category": "API4",
+                        "severity": "high",
+                        "endpoint": endpoint_key,
+                        "issue": "Very large pagination/window value accepted",
+                        "evidence": "Max observed limit/size value: {}".format(max_limit),
+                    }
+                )
+
+            if max_response_length >= 250000 and not has_pagination:
+                findings.append(
+                    {
+                        "category": "API4",
+                        "severity": "high",
+                        "endpoint": endpoint_key,
+                        "issue": "Large successful response without pagination controls",
+                        "evidence": "Largest 2xx response length: {} bytes".format(max_response_length),
+                    }
+                )
+            elif max_response_length >= 120000 and not has_pagination:
+                findings.append(
+                    {
+                        "category": "API4",
+                        "severity": "medium",
+                        "endpoint": endpoint_key,
+                        "issue": "Potential unbounded response size",
+                        "evidence": "Largest 2xx response length: {} bytes".format(max_response_length),
+                    }
+                )
+
+            if len(success_entries) >= 12 and throttled_count == 0:
+                findings.append(
+                    {
+                        "category": "API4",
+                        "severity": "medium",
+                        "endpoint": endpoint_key,
+                        "issue": "High success volume observed without throttling signals",
+                        "evidence": "2xx samples: {} | 429/503 samples: {}".format(
+                            len(success_entries), throttled_count
+                        ),
+                    }
+                )
+
+            if slow_success_count >= 3 and max_response_length >= 120000 and throttled_count == 0:
+                findings.append(
+                    {
+                        "category": "API4",
+                        "severity": "medium",
+                        "endpoint": endpoint_key,
+                        "issue": "Slow heavy responses may enable resource exhaustion",
+                        "evidence": "Slow 2xx samples (>=4s): {} | Max length: {}".format(
+                            slow_success_count, max_response_length
+                        ),
+                    }
+                )
+
+        return findings
+
+    def _passive_discover_api6(self, snapshot):
+        """Passive API6 business-flow authorization heuristics."""
+        findings = []
+        write_methods = set(["POST", "PUT", "PATCH", "DELETE"])
+
+        for endpoint_key, entries in snapshot.items():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            if not entries_list:
+                continue
+            entry = self._get_entry(entries_list)
+            path = self._ascii_safe(entry.get("normalized_path", "") or "", lower=True)
+            method = self._ascii_safe(entry.get("method", "") or "").upper()
+
+            flow_like = bool(self.PASSIVE_FLOW_PATH_PATTERN.search(path))
+            if not flow_like and method in write_methods:
+                flow_like = any(
+                    marker in path
+                    for marker in ["/admin", "/role", "/permission", "/billing", "/transfer", "/withdraw", "/approve"]
+                )
+            if not flow_like:
+                continue
+
+            fp_to_sigs = {}
+            fp_to_success_count = {}
+            for sample in entries_list[:40]:
+                status = int(sample.get("response_status", 0) or 0)
+                if status < 200 or status >= 300:
+                    continue
+                fp = self._passive_auth_fingerprint(sample)
+                sig = self._passive_body_signature(sample.get("response_body", ""))
+                if fp not in fp_to_sigs:
+                    fp_to_sigs[fp] = set()
+                    fp_to_success_count[fp] = 0
+                fp_to_sigs[fp].add(sig)
+                fp_to_success_count[fp] += 1
+
+            if not fp_to_sigs:
+                continue
+
+            auth_contexts = sorted(fp_to_sigs.keys())
+            if "none" in fp_to_sigs:
+                findings.append(
+                    {
+                        "category": "API6",
+                        "severity": "critical" if method in write_methods else "high",
+                        "endpoint": endpoint_key,
+                        "issue": "Sensitive business flow succeeded without explicit auth signal",
+                        "evidence": "Auth contexts: {} | unauth success samples: {}".format(
+                            ", ".join(auth_contexts),
+                            fp_to_success_count.get("none", 0),
+                        ),
+                    }
+                )
+
+            if len(auth_contexts) >= 2:
+                all_sigs = [fp_to_sigs.get(fp, set()) for fp in auth_contexts]
+                shared_sig = None
+                if all_sigs:
+                    intersection = set(all_sigs[0])
+                    for sigs in all_sigs[1:]:
+                        intersection &= sigs
+                    if intersection:
+                        shared_sig = list(intersection)[0]
+
+                if shared_sig:
+                    findings.append(
+                        {
+                            "category": "API6",
+                            "severity": "high",
+                            "endpoint": endpoint_key,
+                            "issue": "Business-flow responses look identical across auth contexts",
+                            "evidence": "Contexts: {} | Shared signature: {}".format(
+                                ", ".join(auth_contexts), shared_sig[:90]
+                            ),
+                        }
+                    )
+                elif method in write_methods:
+                    findings.append(
+                        {
+                            "category": "API6",
+                            "severity": "medium",
+                            "endpoint": endpoint_key,
+                            "issue": "Write business-flow endpoint succeeded for multiple auth contexts",
+                            "evidence": "Contexts: {} | Success samples: {}".format(
+                                ", ".join(auth_contexts),
+                                sum(fp_to_success_count.values()),
+                            ),
+                        }
+                    )
+
+        return findings
+
+    def _passive_discover_api10(self, snapshot):
+        """Passive API10 heuristics for unsafe upstream API consumption."""
+        findings = []
+        webhook_write_methods = set(["POST", "PUT", "PATCH"])
+
+        for endpoint_key, entries in snapshot.items():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            if not entries_list:
+                continue
+            entry = self._get_entry(entries_list)
+            path = self._ascii_safe(entry.get("normalized_path", "") or "", lower=True)
+            method = self._ascii_safe(entry.get("method", "") or "").upper()
+
+            success_entries = []
+            param_names = set()
+            header_names = set()
+            upstream_hints = set()
+
+            for sample in entries_list[:40]:
+                status = int(sample.get("response_status", 0) or 0)
+                if 200 <= status < 300:
+                    success_entries.append(sample)
+                param_names.update(self._entry_param_names_lower(sample))
+                header_names.update(self._entry_header_names_lower(sample))
+                body = self._ascii_safe(sample.get("response_body", "") or "", lower=True)
+                for hint in self.PASSIVE_UPSTREAM_ERROR_HINTS:
+                    if hint in body:
+                        upstream_hints.add(hint)
+                        if len(upstream_hints) >= 4:
+                            break
+
+            if not success_entries and not upstream_hints:
+                continue
+
+            has_external_param = any(
+                any(keyword in name for keyword in self.PASSIVE_CALLBACK_PARAM_KEYWORDS)
+                for name in param_names
+            )
+            webhook_like = bool(self.PASSIVE_WEBHOOK_PATH_PATTERN.search(path))
+            has_signature = any(
+                any(hint in header_name for hint in self.PASSIVE_SIGNATURE_HEADER_HINTS)
+                for header_name in header_names
+            )
+
+            if has_external_param and success_entries:
+                findings.append(
+                    {
+                        "category": "API10",
+                        "severity": "high" if webhook_like else "medium",
+                        "endpoint": endpoint_key,
+                        "issue": "Endpoint accepts external callback/URL-style input",
+                        "evidence": "Param hints: {} | 2xx samples: {}".format(
+                            ", ".join(sorted(list(param_names))[:8]),
+                            len(success_entries),
+                        ),
+                    }
+                )
+
+            if webhook_like and method in webhook_write_methods and success_entries and not has_signature:
+                findings.append(
+                    {
+                        "category": "API10",
+                        "severity": "high",
+                        "endpoint": endpoint_key,
+                        "issue": "Webhook/callback endpoint observed without signature header signal",
+                        "evidence": "Observed headers: {}".format(
+                            ", ".join(sorted(list(header_names))[:8]) or "<none>"
+                        ),
+                    }
+                )
+
+            if upstream_hints:
+                findings.append(
+                    {
+                        "category": "API10",
+                        "severity": "medium",
+                        "endpoint": endpoint_key,
+                        "issue": "Responses leak upstream dependency/network failure details",
+                        "evidence": "Detected upstream error hints: {}".format(
+                            ", ".join(sorted(list(upstream_hints))[:6])
+                        ),
+                    }
+                )
+
+        return findings
+
+    def _passive_context_json_fields(self, entries_list):
+        """Build auth-context -> union JSON fields from successful responses."""
+        context_fields = {}
+        for entry in entries_list:
+            status = int(entry.get("response_status", 0) or 0)
+            if status < 200 or status >= 300:
+                continue
+            parsed = self._parse_json_loose(entry.get("response_body", ""))
+            if parsed is None:
+                continue
+            paths = set()
+            self._flatten_json_paths(parsed, "", paths, 0)
+            if not paths:
+                continue
+            context = self._passive_auth_fingerprint(entry)
+            if context not in context_fields:
+                context_fields[context] = set()
+            context_fields[context].update(paths)
+        return context_fields
+
+    def _passive_discover_api9(self, snapshot):
+        """Passive API9 shadow/version drift detection."""
+        findings = []
+        groups = {}
+
+        for endpoint_key, entries in snapshot.items():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            if not entries_list:
+                continue
+            entry = self._get_entry(entries_list)
+            method = self._ascii_safe(entry.get("method", "") or "").upper()
+            path = self._ascii_safe(entry.get("normalized_path", "") or "")
+            version_token = self._extract_version_segment(path)
+            if not version_token:
+                continue
+            version_value = self._parse_version_value(version_token)
+            if version_value is None:
+                continue
+            versionless = self._strip_version_segment(path, version_token)
+            group_key = "{}:{}".format(method, versionless)
+            if group_key not in groups:
+                groups[group_key] = []
+            groups[group_key].append(
+                {
+                    "endpoint": endpoint_key,
+                    "version_token": version_token,
+                    "version_value": version_value,
+                    "entries": entries_list,
+                }
+            )
+
+        for group_key, versions in groups.items():
+            if len(versions) < 2:
+                continue
+
+            versions.sort(key=lambda x: x["version_value"])
+            for version_data in versions:
+                entries_data = version_data.get("entries", [])
+                version_data["has_success"] = self._has_success_response(entries_data)
+                version_data["fields"] = self._passive_union_json_fields(entries_data)
+            latest = versions[-1]
+            latest_fields = latest.get("fields", set())
+            latest_success = bool(latest.get("has_success"))
+
+            for older in versions[:-1]:
+                older_success = bool(older.get("has_success"))
+                if not (latest_success and older_success):
+                    continue
+
+                findings.append(
+                    {
+                        "category": "API9",
+                        "severity": "medium",
+                        "endpoint": older.get("endpoint", group_key),
+                        "issue": "Legacy API version remains active alongside newer version",
+                        "evidence": "Legacy: {} | Latest: {} | Group: {}".format(
+                            older.get("version_token", ""),
+                            latest.get("version_token", ""),
+                            group_key,
+                        ),
+                    }
+                )
+
+                older_fields = older.get("fields", set())
+                if not older_fields or not latest_fields:
+                    continue
+
+                legacy_only = sorted(list(older_fields - latest_fields))
+                if not legacy_only:
+                    continue
+                sensitive_legacy = [
+                    field for field in legacy_only if self._field_is_sensitive(field)
+                ]
+                if sensitive_legacy:
+                    findings.append(
+                        {
+                            "category": "API9",
+                            "severity": "high",
+                            "endpoint": older.get("endpoint", group_key),
+                            "issue": "Legacy version exposes sensitive fields absent in newer version",
+                            "evidence": "Legacy-only sensitive fields: {}".format(
+                                ", ".join(sensitive_legacy[:8])
+                            ),
+                        }
+                    )
+                elif len(legacy_only) >= 4:
+                    findings.append(
+                        {
+                            "category": "API9",
+                            "severity": "medium",
+                            "endpoint": older.get("endpoint", group_key),
+                            "issue": "Versioned response schema drift detected",
+                            "evidence": "Legacy-only fields: {}".format(
+                                ", ".join(legacy_only[:8])
+                            ),
+                        }
+                    )
+
+        return findings
+
+    def _passive_union_json_fields(self, entries):
+        fields = set()
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for entry in entries_list:
+            status = int(entry.get("response_status", 0) or 0)
+            if status < 200 or status >= 300:
+                continue
+            parsed = self._parse_json_loose(entry.get("response_body", ""))
+            if parsed is None:
+                continue
+            self._flatten_json_paths(parsed, "", fields, 0)
+        return fields
+
+    def _has_success_response(self, entries):
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for entry in entries_list:
+            status = int(entry.get("response_status", 0) or 0)
+            if 200 <= status < 300:
+                return True
+        return False
+
+    def _passive_auth_fingerprint(self, entry):
+        headers = entry.get("headers", {}) or {}
+        normalized = {}
+        for key, value in headers.items():
+            normalized[self._ascii_safe(key, lower=True)] = self._ascii_safe(value)
+
+        authz = normalized.get("authorization", "").strip()
+        if authz:
+            lowered = authz.lower()
+            if lowered.startswith("bearer "):
+                token = authz.split(" ", 1)[1].strip()
+                jwt_identity = self._passive_jwt_identity(token)
+                if jwt_identity:
+                    return jwt_identity
+                return "bearer:" + token[:16]
+            return "authorization:" + authz[:20]
+
+        api_key = normalized.get("x-api-key", "").strip()
+        if api_key:
+            return "x-api-key:" + api_key[:12]
+
+        cookie = normalized.get("cookie", "").strip()
+        if cookie:
+            names = []
+            for part in cookie.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    names.append(self._ascii_safe(part.split("=", 1)[0], lower=True).strip())
+            names = sorted(list(set(names)))
+            return "cookie:" + ",".join(names[:4])
+
+        auth_types = [
+            self._ascii_safe(x, lower=True)
+            for x in (entry.get("auth_detected", []) or [])
+        ]
+        if any(x != "none" for x in auth_types):
+            return "auth:" + "|".join(sorted(list(set(auth_types))))
+        return "none"
+
+    def _passive_jwt_identity(self, token):
+        """Derive stable identity fingerprint from JWT claims when possible."""
+        import base64
+        import binascii
+
+        try:
+            text_types = (basestring,)
+        except NameError:
+            text_types = (str,)
+
+        parts = (token or "").strip().split(".")
+        if len(parts) != 3:
+            return None
+        payload_part = parts[1]
+        if not payload_part:
+            return None
+
+        padding = "=" * (-len(payload_part) % 4)
+        try:
+            payload_bytes = base64.urlsafe_b64decode(payload_part + padding)
+            payload_obj = json.loads(payload_bytes)
+        except (TypeError, ValueError, binascii.Error):
+            return None
+
+        role = payload_obj.get("role")
+        roles = payload_obj.get("roles")
+        is_admin = payload_obj.get("is_admin")
+        subject = payload_obj.get("sub")
+        user_id = payload_obj.get("user_id")
+        tenant = payload_obj.get("tenant")
+
+        if isinstance(role, text_types + (int, float)):
+            return "jwt-role:{}".format(self._ascii_safe(role, lower=True, max_len=24))
+        if isinstance(roles, list) and roles:
+            role_text = ",".join([self._ascii_safe(x, lower=True) for x in roles[:4]])
+            return "jwt-roles:{}".format(role_text[:32])
+        if isinstance(is_admin, bool):
+            return "jwt-admin:{}".format("true" if is_admin else "false")
+        if isinstance(subject, text_types + (int, float)):
+            return "jwt-sub:{}".format(self._ascii_safe(subject, lower=True, max_len=24))
+        if isinstance(user_id, text_types + (int, float)):
+            return "jwt-user:{}".format(self._ascii_safe(user_id, lower=True, max_len=24))
+        if isinstance(tenant, text_types + (int, float)):
+            return "jwt-tenant:{}".format(self._ascii_safe(tenant, lower=True, max_len=24))
+        return None
+
+    def _passive_body_signature(self, body_text):
+        body = self._ascii_safe(body_text or "", lower=True)
+        body = re.sub(r"\s+", " ", body).strip()
+        body = re.sub(r"[0-9a-f]{24,}", "{token}", body)
+        body = re.sub(r"\d+", "0", body)
+        if not body:
+            return "empty"
+        return "{}:{}".format(len(body), body[:120])
+
+    def _parse_json_loose(self, body_text):
+        text = (body_text or "").strip()
+        if not text:
+            return None
+        if text.startswith(")]}',"):
+            parts = text.split("\n", 1)
+            if len(parts) == 2:
+                text = parts[1].strip()
+            else:
+                return None
+        if not text or text[0] not in ["{", "["]:
+            return None
+        text = text.rstrip(" ;")
+        try:
+            return json.loads(text)
+        except ValueError:
+            return None
+
+    def _flatten_json_paths(self, value, prefix, out, depth):
+        if depth > 6:
+            return
+        if isinstance(value, dict):
+            count = 0
+            for key in sorted(value.keys()):
+                if count >= 80:
+                    break
+                count += 1
+                key_str = self._ascii_safe(key)
+                path = key_str if not prefix else "{}.{}".format(prefix, key_str)
+                out.add(path)
+                self._flatten_json_paths(value.get(key), path, out, depth + 1)
+            return
+        if isinstance(value, list):
+            path = "[]" if not prefix else "{}[]".format(prefix)
+            out.add(path)
+            for item in value[:5]:
+                self._flatten_json_paths(item, path, out, depth + 1)
+            return
+        if prefix:
+            out.add(prefix)
+        else:
+            out.add("<root>")
+
+    def _field_is_sensitive(self, field_path):
+        lower = self._ascii_safe(field_path, lower=True)
+        return any(word in lower for word in self.PASSIVE_SENSITIVE_FIELD_KEYWORDS)
+
+    def _extract_version_segment(self, path):
+        match = self.PASSIVE_VERSION_SEGMENT_PATTERN.search((path or "").lower())
+        if match:
+            return match.group(1)
+        return None
+
+    def _strip_version_segment(self, path, version_token):
+        stripped = re.sub(
+            r"/" + re.escape(version_token) + r"(?=/|$)",
+            "",
+            path or "",
+            count=1,
+        )
+        return stripped if stripped else "/"
+
+    def _parse_version_value(self, version_token):
+        token = (version_token or "").lower().lstrip("v")
+        if not token:
+            return None
+        parts = token.split(".", 1)
+        try:
+            major = int(parts[0])
+            minor = int(parts[1]) if len(parts) > 1 else 0
+            return (major, minor)
+        except (TypeError, ValueError):
+            return None
+
+    def _format_passive_discovery_output(
+        self, findings, scanned_count, total_available, mode
+    ):
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "info": 0}
+        category_counts = {
+            "API3": 0,
+            "API4": 0,
+            "API5": 0,
+            "API6": 0,
+            "API9": 0,
+            "API10": 0,
+        }
+        for finding in findings:
+            sev = self._ascii_safe(finding.get("severity", "info"), lower=True)
+            cat = self._ascii_safe(finding.get("category", ""))
+            if sev in severity_counts:
+                severity_counts[sev] += 1
+            if cat in category_counts:
+                category_counts[cat] += 1
+
+        lines = []
+        lines.append("=" * 80)
+        lines.append("PASSIVE DISCOVERY RESULTS")
+        lines.append("=" * 80)
+        lines.append("[*] Mode: {}".format(self._ascii_safe(mode)))
+        lines.append("[*] Endpoints Scanned: {} (of {})".format(scanned_count, total_available))
+        lines.append("[*] Findings: {}".format(len(findings)))
+        lines.append(
+            "[*] Severity: Critical={} High={} Medium={} Info={}".format(
+                severity_counts["critical"],
+                severity_counts["high"],
+                severity_counts["medium"],
+                severity_counts["info"],
+            )
+        )
+        lines.append(
+            "[*] Categories: API3={} API4={} API5={} API6={} API9={} API10={}".format(
+                category_counts["API3"],
+                category_counts["API4"],
+                category_counts["API5"],
+                category_counts["API6"],
+                category_counts["API9"],
+                category_counts["API10"],
+            )
+        )
+        lines.append("")
+
+        if not findings:
+            lines.append("[+] No passive gap signals detected in current history")
+            lines.append("[*] Capture more role/version traffic and rerun")
+            return "\n".join(lines) + "\n"
+
+        lines.append("TOP FINDINGS")
+        lines.append("-" * 80)
+        for finding in findings[:120]:
+            severity = self._ascii_safe(
+                finding.get("severity", "info"), lower=True
+            ).upper()
+            category = self._ascii_safe(finding.get("category", "GEN"))
+            issue = self._ascii_safe(finding.get("issue", ""))
+            endpoint = self._ascii_safe(finding.get("endpoint", ""))
+            evidence = self._ascii_safe(finding.get("evidence", ""))
+            lines.append(
+                "[{}][{}] {}".format(
+                    severity,
+                    category,
+                    issue,
+                )
+            )
+            lines.append("  Endpoint: {}".format(endpoint))
+            lines.append("  Evidence: {}".format(evidence))
+            lines.append("")
+        if len(findings) > 120:
+            lines.append("[*] {} more findings not shown".format(len(findings) - 120))
+
+        return "\n".join(lines) + "\n"
+
+    def _export_passive_discovery_results(self):
+        """Export passive findings to JSON."""
+        with self.passive_discovery_lock:
+            findings = list(self.passive_discovery_findings or [])
+        if not findings:
+            self.passive_area.append("\n[!] No passive findings to export\n")
+            return
+
+        import os
+
+        export_dir = self._get_export_dir("PassiveDiscovery_Export")
+        if not export_dir:
+            return
+        filepath = os.path.join(export_dir, "passive_discovery_findings.json")
+        writer = None
+        try:
+            payload = {
+                "metadata": {
+                    "timestamp": SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(Date()),
+                    "finding_count": len(findings),
+                    "source": "proxy_history_passive",
+                },
+                "findings": findings,
+            }
+            writer = FileWriter(filepath)
+            writer.write(json.dumps(payload, indent=2))
+            self.passive_area.append(
+                "\n[+] Exported {} passive findings\n[+] Folder: {}\n[+] File: {}\n".format(
+                    len(findings), export_dir, filepath
+                )
+            )
+            self.log_to_ui("[+] Exported passive discovery findings to: {}".format(export_dir))
+        except Exception as e:
+            self.passive_area.append("\n[!] Passive export failed: {}\n".format(str(e)))
+            self.log_to_ui("[!] Passive export failed: {}".format(str(e)))
+        finally:
+            if writer:
+                try:
+                    writer.close()
+                except Exception as close_err:
+                    self._callbacks.printError(
+                        "Error closing passive discovery export file: {}".format(
+                            str(close_err)
+                        )
+                    )
 
     def _normalize_wayback_entry(self, line):
         """Normalize wayback line into: original | archive | timestamp."""
@@ -7183,7 +9792,7 @@ Generate a complete Burp extension that:
             process = None
             try:
                 if use_custom_httpx and custom_httpx_command:
-                    cmd = ["bash", "-c", custom_httpx_command]
+                    cmd = self._build_shell_command(custom_httpx_command)
                     display_cmd = custom_httpx_command
                     SwingUtilities.invokeLater(
                         lambda: self.httpx_area.append(
@@ -7192,9 +9801,12 @@ Generate a complete Burp extension that:
                     )
                 else:
                     cmd = [
-                        "bash",
-                        "-c",
-                        "cat {} | {} -status-code -nc".format(urls_file, httpx_path),
+                        httpx_path,
+                        "-l",
+                        urls_file,
+                        "-status-code",
+                        "-nc",
+                        "-silent",
                     ]
                     display_cmd = " ".join(cmd)
                 SwingUtilities.invokeLater(
@@ -7329,8 +9941,9 @@ Generate a complete Burp extension that:
             except Exception as e:
                 err = "[!] Error: {}\n".format(str(e))
                 SwingUtilities.invokeLater(lambda: self.httpx_area.append(err))
+                err_msg = str(e)
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[!] HTTPX error: {}".format(str(e)))
+                    lambda m=err_msg: self.log_to_ui("[!] HTTPX error: {}".format(m))
                 )
             finally:
                 self._clear_active_tool_process("httpx", process)
@@ -7464,6 +10077,167 @@ Generate a complete Burp extension that:
         SwingUtilities.invokeLater(lambda: self._update_stats())
         SwingUtilities.invokeLater(lambda: self.refresh_view())
 
+    def _collect_katana_seed_urls(self):
+        """Collect scoped Katana seed URLs from first-party Recon hosts."""
+        with self.lock:
+            entries_snapshot = [self._get_entry(entries) for entries in self.api_data.values()]
+
+        scope_override = self._get_target_scope_override()
+        host_counts = {}
+        base_scores = {}
+        for entry in entries_snapshot:
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                continue
+            if scope_override.get("enabled") and not self._host_matches_target_scope(
+                host, scope_override
+            ):
+                continue
+            host_counts[host] = host_counts.get(host, 0) + 1
+            if (not scope_override.get("enabled")) and self._ffuf_is_noise_host(host):
+                continue
+            base = self._infer_base_domain(host)
+            if not base:
+                continue
+
+            score = 1
+            method = self._ascii_safe(entry.get("method"), lower=True).strip()
+            if method in ["post", "put", "patch", "delete"]:
+                score += 2
+            path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True)
+            if "/api/" in path or "/graphql" in path:
+                score += 3
+            base_scores[base] = base_scores.get(base, 0) + score
+
+        if scope_override.get("enabled"):
+            selected_host = "target-bases"
+            force_host = False
+            allowed_bases = set(scope_override.get("bases", set()))
+        else:
+            selected_host = "all"
+            try:
+                if hasattr(self, "host_filter") and self.host_filter is not None:
+                    selected_host = self._ascii_safe(
+                        str(self.host_filter.getSelectedItem()), lower=True
+                    ).strip()
+            except Exception as e:
+                self._callbacks.printError("Katana host-filter read error: {}".format(str(e)))
+                selected_host = "all"
+            force_host = bool(selected_host and selected_host != "all")
+
+            sorted_bases = sorted(base_scores.items(), key=lambda item: (-item[1], item[0]))
+            allowed_bases = set([base for base, _ in sorted_bases[:1]])
+            if not allowed_bases:
+                fallback_bases = {}
+                for host, count in host_counts.items():
+                    if self._ffuf_is_noise_host(host):
+                        continue
+                    base = self._infer_base_domain(host)
+                    if not base:
+                        continue
+                    fallback_bases[base] = fallback_bases.get(base, 0) + count
+                fallback_sorted = sorted(
+                    fallback_bases.items(), key=lambda item: (-item[1], item[0])
+                )
+                allowed_bases = set([base for base, _ in fallback_sorted[:1]])
+
+        dropped_noise_host = 0
+        dropped_scope_host = 0
+        inspected_entries = 0
+        candidates = {}
+        for entry in entries_snapshot:
+            inspected_entries += 1
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                dropped_scope_host += 1
+                continue
+            if scope_override.get("enabled"):
+                if not self._host_matches_target_scope(host, scope_override):
+                    dropped_scope_host += 1
+                    continue
+            elif force_host:
+                if host != selected_host:
+                    dropped_scope_host += 1
+                    continue
+            else:
+                if self._ffuf_is_noise_host(host):
+                    dropped_noise_host += 1
+                    continue
+                host_base = self._infer_base_domain(host)
+                if allowed_bases and host_base not in allowed_bases:
+                    dropped_scope_host += 1
+                    continue
+
+            clean_url = self._clean_url(self._build_url(entry, False))
+            if not clean_url:
+                continue
+            score = 1
+            normalized_path = self._ascii_safe(
+                entry.get("normalized_path") or "/", lower=True
+            )
+            if "/api/" in normalized_path or "/graphql" in normalized_path:
+                score += 3
+            if normalized_path.startswith("/v1") or normalized_path.startswith("/v2"):
+                score += 2
+            previous = candidates.get(clean_url)
+            if previous is None or score > previous:
+                candidates[clean_url] = score
+
+        ordered = sorted(candidates.items(), key=lambda item: (-item[1], item[0]))
+        raw_candidates = len(ordered)
+        truncated = 0
+        if raw_candidates > self.KATANA_MAX_TARGETS:
+            truncated = raw_candidates - self.KATANA_MAX_TARGETS
+            ordered = ordered[: self.KATANA_MAX_TARGETS]
+
+        seeds = [url for url, _ in ordered]
+        meta = {
+            "inspected_entries": inspected_entries,
+            "raw_candidates": raw_candidates,
+            "dropped_noise_host": dropped_noise_host,
+            "dropped_scope_host": dropped_scope_host,
+            "truncated": truncated,
+            "force_host": force_host,
+            "selected_host": selected_host,
+            "allowed_bases": sorted(list(allowed_bases)),
+            "manual_scope_enabled": bool(scope_override.get("enabled")),
+            "manual_scope_line_count": len(scope_override.get("lines", [])),
+            "manual_scope_host_count": len(scope_override.get("hosts", set())),
+            "manual_scope_base_count": len(scope_override.get("bases", set())),
+            "manual_scope_preview": list(scope_override.get("lines", []))[:3],
+        }
+        return seeds, meta
+
+    def _katana_result_in_scope(self, url, target_meta):
+        """Keep Katana output focused on scoped first-party hosts."""
+        text = self._ascii_safe(url).strip()
+        if not text.lower().startswith(("http://", "https://")):
+            return False
+        try:
+            parsed = URL(text)
+            host = self._ascii_safe(parsed.getHost(), lower=True).strip()
+        except Exception as e:
+            self._callbacks.printError("Katana result parse error: {}".format(str(e)))
+            return False
+        if not host:
+            return False
+
+        if target_meta.get("force_host"):
+            return host == target_meta.get("selected_host")
+
+        if target_meta.get("manual_scope_enabled"):
+            allowed_bases = set(target_meta.get("allowed_bases", []))
+            if not allowed_bases:
+                return True
+            return self._infer_base_domain(host) in allowed_bases
+
+        if self._ffuf_is_noise_host(host):
+            return False
+        allowed_bases = set(target_meta.get("allowed_bases", []))
+        if not allowed_bases:
+            return True
+        return self._infer_base_domain(host) in allowed_bases
+
     def _run_katana(self, event):
         """Run Katana crawler on endpoints from Recon tab"""
         import os
@@ -7495,20 +10269,19 @@ Generate a complete Burp extension that:
         temp_dir = tempfile.mkdtemp(prefix="burp_katana_")
         urls_file = os.path.join(temp_dir, "urls.txt")
 
-        # Export unique hosts to file with cleaning
-        hosts = set()
-        with self.lock:
-            for entries in self.api_data.values():
-                raw_url = self._build_url(self._get_entry(entries), False)
-                clean_url = self._clean_url(raw_url)
-                if clean_url not in hosts:
-                    hosts.add(clean_url)
+        seed_urls, target_meta = self._collect_katana_seed_urls()
+        if not seed_urls:
+            self._cleanup_temp_dir(temp_dir, "katana empty target set")
+            self.katana_area.setText(
+                "[!] No Katana targets after filtering. Capture more first-party API traffic or adjust host filter.\n"
+            )
+            return
 
         writer = None
         try:
             writer = FileWriter(urls_file)
-            for host in hosts:
-                writer.write(host + "\n")
+            for seed in seed_urls:
+                writer.write(seed + "\n")
         finally:
             if writer:
                 writer.close()
@@ -7526,19 +10299,58 @@ Generate a complete Burp extension that:
         uses_recon_host_list = (not use_custom_katana) or (urls_file in custom_katana_command)
 
         self.katana_area.setText("[*] Initializing Katana...\n")
-        self.katana_area.append("[*] Targets: {} hosts\n".format(len(hosts)))
+        self.katana_area.append(
+            "[*] Targets: {} hosts ({} raw candidates)\n".format(
+                len(seed_urls), target_meta.get("raw_candidates", len(seed_urls))
+            )
+        )
+        if target_meta.get("manual_scope_enabled"):
+            self.katana_area.append(
+                "[*] Target base scope: {} lines | hosts={} | bases={}\n".format(
+                    target_meta.get("manual_scope_line_count", 0),
+                    target_meta.get("manual_scope_host_count", 0),
+                    target_meta.get("manual_scope_base_count", 0),
+                )
+            )
+            preview = target_meta.get("manual_scope_preview", [])
+            if preview:
+                self.katana_area.append(
+                    "[*] Scope preview: {}\n".format(", ".join(preview))
+                )
+        elif target_meta.get("force_host"):
+            self.katana_area.append(
+                "[*] Host scope: {}\n".format(target_meta.get("selected_host", "unknown"))
+            )
+        else:
+            allowed_bases = target_meta.get("allowed_bases", [])
+            if allowed_bases:
+                self.katana_area.append(
+                    "[*] First-party base scope: {}\n".format(", ".join(allowed_bases))
+                )
+        self.katana_area.append(
+            "[*] Filtered out: noise-host={} scope-host={}\n".format(
+                target_meta.get("dropped_noise_host", 0),
+                target_meta.get("dropped_scope_host", 0),
+            )
+        )
+        if target_meta.get("truncated", 0) > 0:
+            self.katana_area.append(
+                "[*] Target cap applied: {} skipped (max {})\n".format(
+                    target_meta.get("truncated", 0), self.KATANA_MAX_TARGETS
+                )
+            )
         if use_custom_katana and not uses_recon_host_list:
             self.katana_area.append(
                 "[*] Note: custom command defines target scope (generated host list not referenced)\n"
             )
-        self.log_to_ui("[*] Katana: Starting crawl on {} hosts".format(len(hosts)))
+        self.log_to_ui("[*] Katana: Starting crawl on {} hosts".format(len(seed_urls)))
         self._clear_tool_cancel("katana")
 
         def run_scan():
             process = None
             try:
                 if use_custom_katana and custom_katana_command:
-                    cmd = ["bash", "-c", custom_katana_command]
+                    cmd = self._build_shell_command(custom_katana_command)
                     display_cmd = custom_katana_command
                     SwingUtilities.invokeLater(
                         lambda: self.katana_area.append(
@@ -7547,9 +10359,13 @@ Generate a complete Burp extension that:
                     )
                 else:
                     cmd = [
-                        "bash",
-                        "-c",
-                        "cat {} | {} -d 1 -jc -silent".format(urls_file, katana_path),
+                        katana_path,
+                        "-list",
+                        urls_file,
+                        "-d",
+                        "1",
+                        "-jc",
+                        "-silent",
                     ]
                     display_cmd = " ".join(cmd)
                 SwingUtilities.invokeLater(
@@ -7560,7 +10376,11 @@ Generate a complete Burp extension that:
 
                 start_time = time_module.time()
                 process = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=1,
+                    shell=False,
                 )
                 self._set_active_tool_process("katana", process)
 
@@ -7588,6 +10408,10 @@ Generate a complete Burp extension that:
                         continue
                     clean_line = re.sub(r"\x1b\[[0-9;]*[mK]", "", line.strip())
                     if clean_line:
+                        if uses_recon_host_list and not self._katana_result_in_scope(
+                            clean_line, target_meta
+                        ):
+                            continue
                         results.append(clean_line)
                         SwingUtilities.invokeLater(
                             lambda l=clean_line: self.katana_area.append(l + "\n")
@@ -7682,7 +10506,7 @@ Generate a complete Burp extension that:
                 summary += "=" * 80 + "\n"
                 summary += "[*] Crawl Time: {}s\n".format(elapsed)
                 if uses_recon_host_list:
-                    summary += "[*] Targets: {} hosts\n".format(len(hosts))
+                    summary += "[*] Targets: {} hosts\n".format(len(seed_urls))
                 else:
                     summary += "[*] Targets: Custom command (scope defined by command)\n"
                 summary += "[*] Total Discovered: {} URLs\n".format(len(results))
@@ -7736,8 +10560,9 @@ Generate a complete Burp extension that:
             except Exception as e:
                 err = "[!] Error: {}\n".format(str(e))
                 SwingUtilities.invokeLater(lambda: self.katana_area.append(err))
+                err_msg = str(e)
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[!] Katana error: {}".format(str(e)))
+                    lambda m=err_msg: self.log_to_ui("[!] Katana error: {}".format(m))
                 )
             finally:
                 self._clear_active_tool_process("katana", process)
@@ -7805,6 +10630,257 @@ Generate a complete Burp extension that:
             self.ffuf_area.append("[!] Error: {}\n".format(str(e)))
             self.log_to_ui("[!] FFUF Intruder error: {}".format(str(e)))
 
+    def _infer_base_domain(self, host):
+        """Infer coarse base domain without external dependencies."""
+        text = self._ascii_safe(host, lower=True).strip()
+        if not text:
+            return ""
+        if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", text):
+            return text
+        parts = [p for p in text.split(".") if p]
+        if len(parts) < 2:
+            return text
+        second_level = parts[-2]
+        if len(parts) >= 3 and second_level in ["co", "com", "org", "net", "gov", "edu", "ac"]:
+            return ".".join(parts[-3:])
+        return ".".join(parts[-2:])
+
+    def _ffuf_is_noise_host(self, host):
+        """Detect common third-party/tracker/CDN hosts to avoid FFUF noise."""
+        text = self._ascii_safe(host, lower=True).strip()
+        if not text:
+            return True
+        return any(pattern in text for pattern in self.FFUF_NOISE_HOST_PATTERNS)
+
+    def _is_wayback_noise_host(self, host):
+        """Wayback-specific host noise filter (adtech/tracker heavy domains)."""
+        text = self._ascii_safe(host, lower=True).strip()
+        if not text:
+            return True
+        if self._ffuf_is_noise_host(text):
+            return True
+        if any(pattern in text for pattern in self.WAYBACK_NOISE_HOST_PATTERNS):
+            return True
+        labels = [label for label in text.split(".") if label]
+        if not labels:
+            return True
+        first_label = labels[0]
+        if first_label in self.WAYBACK_NOISE_LABELS:
+            return True
+        if any(label.endswith("ads") or label.startswith("ads") for label in labels[:2]):
+            return True
+        return False
+
+    def _ffuf_is_noise_path_segment(self, first_part):
+        """Detect noisy/static-like first path segment for FFUF targeting."""
+        seg = self._ascii_safe(first_part, lower=True).strip()
+        if not seg:
+            return True
+        if any(noise in seg for noise in self.FFUF_NOISE_PATH_PARTS):
+            return True
+        if "{" in seg or "}" in seg:
+            return True
+        return False
+
+    def _collect_ffuf_targets(self):
+        """Collect prioritized FFUF targets from Recon with first-party filtering."""
+        static_skip_parts = set(
+            [
+                "js",
+                "css",
+                "static",
+                "dist",
+                "assets",
+                "images",
+                "img",
+                "fonts",
+                "shreddit",
+                "recaptcha",
+                "gsi",
+                "sw.js",
+                "service-worker.js",
+            ]
+        )
+
+        with self.lock:
+            entries_snapshot = [self._get_entry(entries) for entries in self.api_data.values()]
+
+        scope_override = self._get_target_scope_override()
+        host_counts = {}
+        base_scores = {}
+        for entry in entries_snapshot:
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                continue
+            if scope_override.get("enabled") and not self._host_matches_target_scope(
+                host, scope_override
+            ):
+                continue
+            host_counts[host] = host_counts.get(host, 0) + 1
+            if (not scope_override.get("enabled")) and self._ffuf_is_noise_host(host):
+                continue
+
+            base = self._infer_base_domain(host)
+            if not base:
+                continue
+
+            score = 1
+            method = self._ascii_safe(entry.get("method"), lower=True).strip()
+            if method in ["post", "put", "patch", "delete"]:
+                score += 2
+
+            path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True)
+            first_part = ""
+            parts = [p for p in path.strip("/").split("/") if p]
+            if parts:
+                first_part = parts[0]
+                if first_part.startswith("api") or first_part in [
+                    "v1",
+                    "v2",
+                    "v3",
+                    "v4",
+                    "graphql",
+                    "rest",
+                    "svc",
+                    "internal",
+                    "auth",
+                    "oauth",
+                ]:
+                    score += 3
+
+            parameters = entry.get("parameters", {})
+            if isinstance(parameters, dict):
+                for value in parameters.values():
+                    if isinstance(value, list) and value:
+                        score += 2
+                        break
+                    if isinstance(value, dict) and value:
+                        score += 2
+                        break
+
+            base_scores[base] = base_scores.get(base, 0) + score
+
+        if scope_override.get("enabled"):
+            selected_host = "target-bases"
+            force_host = False
+            allowed_bases = set(scope_override.get("bases", set()))
+        else:
+            selected_host = "All"
+            try:
+                if hasattr(self, "host_filter") and self.host_filter is not None:
+                    selected_host = self._ascii_safe(
+                        str(self.host_filter.getSelectedItem()), lower=True
+                    )
+            except Exception as e:
+                self._callbacks.printError("FFUF host-filter read error: {}".format(str(e)))
+                selected_host = "All"
+
+            force_host = selected_host and selected_host != "all"
+            sorted_bases = sorted(base_scores.items(), key=lambda item: (-item[1], item[0]))
+            allowed_bases = set([base for base, _ in sorted_bases[:1]])
+            if not allowed_bases:
+                fallback_bases = {}
+                for host, count in host_counts.items():
+                    if self._ffuf_is_noise_host(host):
+                        continue
+                    base = self._infer_base_domain(host)
+                    if not base:
+                        continue
+                    fallback_bases[base] = fallback_bases.get(base, 0) + count
+                fallback_sorted = sorted(
+                    fallback_bases.items(), key=lambda item: (-item[1], item[0])
+                )
+                allowed_bases = set([base for base, _ in fallback_sorted[:1]])
+
+        candidates = {}
+        dropped_noise_host = 0
+        dropped_scope_host = 0
+        dropped_path = 0
+        inspected_entries = 0
+        for entry in entries_snapshot:
+            inspected_entries += 1
+            protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                dropped_scope_host += 1
+                continue
+
+            if scope_override.get("enabled"):
+                if not self._host_matches_target_scope(host, scope_override):
+                    dropped_scope_host += 1
+                    continue
+            elif force_host:
+                if host != selected_host:
+                    dropped_scope_host += 1
+                    continue
+            else:
+                if self._ffuf_is_noise_host(host):
+                    dropped_noise_host += 1
+                    continue
+                if allowed_bases:
+                    host_base = self._infer_base_domain(host)
+                    if host_base not in allowed_bases:
+                        dropped_scope_host += 1
+                        continue
+
+            port = entry.get("port", -1)
+            if port == -1:
+                port = 443 if protocol == "https" else 80
+            if (protocol == "https" and port == 443) or (
+                protocol == "http" and port == 80
+            ):
+                base = "{}://{}".format(protocol, host)
+            else:
+                base = "{}://{}:{}".format(protocol, host, port)
+
+            path = self._ascii_safe(entry.get("normalized_path") or "/")
+            parts = [p for p in path.strip("/").split("/") if p]
+            if not parts:
+                first_part = "api"
+            else:
+                first_part = self._ascii_safe(parts[0], lower=True).strip()
+
+            if first_part in static_skip_parts or self._ffuf_is_noise_path_segment(first_part):
+                dropped_path += 1
+                continue
+
+            target = base + "/" + first_part + "/FUZZ"
+            api_like = (
+                first_part.startswith("api")
+                or first_part in ["v1", "v2", "v3", "v4", "graphql", "rest", "svc", "internal"]
+                or "/api/" in path.lower()
+            )
+            priority = 0 if api_like else 1
+            prev = candidates.get(target)
+            if prev is None or priority < prev:
+                candidates[target] = priority
+
+        ordered = sorted(candidates.items(), key=lambda item: (item[1], item[0]))
+        total_candidates = len(ordered)
+        truncated = 0
+        if total_candidates > self.FFUF_MAX_TARGETS:
+            truncated = total_candidates - self.FFUF_MAX_TARGETS
+            ordered = ordered[: self.FFUF_MAX_TARGETS]
+        targets = [target for target, _ in ordered]
+
+        meta = {
+            "inspected_entries": inspected_entries,
+            "raw_candidates": total_candidates,
+            "dropped_noise_host": dropped_noise_host,
+            "dropped_scope_host": dropped_scope_host,
+            "dropped_path": dropped_path,
+            "truncated": truncated,
+            "force_host": force_host,
+            "selected_host": selected_host,
+            "allowed_bases": sorted(list(allowed_bases)),
+            "manual_scope_enabled": bool(scope_override.get("enabled")),
+            "manual_scope_line_count": len(scope_override.get("lines", [])),
+            "manual_scope_host_count": len(scope_override.get("hosts", set())),
+            "manual_scope_base_count": len(scope_override.get("bases", set())),
+            "manual_scope_preview": list(scope_override.get("lines", []))[:3],
+        }
+        return targets, meta
+
     def _run_ffuf(self, event):
         """Run FFUF directory fuzzer on endpoints from Recon tab"""
         import os
@@ -7838,53 +10914,75 @@ Generate a complete Burp extension that:
             )
             return
 
-        # Get API base paths (filter out static resources)
-        targets = set()
-        skip_paths = ['js', 'css', 'static', 'dist', 'assets', 'images', 'img', 'fonts', 'shreddit', 'recaptcha', 'gsi', 'sw.js', 'service-worker.js']
-        with self.lock:
-            for entries in self.api_data.values():
-                entry = self._get_entry(entries)
-                protocol = entry["protocol"]
-                host = entry["host"]
-                port = (
-                    entry["port"]
-                    if entry["port"] != -1
-                    else (443 if protocol == "https" else 80)
-                )
-                if (protocol == "https" and port == 443) or (
-                    protocol == "http" and port == 80
-                ):
-                    base = "{}://{}".format(protocol, host)
-                else:
-                    base = "{}://{}:{}".format(protocol, host, port)
-
-                # Extract API base path and skip static resources
-                path = entry.get("normalized_path", "/")
-                parts = path.strip("/").split("/")
-                if len(parts) > 0 and parts[0]:
-                    first_part = parts[0].lower()
-                    # Skip static resources and parameterized paths
-                    if first_part not in skip_paths and '{id}' not in first_part:
-                        targets.add(base + "/" + parts[0] + "/FUZZ")
-                else:
-                    targets.add(base + "/FUZZ")
-
-        targets = list(targets)
+        targets, target_meta = self._collect_ffuf_targets()
+        if not targets:
+            self.ffuf_area.setText(
+                "[!] No FFUF targets after filtering. Capture more first-party API traffic or adjust host filter.\n"
+            )
+            return
 
         self.ffuf_area.setText("[*] Initializing FFUF...\n")
-        self.ffuf_area.append("[*] Targets: {} (from Recon tab)\n".format(len(targets)))
+        self.ffuf_area.append(
+            "[*] Targets: {} (from Recon tab; {} raw candidates)\n".format(
+                len(targets), target_meta.get("raw_candidates", len(targets))
+            )
+        )
+        if target_meta.get("manual_scope_enabled"):
+            self.ffuf_area.append(
+                "[*] Target base scope: {} lines | hosts={} | bases={}\n".format(
+                    target_meta.get("manual_scope_line_count", 0),
+                    target_meta.get("manual_scope_host_count", 0),
+                    target_meta.get("manual_scope_base_count", 0),
+                )
+            )
+            preview = target_meta.get("manual_scope_preview", [])
+            if preview:
+                self.ffuf_area.append(
+                    "[*] Scope preview: {}\n".format(", ".join(preview))
+                )
+        elif target_meta.get("force_host"):
+            self.ffuf_area.append(
+                "[*] Host scope: {}\n".format(target_meta.get("selected_host", "unknown"))
+            )
+        else:
+            allowed_bases = target_meta.get("allowed_bases", [])
+            if allowed_bases:
+                self.ffuf_area.append(
+                    "[*] First-party base scope: {}\n".format(", ".join(allowed_bases[:3]))
+                )
+        self.ffuf_area.append(
+            "[*] Filtered out: noise-host={} scope-host={} path-noise={}\n".format(
+                target_meta.get("dropped_noise_host", 0),
+                target_meta.get("dropped_scope_host", 0),
+                target_meta.get("dropped_path", 0),
+            )
+        )
+        if target_meta.get("truncated", 0) > 0:
+            self.ffuf_area.append(
+                "[*] Target cap applied: {} skipped (max {})\n".format(
+                    target_meta.get("truncated", 0), self.FFUF_MAX_TARGETS
+                )
+            )
         # Count wordlist size
         try:
             with open(wordlist, 'r') as f:
                 word_count = sum(1 for line in f if line.strip())
             self.ffuf_area.append("[*] Wordlist: {} ({} words)\n".format(wordlist, word_count))
-        except Exception:
+        except (IOError, OSError) as e:
+            self._callbacks.printError(
+                "FFUF wordlist count failed for {}: {}".format(wordlist, str(e))
+            )
             self.ffuf_area.append("[*] Wordlist: {}\n".format(wordlist))
         self.ffuf_area.append(
-            "[*] Threads: 40, Timeout: 3s, Rate: 100/s, Max: 30s/target\n"
+            "[*] Threads: {}, Timeout: {}s, Rate: {}/s, Max: {}s/target\n".format(
+                self.FFUF_THREADS,
+                self.FFUF_REQUEST_TIMEOUT_SECONDS,
+                self.FFUF_RATE_LIMIT,
+                self.FFUF_TARGET_TIMEOUT_SECONDS
+            )
         )
         self.ffuf_area.append(
-            "[*] Filtering: Skipping static paths (js, css, images, fonts)\n\n"
+            "[*] Filtering: static paths + tracker/ad paths + third-party hosts\n\n"
         )
         self.log_to_ui("[*] FFUF: {} targets from Recon".format(len(targets)))
         self._clear_tool_cancel("ffuf")
@@ -7928,11 +11026,11 @@ Generate a complete Burp extension that:
                             "-fc",
                             "404,500,502,503",
                             "-t",
-                            "40",
+                            str(self.FFUF_THREADS),
                             "-timeout",
-                            "3",
+                            str(self.FFUF_REQUEST_TIMEOUT_SECONDS),
                             "-rate",
-                            "100",
+                            str(self.FFUF_RATE_LIMIT),
                             "-json",
                             "-noninteractive",
                             "-H",
@@ -7964,7 +11062,7 @@ Generate a complete Burp extension that:
                     stdout_thread.start()
 
                     target_matches = []
-                    timeout = 30
+                    timeout = self.FFUF_TARGET_TIMEOUT_SECONDS
                     timed_out = False
 
                     # Pure timeout loop
@@ -7984,8 +11082,8 @@ Generate a complete Burp extension that:
                                     "FFUF process kill failed: {}".format(str(e))
                                 )
                             SwingUtilities.invokeLater(
-                                lambda: self.ffuf_area.append(
-                                    "[!] Timeout after {}s\n".format(timeout)
+                                lambda t=target: self.ffuf_area.append(
+                                    "[!] Timeout after {}s ({})\n".format(timeout, t)
                                 )
                             )
                             break
@@ -8005,11 +11103,7 @@ Generate a complete Burp extension that:
 
                         invalid_json_lines = 0
                         for line in lines_snapshot:
-                            if not isinstance(line, str):
-                                try:
-                                    line = line.decode("utf-8", errors="ignore")
-                                except Exception:
-                                    line = str(line)
+                            line = self._decode_process_data(line, "FFUF stdout line")
 
                             line = line.strip()
                             if not line:
@@ -8082,7 +11176,7 @@ Generate a complete Burp extension that:
                     try:
                         status = match.split('[Status: ')[1].split(']')[0]
                         by_status.setdefault(status, []).append(match)
-                    except Exception:
+                    except (IndexError, ValueError):
                         by_status.setdefault('unknown', []).append(match)
 
                 summary = "\n" + "=" * 80 + "\n"
@@ -8133,8 +11227,9 @@ Generate a complete Burp extension that:
             except Exception as e:
                 err = "[!] Error: {}\n".format(str(e))
                 SwingUtilities.invokeLater(lambda: self.ffuf_area.append(err))
+                err_msg = str(e)
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[!] FFUF error: {}".format(str(e)))
+                    lambda m=err_msg: self.log_to_ui("[!] FFUF error: {}".format(m))
                 )
             finally:
                 self._clear_active_tool_process("ffuf", process)
@@ -8143,6 +11238,195 @@ Generate a complete Burp extension that:
         thread = threading.Thread(target=run_scan)
         thread.daemon = True
         thread.start()
+
+    def _collect_wayback_queries(self):
+        """Collect scoped Wayback host/path queries from first-party Recon data."""
+        static_skip_parts = set(
+            [
+                "favicon.ico",
+                "robots.txt",
+                "static",
+                "dist",
+                "css",
+                "js",
+                "img",
+                "images",
+                "fonts",
+                "cdn-cgi",
+                "captcha",
+                "recaptcha",
+            ]
+        )
+        with self.lock:
+            entries_snapshot = [self._get_entry(entries) for entries in self.api_data.values()]
+
+        scope_override = self._get_target_scope_override()
+        host_counts = {}
+        base_scores = {}
+        for entry in entries_snapshot:
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                continue
+            if scope_override.get("enabled") and not self._host_matches_target_scope(
+                host, scope_override
+            ):
+                continue
+            host_counts[host] = host_counts.get(host, 0) + 1
+            if (not scope_override.get("enabled")) and self._ffuf_is_noise_host(host):
+                continue
+            base = self._infer_base_domain(host)
+            if not base:
+                continue
+
+            score = 1
+            method = self._ascii_safe(entry.get("method"), lower=True).strip()
+            if method in ["post", "put", "patch", "delete"]:
+                score += 2
+            path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True)
+            if "/api/" in path or "/graphql" in path:
+                score += 3
+            base_scores[base] = base_scores.get(base, 0) + score
+
+        if scope_override.get("enabled"):
+            selected_host = "target-bases"
+            force_host = False
+            allowed_bases = set(scope_override.get("bases", set()))
+        else:
+            selected_host = "all"
+            try:
+                if hasattr(self, "host_filter") and self.host_filter is not None:
+                    selected_host = self._ascii_safe(
+                        str(self.host_filter.getSelectedItem()), lower=True
+                    ).strip()
+            except Exception as e:
+                self._callbacks.printError("Wayback host-filter read error: {}".format(str(e)))
+                selected_host = "all"
+            force_host = bool(selected_host and selected_host != "all")
+
+            sorted_bases = sorted(base_scores.items(), key=lambda item: (-item[1], item[0]))
+            allowed_bases = set([base for base, _ in sorted_bases[:1]])
+            if not allowed_bases:
+                fallback_bases = {}
+                for host, count in host_counts.items():
+                    if self._ffuf_is_noise_host(host):
+                        continue
+                    base = self._infer_base_domain(host)
+                    if not base:
+                        continue
+                    fallback_bases[base] = fallback_bases.get(base, 0) + count
+                fallback_sorted = sorted(
+                    fallback_bases.items(), key=lambda item: (-item[1], item[0])
+                )
+                allowed_bases = set([base for base, _ in fallback_sorted[:1]])
+
+        dropped_noise_host = 0
+        dropped_scope_host = 0
+        dropped_path = 0
+        inspected_entries = 0
+        hosts = set()
+        path_candidates = {}
+        for entry in entries_snapshot:
+            inspected_entries += 1
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                dropped_scope_host += 1
+                continue
+
+            if scope_override.get("enabled"):
+                if not self._host_matches_target_scope(host, scope_override):
+                    dropped_scope_host += 1
+                    continue
+            elif force_host:
+                if host != selected_host:
+                    dropped_scope_host += 1
+                    continue
+            else:
+                if self._ffuf_is_noise_host(host):
+                    dropped_noise_host += 1
+                    continue
+                host_base = self._infer_base_domain(host)
+                if allowed_bases and host_base not in allowed_bases:
+                    dropped_scope_host += 1
+                    continue
+
+            hosts.add(host)
+            raw_path = self._ascii_safe(
+                entry.get("normalized_path") or entry.get("path") or "/",
+                lower=True,
+            )
+            parts = [p for p in raw_path.strip("/").split("/") if p]
+            if not parts:
+                continue
+
+            first_part = parts[0]
+            if first_part in static_skip_parts or self._ffuf_is_noise_path_segment(first_part):
+                dropped_path += 1
+                continue
+
+            base_path = "/" + first_part
+            score = 1
+            if first_part.startswith("api") or first_part in [
+                "v1",
+                "v2",
+                "v3",
+                "v4",
+                "graphql",
+                "rest",
+                "auth",
+                "oauth",
+                "internal",
+            ]:
+                score += 3
+            key = (host, base_path)
+            previous = path_candidates.get(key)
+            if previous is None or score > previous:
+                path_candidates[key] = score
+
+            if first_part == "api" and len(parts) > 1:
+                second_part = self._ascii_safe(parts[1], lower=True).strip()
+                if (
+                    second_part
+                    and second_part not in static_skip_parts
+                    and not self._ffuf_is_noise_path_segment(second_part)
+                ):
+                    key2 = (host, "/api/" + second_part)
+                    score2 = score + 1
+                    previous2 = path_candidates.get(key2)
+                    if previous2 is None or score2 > previous2:
+                        path_candidates[key2] = score2
+
+        host_queries = [(host, "") for host in sorted(hosts)]
+        ranked_paths = sorted(
+            path_candidates.items(),
+            key=lambda item: (-item[1], item[0][0], item[0][1]),
+        )
+        path_queries = [item[0] for item in ranked_paths]
+        queries = host_queries + path_queries
+        raw_queries = len(queries)
+        truncated = 0
+        if raw_queries > self.WAYBACK_MAX_QUERIES:
+            truncated = raw_queries - self.WAYBACK_MAX_QUERIES
+            queries = queries[: self.WAYBACK_MAX_QUERIES]
+
+        meta = {
+            "inspected_entries": inspected_entries,
+            "host_count": len(hosts),
+            "path_count": len(path_candidates),
+            "raw_queries": raw_queries,
+            "dropped_noise_host": dropped_noise_host,
+            "dropped_scope_host": dropped_scope_host,
+            "dropped_path": dropped_path,
+            "truncated": truncated,
+            "force_host": force_host,
+            "selected_host": selected_host,
+            "allowed_bases": sorted(list(allowed_bases)),
+            "manual_scope_enabled": bool(scope_override.get("enabled")),
+            "manual_scope_line_count": len(scope_override.get("lines", [])),
+            "manual_scope_host_count": len(scope_override.get("hosts", set())),
+            "manual_scope_base_count": len(scope_override.get("bases", set())),
+            "manual_scope_preview": list(scope_override.get("lines", []))[:3],
+        }
+        return queries, meta
 
     def _run_wayback(self):
         """Discover historical endpoints using Wayback Machine API"""
@@ -8158,37 +11442,7 @@ Generate a complete Burp extension that:
             )
             return
 
-        # Get unique hosts and paths with smart filtering
-        hosts = set()
-        paths = set()
-        skip_patterns = [
-            ".googleusercontent.com", ".gstatic.com", ".redditmedia.com",
-            ".cdn-apple.com", "ingest.sentry.io", ".fastly-edge.com"
-        ]
-
-        with self.lock:
-            for entries in self.api_data.values():
-                entry = self._get_entry(entries)
-                host = entry.get("host")
-                if not host:
-                    continue
-
-                # Skip CDN/static hosts
-                if any(pattern in host for pattern in skip_patterns):
-                    continue
-
-                hosts.add(host)
-                # Add base paths like /api, /v1, /admin
-                path = entry.get("path")
-                if path and path != "/":
-                    if not path.startswith("/"):
-                        path = "/" + path
-                    parts = [p for p in path.split("/") if p]
-                    if parts:
-                        base_path = "/" + parts[0]
-                        # Skip static/common paths
-                        if base_path not in ["/favicon.ico", "/robots.txt", "/static", "/dist", "/css", "/js"]:
-                            paths.add((host, base_path))
+        queries, query_meta = self._collect_wayback_queries()
 
         # Get date range and limit from UI with validation
         current_year = str(time.localtime().tm_year)
@@ -8207,15 +11461,11 @@ Generate a complete Burp extension that:
             if to_year_int < 1996 or to_year_int > current_year_int:
                 to_year = current_year
             if limit_int < 1 or limit_int > 1000:
-                limit = "100"
+                limit = "50"
         except ValueError:
             from_year = "2020"
             to_year = current_year
-            limit = "100"
-
-        # Combine hosts and paths for queries
-        queries = [(h, "") for h in hosts]
-        queries.extend([(h, p) for h, p in paths])
+            limit = "50"
 
         if not queries:
             self.wayback_area.setText("[!] No hosts found in Recon tab\n")
@@ -8275,8 +11525,46 @@ Generate a complete Burp extension that:
 
         self.wayback_area.setText("[*] Querying Wayback Machine...\n")
         self.wayback_area.append(
-            "[*] Targets: {} hosts + {} paths\n".format(len(hosts), len(paths))
+            "[*] Targets: {} hosts + {} paths\n".format(
+                query_meta.get("host_count", 0), query_meta.get("path_count", 0)
+            )
         )
+        if query_meta.get("manual_scope_enabled"):
+            self.wayback_area.append(
+                "[*] Target base scope: {} lines | hosts={} | bases={}\n".format(
+                    query_meta.get("manual_scope_line_count", 0),
+                    query_meta.get("manual_scope_host_count", 0),
+                    query_meta.get("manual_scope_base_count", 0),
+                )
+            )
+            preview = query_meta.get("manual_scope_preview", [])
+            if preview:
+                self.wayback_area.append(
+                    "[*] Scope preview: {}\n".format(", ".join(preview))
+                )
+        elif query_meta.get("force_host"):
+            self.wayback_area.append(
+                "[*] Host scope: {}\n".format(query_meta.get("selected_host", "unknown"))
+            )
+        else:
+            allowed_bases = query_meta.get("allowed_bases", [])
+            if allowed_bases:
+                self.wayback_area.append(
+                    "[*] First-party base scope: {}\n".format(", ".join(allowed_bases))
+                )
+        self.wayback_area.append(
+            "[*] Filtered out: noise-host={} scope-host={} path-noise={}\n".format(
+                query_meta.get("dropped_noise_host", 0),
+                query_meta.get("dropped_scope_host", 0),
+                query_meta.get("dropped_path", 0),
+            )
+        )
+        if query_meta.get("truncated", 0) > 0:
+            self.wayback_area.append(
+                "[*] Query cap applied: {} skipped (max {})\n".format(
+                    query_meta.get("truncated", 0), self.WAYBACK_MAX_QUERIES
+                )
+            )
         self.wayback_area.append("[*] Date Range: {}-{}\n".format(from_year, to_year))
         self.wayback_area.append("[*] Limit: {} per target\n\n".format(limit))
         if use_custom_wayback and custom_wayback_command:
@@ -8307,7 +11595,7 @@ Generate a complete Burp extension that:
                 cancelled_by_user = False
 
                 if use_custom_wayback and custom_wayback_command:
-                    cmd = ["bash", "-c", custom_wayback_command]
+                    cmd = self._build_shell_command(custom_wayback_command)
                     process = subprocess.Popen(
                         cmd,
                         stdout=subprocess.PIPE,
@@ -8336,11 +11624,7 @@ Generate a complete Burp extension that:
                             time_module.sleep(0.1)
                             continue
 
-                        if not isinstance(line, str):
-                            try:
-                                line = line.decode("utf-8", errors="ignore")
-                            except Exception:
-                                line = str(line)
+                        line = self._decode_process_data(line, "Wayback stdout line")
 
                         normalized = self._normalize_wayback_entry(line)
                         if not normalized:
@@ -8476,9 +11760,14 @@ Generate a complete Burp extension that:
 
                                     if success:
                                         break
-                                except Exception:
+                                except Exception as retry_err:
                                     if attempt == max_retries:
                                         raise
+                                    self._callbacks.printError(
+                                        "Wayback transient attempt {} failed: {}".format(
+                                            attempt, str(retry_err)
+                                        )
+                                    )
                                     time_module.sleep(retry_delay)
                         except Exception as e:
                             err_msg = str(e)
@@ -8666,8 +11955,9 @@ Generate a complete Burp extension that:
             except Exception as e:
                 err = "[!] Error: {}\n".format(str(e))
                 SwingUtilities.invokeLater(lambda: self.wayback_area.append(err))
+                err_msg = str(e)
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[!] Wayback error: {}".format(str(e)))
+                    lambda m=err_msg: self.log_to_ui("[!] Wayback error: {}".format(m))
                 )
             finally:
                 self._clear_active_tool_process("wayback", process)
@@ -8764,7 +12054,6 @@ Generate a complete Burp extension that:
             # Update metadata
             export_data["metadata"]["filtered_endpoints"] = len(filtered_endpoints)
 
-            api_count = export_data["metadata"]["api_endpoints"]
             filtered_count = export_data["metadata"].get("filtered_endpoints", 0)
             self.wayback_area.append("\n[+] Exported {} snapshots\n".format(len(data)))
             self.wayback_area.append("[+] Unique Endpoints: {}\n".format(len(unique_endpoints)))

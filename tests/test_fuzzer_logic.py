@@ -112,7 +112,10 @@ def test_normalize_param_list():
     fuzzer = FuzzerLogic()
     
     # Test dict format (live capture)
-    assert fuzzer._normalize_param_list({"id": "123", "name": "test"}) == ["id", "name"]
+    # Dict key order differs across Python/Jython runtimes, so compare as sets.
+    dict_params = fuzzer._normalize_param_list({"id": "123", "name": "test"})
+    assert set(dict_params) == set(["id", "name"])
+    assert len(dict_params) == 2
     
     # Test list format (imported)
     assert fuzzer._normalize_param_list(["id", "name"]) == ["id", "name"]

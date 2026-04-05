@@ -309,33 +309,45 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 #### 6. Nuclei Tab
 - **Nuclei Path**: Configure path to nuclei binary
 - **Run Nuclei**: Execute Nuclei scanner with WAF evasion
-- **Use Custom Cmd**: Override default command with your own template
+- **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
+- **Only Base+Derivatives**: Restrict scans to popup scope and same base-domain derivatives
+- **Enable Custom**: Opt in to override default command with your own template
 - **Preset Cmd + ? Help**: Auto-fill common commands and show usage guidance
 - **Stop**: Cancel active scans safely
+- **PKill Tools**: Emergency kill for `nuclei/httpx/katana/ffuf/waybackurls/gau`
+- **Cross-Platform Kill**: Uses `taskkill` on Windows and `pkill` (with `killall` fallback) on Linux/macOS
 - **Export Targets**: Save target list for external scanning
 - **Features**: Header-based spoofing, rate limiting, clear error reporting
 
 #### 7. HTTPX Tab
 - **HTTPX Path**: Configure path to httpx binary
 - **Probe Endpoints**: Fast HTTP probing with technology detection
-- **Use Custom Cmd**: Override default command with your own template
+- **Enable Custom**: Opt in to override default command with your own template
 - **Preset Cmd + ? Help**: Auto-fill common probe profiles and usage
 - **Stop**: Cancel active probes safely
+- **PKill Tools**: Emergency kill for scanner processes
 - **Export URLs**: Save URLs for external tools
 
 #### 8. Katana Tab
 - **Katana Path**: Configure path to katana binary
 - **Crawl Endpoints**: Deep web crawling for endpoint discovery
-- **Use Custom Cmd**: Override default command with your own template
+- **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
+- **Only Base+Derivatives**: Restrict crawls to popup scope and same base-domain derivatives
+- **Enable Custom**: Opt in to override default command with your own template
 - **Preset Cmd + ? Help**: Auto-fill crawl depth profiles and usage
 - **Stop**: Cancel active crawls safely
+- **PKill Tools**: Emergency kill for scanner processes
 - **Export Discovered**: Save discovered endpoints
 - **Send to Recon**: Import discovered endpoints to Recon tab
 
 #### 9. FFUF Tab
 - **FFUF Path**: Configure path to ffuf binary
 - **Wordlist**: Select wordlist for fuzzing
+- **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
+- **Only Base+Derivatives**: Restrict fuzzing to popup scope and same base-domain derivatives
 - **Fuzz Directories**: Directory and file fuzzing
+- **Auto Scope**: Prioritizes first-party hosts and filters noisy third-party/CDN targets
+- **PKill Tools**: Emergency kill for scanner processes
 - **Export Results**: Save fuzzing results
 - **Send to Intruder**: Export results to Burp Intruder
 
@@ -343,9 +355,14 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Date Range**: Configure from/to years for historical search
 - **Limit**: Set maximum results to retrieve
 - **Discover**: Query Wayback Machine for historical endpoints
-- **Use Custom Cmd**: Override built-in queries with waybackurls/gau commands
+- **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
+- **Only Base+Derivatives**: Restrict discovery to popup scope and same base-domain derivatives
+- **Auto Scope**: Limits default queries to first-party hosts/paths from Recon
+- **Noise Exclusion**: Drops common ad-tech/tracker hosts in default Wayback mode
+- **Enable Custom**: Opt in to override built-in queries with waybackurls/gau commands
 - **Preset Cmd + ? Help**: Auto-fill passive collection presets and usage
 - **Stop**: Cancel active discovery safely
+- **PKill Tools**: Emergency kill for scanner processes
 - **Send to Recon**: Import discovered endpoints to Recon tab
 - **Export Results**: Save discovered endpoints
 
@@ -735,16 +752,20 @@ A: Default paths:
 - `~/go/bin/httpx`
 - `~/go/bin/katana`
 - `~/go/bin/ffuf`
+- On Windows, common defaults are under `C:\\Users\\<you>\\go\\bin\\*.exe`
 
 Or configure custom paths in each tab.
+Tabs now auto-detect both Unix-style and Windows `*.exe` Go-bin locations when present.
 
 **Q: How do custom command overrides work?**
 
 A:
-- Leave `Use Custom Cmd` unchecked to use safe built-in defaults.
-- Check `Use Custom Cmd` to run exactly what you type in the command box.
-- Use `Preset Cmd...` to auto-fill common commands quickly.
+- Leave `Enable Custom` unchecked to use safe built-in defaults.
+- Check `Enable Custom` to run exactly what you type in the command box.
+- Use `Preset Cmd...` to auto-fill common commands quickly (still opt-in until `Enable Custom` is checked).
 - Click `?` to see placeholders and examples for each tab.
+- Custom commands run with `cmd /c` on Windows and `bash/sh -lc` on Linux/macOS.
+- Built-in HTTPX and Katana defaults use native list-file flags (`-l` / `-list`) for cross-platform execution.
 
 **Q: Why does HTTPX show invalid option errors?**
 
@@ -801,7 +822,8 @@ A: Ensure:
 A: 
 - Check tool is installed and path is correct
 - Verify network connectivity to targets
-- Large scans may take 5-10 minutes (max timeout: 10 minutes)
+- Large scans may still take several minutes (default max timeout: 15 minutes)
+- Use **Target Bases...** with **Only Base+Derivatives** to force strict single-target scope
 - Use the **Stop** button in the same tab to cancel running external tools
 - Check Activity Log for detailed error messages
 
