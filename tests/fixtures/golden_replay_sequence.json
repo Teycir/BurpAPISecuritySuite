@@ -1,0 +1,126 @@
+{
+  "GET:/api/v1/users/{id}": [
+    {
+      "method": "GET",
+      "normalized_path": "/api/v1/users/{id}",
+      "response_status": 200,
+      "auth_detected": [
+        "none"
+      ],
+      "parameters": {
+        "url": {
+          "id": "1"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "normalized_path": "/api/v1/users/{id}",
+      "response_status": 200,
+      "auth_detected": [
+        "bearer"
+      ],
+      "headers": {
+        "Authorization": "Bearer user-token"
+      },
+      "parameters": {
+        "url": {
+          "id": "1"
+        }
+      }
+    }
+  ],
+  "PATCH:/api/v1/users/{id}": [
+    {
+      "method": "PATCH",
+      "normalized_path": "/api/v1/users/{id}",
+      "response_status": 200,
+      "auth_detected": [
+        "bearer"
+      ],
+      "headers": {
+        "Authorization": "Bearer admin-token"
+      },
+      "parameters": {
+        "json": {
+          "role": "admin",
+          "status": "active"
+        }
+      }
+    }
+  ],
+  "DELETE:/api/v1/orders/{id}": [
+    {
+      "method": "DELETE",
+      "normalized_path": "/api/v1/orders/{id}",
+      "response_status": 204,
+      "auth_detected": [
+        "bearer"
+      ],
+      "headers": {
+        "Authorization": "Bearer user-token"
+      },
+      "parameters": {
+        "url": {
+          "id": "9"
+        }
+      }
+    }
+  ],
+  "GET:/api/v1/orders/{id}": [
+    {
+      "method": "GET",
+      "normalized_path": "/api/v1/orders/{id}",
+      "response_status": 200,
+      "auth_detected": [
+        "bearer"
+      ],
+      "headers": {
+        "Authorization": "Bearer user-token"
+      },
+      "parameters": {
+        "url": {
+          "id": "9"
+        }
+      }
+    }
+  ],
+  "POST:/api/v1/hooks/register": [
+    {
+      "method": "POST",
+      "normalized_path": "/api/v1/hooks/register",
+      "response_status": 201,
+      "auth_detected": [
+        "bearer"
+      ],
+      "headers": {
+        "Authorization": "Bearer svc-token"
+      },
+      "parameters": {
+        "json": {
+          "callback_url": "https://example.com/hook",
+          "event": "order.created"
+        }
+      }
+    }
+  ],
+  "PUT:/api/v1/orders/{id}": [
+    {
+      "method": "PUT",
+      "normalized_path": "/api/v1/orders/{id}",
+      "response_status": 200,
+      "auth_detected": [
+        "bearer"
+      ],
+      "headers": {
+        "Authorization": "Bearer user-token"
+      },
+      "parameters": {
+        "json": {
+          "status": "paid",
+          "amount": 100
+        }
+      }
+    }
+  ]
+}

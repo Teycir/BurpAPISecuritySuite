@@ -13,6 +13,7 @@ def _source_text():
         os.path.join(base_dir, "BurpAPISecuritySuite.py"),
         os.path.join(base_dir, "heavy_runners.py"),
         os.path.join(base_dir, "ai_prep_layer.py"),
+        os.path.join(base_dir, "behavior_analysis.py"),
     ]
     chunks = []
     for source_path in source_paths:
@@ -729,6 +730,41 @@ def test_ai_prep_layer_exports_are_additive_and_non_destructive():
     for token in required_tokens:
         assert token in text, "Missing AI prep layer token: {}".format(token)
     print("[PASS] test_ai_prep_layer_exports_are_additive_and_non_destructive")
+
+
+def test_sequence_invariants_and_ledger_are_wired():
+    text = _source_text()
+    required_tokens = [
+        "import behavior_analysis",
+        "actions_row = JPanel(FlowLayout(FlowLayout.LEFT))",
+        "deep_logic_row = JPanel(FlowLayout(FlowLayout.LEFT))",
+        "deep_logic_row.add(JLabel(\"Deep Logic:\"))",
+        "Sequence/state checks with confidence scoring (non-destructive).",
+        'refresh_invariants_btn = JButton("Refresh Invariants")',
+        "self.recon_invariant_status_label = JLabel(\"\")",
+        "def _refresh_sequence_invariants_from_recon(",
+        "def _refresh_recon_invariant_status_label(",
+        "def _build_recon_invariant_status_text(",
+        "self._refresh_recon_invariant_status_label()",
+        'self._create_action_button(\n                "Run Invariants"',
+        'self._create_action_button(\n                "Export Ledger"',
+        "def _run_sequence_invariants(",
+        "def _build_sequence_invariant_package(",
+        "behavior_analysis.build_sequence_invariant_package(",
+        "def _export_sequence_invariant_ledger(",
+        "\"sequence_invariant_findings.json\"",
+        "\"sequence_evidence_ledger.json\"",
+        "\"ai_sequence_invariant_findings.json\"",
+        "\"ai_sequence_evidence_ledger.json\"",
+        "\"sequence_invariants\": sequence_invariants,",
+        "\"sequence_invariants\": {",
+        "\"sequence_invariant_meta\"",
+        "source_label=\"ai_export\"",
+        "def _snapshot_dict_attr(",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing sequence invariant wiring token: {}".format(token)
+    print("[PASS] test_sequence_invariants_and_ledger_are_wired")
 
 
 def test_heavy_runner_methods_are_delegated_for_jython_compile_safety():

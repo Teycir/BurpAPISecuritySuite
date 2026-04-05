@@ -15,12 +15,33 @@ All notable changes to this project are documented in this file.
 - Unified tooltip rendering to a single deterministic path and enabled a global Swing tooltip policy (`ToolTipManager`) to avoid missing Recon tooltips.
 - Added centralized auto-tooltips for all action buttons created via `_create_action_button`, so non-Recon tabs now get consistent hover guidance too.
 - Upgraded auto-generated button tooltips from generic verb text to operator-focused guidance (scope, action outcome, and export/reuse intent).
+- Simplified invariant-specific tooltip wording to plain action language:
+  - `Run Invariants`: "Check captured endpoint flows for hidden logic issues"
+  - `Refresh Invariants`: "Recompute invariant checks from Recon/captured data"
+  - `Export Ledger`: "Save invariant findings and confidence report"
+- Added passive-tab deep logic actions:
+  - `Run Invariants` for sequence/state invariant analysis on scoped captured traffic.
+  - `Export Ledger` for confidence-weighted evidence artifacts.
+- Improved Passive Discovery layout visibility by splitting controls into dedicated rows (`Passive Checks` + `Deep Logic`) so new actions are not hidden on narrower windows.
+- Added Recon-side deep-logic visibility and control:
+  - New `Refresh Invariants` button near `Export AI Bundle`.
+  - New live invariant status line (findings/confidence/source/updated timestamp) so operators can see freshness before AI export.
+- Extended AI export bundle with non-destructive deep-logic artifacts:
+  - `ai_sequence_invariant_findings.json`
+  - `ai_sequence_evidence_ledger.json`
+- Started maintainability extraction by moving deep logic invariant/ledger generation into `behavior_analysis.py` with thin wrappers in `BurpAPISecuritySuite.py`.
 
 ### Tests
 - Updated `tests/test_feature_contracts.py` to assert:
   - Recon AI export + help button wiring.
   - Recon help dialog content and tooltip guidance.
   - Removal of legacy `AI Payloads` button label from source.
+- Added `tests/test_golden_replay.py` + fixture corpus (`tests/fixtures/golden_replay_sequence.json`) for behavior-level replay coverage of sequence invariants and evidence ledger output.
+
+### Documentation
+- Updated README invariant workflow guidance to clarify recommended order:
+  - `Run Invariants` (Passive Discovery) -> `Refresh Invariants` (Recon) -> `Export AI Bundle`.
+- Updated README tab descriptions and FAQ language for invariant actions to match current UI wording and exported artifacts.
 
 ## [1.3.4] - 2026-04-05
 

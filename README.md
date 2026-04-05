@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.3.1-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.3.5-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -86,6 +86,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
       - [14. Dalfox Verify Tab](#14-dalfox-verify-tab)
       - [15. API Assets Tab](#15-api-assets-tab)
       - [16. OpenAPI Drift Tab](#16-openapi-drift-tab)
+      - [17. GraphQL Tab](#17-graphql-tab)
   - [Advanced Fuzzing Capabilities](#advanced-fuzzing-capabilities)
     - [Attack Types Detected](#attack-types-detected)
     - [Exported Data Structure](#exported-data-structure)
@@ -128,6 +129,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
   - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
+    - [v1.3.5 - AI Export + Invariants + Tooltip UX](#v135---ai-export--invariants--tooltip-ux)
     - [v1.3.1 - Tab Order and External Tool UX Alignment](#v131---tab-order-and-external-tool-ux-alignment)
     - [v1.3.0 - Verification and Spec Drift Tabs](#v130---verification-and-spec-drift-tabs)
     - [v1.2.2 - Enhanced GraphQL Fuzzing](#v122---enhanced-graphql-fuzzing)
@@ -210,6 +212,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Dalfox Verify**: Confirm reflected XSS candidates with Dalfox proof output
 - **API Asset Discovery**: Expand first-party scope with `subfinder` + `dnsx` + `httpx`
 - **OpenAPI Drift**: Compare observed traffic vs OpenAPI spec for undocumented/missing endpoints
+- **Sequence Invariants**: Non-destructive deep-logic checks with confidence/evidence ledger export
 - **Wayback Machine**: Discover historical endpoints and forgotten APIs
 - **Katana Crawler**: Deep web crawling with automatic endpoint discovery
 - **HTTPX Probe**: Fast HTTP probing with technology detection
@@ -236,7 +239,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 | **JWT Analysis** | ✅ Automatic | ⚠️ Extension needed | ⚠️ Extension needed | ⚠️ Manual |
 | **GraphQL Testing** | ✅ Built-in | ❌ No | ⚠️ Limited | ⚠️ Manual |
 | **Race Condition Testing** | ✅ Turbo Intruder | ✅ Turbo Intruder | ❌ No | ❌ No |
-| **AI Integration** | ✅ Export for LLM | ❌ No | ❌ No | ❌ No |
+| **AI Integration** | ✅ Export AI Bundle + LLM payloads | ❌ No | ❌ No | ❌ No |
 | **Version Scanner** | ✅ Built-in | ❌ No | ❌ No | ❌ No |
 | **Parameter Mining** | ✅ Built-in | ⚠️ Extension needed | ❌ No | ❌ No |
 | **Wayback Discovery** | ✅ Built-in | ❌ No | ❌ No | ❌ No |
@@ -252,7 +255,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **API-First Design**: Built specifically for modern API security testing (REST, GraphQL, SOAP)
 - **Free & Open Source**: All features available without licensing costs
 - **Intelligent Automation**: Auto-detects BOLA/IDOR vulnerabilities across all authenticated endpoints
-- **AI-Powered**: Export context for ChatGPT/Claude to generate custom payloads
+- **AI-Powered**: Export all-tab AI bundles (plus sequence evidence ledger) for ChatGPT/Claude triage
 - **Comprehensive Coverage**: 15 attack types with 108+ API-specific payloads
 - **External Tool Integration**: Seamlessly integrates with Nuclei, SQLMap, Dalfox, HTTPX, Katana, FFUF, Subfinder, and DNSX
 - **Works with Burp Community**: No need for expensive Burp Pro license
@@ -274,9 +277,11 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 ### Basic Workflow
 
 1. **Capture**: Browse/scan target API with auto-capture enabled
-2. **Review**: Check "API Recon" tab to see captured endpoints
-3. **Export**: Click "Export for LLM" to generate analysis JSON
-4. **Generate**: Feed JSON to LLM (ChatGPT, Claude, etc.) to create custom extension
+2. **Review**: Check the `Recon` tab to inspect captured endpoints and findings
+3. **Deep Logic (Optional)**: In `Passive Discovery`, click `Run Invariants` to check captured endpoint flows for hidden logic issues
+4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to recompute invariant checks from captured endpoints
+5. **Export**: In `Recon`, click `Export AI Bundle` to generate all-tab AI context
+6. **Generate**: Feed exported JSON to an LLM (ChatGPT, Claude, etc.) for triage/payload planning
 
 ### Tab Overview
 
@@ -288,10 +293,14 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Grouping**: Group endpoints by Host, Method, Auth, Encryption
 - **Export All**: Export complete API analysis to JSON
 - **Export Host**: Export specific host endpoints
+- **Export AI Bundle**: Export all-tab AI-ready context + LLM request payloads
 - **Import**: Load previously exported data
 - **Postman**: Export scoped endpoints to Postman Collection v2.1
 - **Insomnia**: Export scoped endpoints to Insomnia import JSON
 - **Tool Health**: One-click diagnostics for Nuclei/HTTPX/Katana/FFUF/Wayback/SQLMap/Dalfox/Subfinder/DNSX binary compatibility
+- **Button Help**: Quick guide for Recon buttons and expected outputs
+- **Refresh Invariants**: Recompute invariant checks from captured endpoints before AI export
+- **Invariant Status Line**: Shows cached finding count, top confidence, source, and last refresh time
 - **Clear Data**: Reset all captured endpoints
 
 #### 2. Diff Tab
@@ -316,7 +325,6 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Generate**: Create fuzzing campaign with intelligent attack detection
 - **Send to Intruder**: Export to Burp Intruder with pre-configured positions
 - **Export Payloads**: Save all payloads to JSON
-- **AI Payloads**: Export context for AI-powered custom payload generation
 - **Turbo Intruder**: Generate Python scripts for high-speed attacks
 - **Copy as cURL**: Export attack as cURL command
 
@@ -333,8 +341,10 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Passive Only**: Analyzes captured/replayed proxy traffic without active requests
 - **Mode Selector**: Run `All` or per-category checks (`API3`, `API4`, `API5`, `API6`, `API9`, `API10`)
 - **Scope Selector**: Analyze `All Endpoints`, `Filtered View`, or current host scope
+- **Run Invariants**: Check captured endpoint flows for hidden logic issues (non-destructive)
 - **Run / Stop / Clear**: Execute discovery, cancel safely, and reset output quickly
 - **Export / Copy**: Save findings or copy report text
+- **Export Ledger**: Save invariant findings and confidence report as JSON artifacts
 - **Output**: Severity/categorical summary plus top findings for triage
 
 #### 8. Nuclei Tab
@@ -433,6 +443,14 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Stop / PKill Tools**: Cancel active drift analysis safely
 - **Send to Recon**: Import spec-missing candidates into Recon for probing
 - **Export Results**: Save drift output report
+
+#### 17. GraphQL Tab
+- **Targets Input**: Optional manual GraphQL targets (auto-detects from Recon if empty)
+- **Show Targets**: Preview candidate GraphQL endpoints before execution
+- **Run Analysis**: Run GraphQL-focused multi-tool analysis workflow
+- **Stop / PKill Tools**: Cancel active analysis or emergency-stop tools
+- **Send to Recon**: Import GraphQL findings/candidates into Recon
+- **Export Results**: Save GraphQL analysis output
 
 ## Advanced Fuzzing Capabilities
 
@@ -617,9 +635,10 @@ The export includes a pre-formatted prompt instructing the LLM to:
 
 ```bash
 # 1. Capture API traffic in Burp
-# 2. Generate fuzzing attacks (Fuzzer tab → Generate)
-# 3. Click "AI Payloads" button
-# 4. Feed ai_context.json to ChatGPT/Claude:
+# 2. (Optional) Run Passive Discovery → "Run Invariants"
+# 3. (Optional) In Recon, click "Refresh Invariants"
+# 4. In Recon, click "Export AI Bundle"
+# 5. Feed ai_bundle.json / ai_all_tabs_context.json to ChatGPT/Claude:
 
 "Analyze these API endpoints and generate 50 custom payloads for each 
 vulnerability type. Focus on:
@@ -661,7 +680,19 @@ vulnerability type. Focus on:
 ├── Payloads_TIMESTAMP/
 │   └── payloads.json (idor, sqli, xss, nosqli, ssrf, xxe, ssti, deserialization, waf_bypass)
 ├── AI_Context_TIMESTAMP/
-│   └── ai_context.json (structured data for AI payload generation)
+│   ├── ai_context.json
+│   ├── ai_bundle.json
+│   ├── ai_all_tabs_context.json
+│   ├── ai_vulnerability_context.json
+│   ├── ai_behavioral_analysis.json
+│   ├── ai_sequence_invariant_findings.json
+│   ├── ai_sequence_evidence_ledger.json
+│   ├── ai_openai_request.json
+│   ├── ai_anthropic_request.json
+│   └── ai_ollama_request.json
+├── SequenceInvariant_Export_TIMESTAMP/
+│   ├── sequence_invariant_findings.json
+│   └── sequence_evidence_ledger.json
 ├── TurboIntruder_TIMESTAMP/
 │   ├── race_condition.py
 │   ├── bola_enum.py
@@ -690,6 +721,7 @@ vulnerability type. Focus on:
 
 ### AI Integration
 - **Export Context Early**: Generate AI context after initial capture
+- **Run + Refresh Invariants Before Export**: Add fresh sequence/state evidence for less-obvious logic bugs
 - **Iterate Payloads**: Use AI-generated payloads, test, refine prompt
 - **Combine Techniques**: Merge AI payloads with built-in payload library
 
@@ -856,10 +888,11 @@ A: All exports go to `~/burp_APIRecon/` with timestamped subdirectories. Check t
 **Q: How do I use the AI Context export?**
 
 A: 
-1. Generate fuzzing attacks in the Fuzzer tab
-2. Click "AI Payloads" button
-3. Feed the exported `ai_context.json` to ChatGPT/Claude
-4. Ask it to generate custom payloads based on your API structure
+1. (Optional) Run `Passive Discovery` → `Run Invariants`
+2. (Optional) In the `Recon` tab, click `Refresh Invariants`
+3. In the `Recon` tab, click `Export AI Bundle`
+4. Feed `ai_bundle.json` (or `ai_all_tabs_context.json`) to ChatGPT/Claude
+5. Use `ai_sequence_evidence_ledger.json` to prioritize high-confidence sequence/state issues
 
 **Q: Can I import previously exported data?**
 
@@ -946,11 +979,13 @@ A:
 ### Technical Highlights
 
 - **Clean Jython Architecture**: Modular design with testable core logic
+- **Modular Extraction**: Heavy workflows extracted to helper modules (`heavy_runners.py`, `ai_prep_layer.py`, `behavior_analysis.py`)
 - **Smart Detection**: Context-aware vulnerability identification
 - **Performance Optimized**: Handles 500+ endpoints efficiently
 - **Cross-Platform**: Works on Windows, macOS, Linux
 - **Extensible**: Easy to add new attack types and payloads
 - **Professional UI**: Color-coded severity, tabbed interface, real-time stats
+- **Replay Coverage**: Includes golden replay corpus tests for sequence invariant detection + confidence ledger output
 
 ## 💼 Professional Services
 
@@ -991,6 +1026,14 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 ## Updates & Roadmap
 
 ### Recent Updates
+
+### v1.3.5 - AI Export + Invariants + Tooltip UX
+- ✅ Moved AI export action to Recon as `Export AI Bundle` (all-tab scope)
+- ✅ Added sequence/state deep-logic workflow in Passive Discovery: `Run Invariants` + `Export Ledger`
+- ✅ Added Recon-side `Refresh Invariants` and invariant status line before AI export
+- ✅ Added AI export artifacts: sequence invariant findings + confidence/evidence ledger
+- ✅ Simplified invariant tooltip wording for clearer operator guidance
+- ✅ Added behavior-level golden replay tests for sequence invariant coverage
 
 ### v1.3.1 - Tab Order and External Tool UX Alignment
 - ✅ Reordered tabs to keep internal workflow tabs first and external tooling tabs last

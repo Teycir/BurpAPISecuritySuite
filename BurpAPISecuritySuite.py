@@ -6,6 +6,7 @@ import shlex
 import threading
 import time
 import ai_prep_layer
+import behavior_analysis
 import heavy_runners
 
 from burp import IBurpExtender, IContextMenuFactory, IHttpListener, IProxyListener, ITab
@@ -471,6 +472,11 @@ class BurpExtender(
         }
         self.passive_discovery_findings = []
         self.passive_discovery_lock = threading.Lock()
+        self.sequence_invariant_findings = []
+        self.sequence_invariant_ledger = {}
+        self.sequence_invariant_meta = {}
+        self.sequence_invariant_lock = threading.Lock()
+        self.recon_invariant_status_label = None
         self._capture_ui_refresh_timer = None
         self._capture_ui_refresh_last_ts = 0.0
         self._capture_ui_refresh_min_interval_ms = 250
@@ -644,6 +650,13 @@ class BurpExtender(
         refresh_btn.setBackground(Color(108, 117, 125))
         refresh_btn.setForeground(Color.WHITE)
         refresh_btn.addActionListener(lambda e: self.refresh_view())
+
+        refresh_invariants_btn = JButton("Refresh Invariants")
+        refresh_invariants_btn.setBackground(Color(106, 90, 205))
+        refresh_invariants_btn.setForeground(Color.WHITE)
+        refresh_invariants_btn.addActionListener(
+            lambda e: self._refresh_sequence_invariants_from_recon(e)
+        )
         self._apply_component_tooltips(
             {
                 export_btn: "Export all captured Recon endpoints and analysis to a JSON file",
@@ -656,6 +669,7 @@ class BurpExtender(
                 help_btn: "Show what each Recon button does",
                 clear_btn: "Clear all captured Recon data and reset views",
                 refresh_btn: "Refresh endpoint list, stats, and details view",
+                refresh_invariants_btn: "Recompute invariant checks from captured endpoints",
             }
         )
 
@@ -669,8 +683,19 @@ class BurpExtender(
         btn_panel.add(help_btn)
         btn_panel.add(clear_btn)
         btn_panel.add(refresh_btn)
+        btn_panel.add(refresh_invariants_btn)
 
-        recon_panel.add(btn_panel, BorderLayout.SOUTH)
+        recon_footer_panel = JPanel()
+        recon_footer_panel.setLayout(BoxLayout(recon_footer_panel, BoxLayout.Y_AXIS))
+        recon_footer_panel.add(btn_panel)
+        invariant_status_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        invariant_status_row.add(JLabel("Invariants:"))
+        self.recon_invariant_status_label = JLabel("")
+        self.recon_invariant_status_label.setFont(Font("Monospaced", Font.PLAIN, 11))
+        invariant_status_row.add(self.recon_invariant_status_label)
+        recon_footer_panel.add(invariant_status_row)
+        recon_panel.add(recon_footer_panel, BorderLayout.SOUTH)
+        self._refresh_recon_invariant_status_label()
 
         # Diff tab
         diff_panel = self._create_diff_tab()
@@ -815,7 +840,10 @@ class BurpExtender(
             "run replay": "Replay requests across auth profiles (guest/user/admin) for auth gap checks",
             "extract": "Extract header value from captured traffic into the selected auth profile field",
             "run passive": "Analyze captured traffic only (no active requests) for API risk patterns",
+            "run invariants": "Check captured endpoint flows for hidden logic issues",
+            "refresh invariants": "Recompute invariant checks from Recon data",
             "export": "Export this tab findings to a timestamped file in the project export folder",
+            "export ledger": "Save invariant findings and confidence report",
             "run nuclei": "Launch Nuclei with current profile/scope and parse findings back into this tab",
             "export targets": "Export current scoped target URLs prepared for Nuclei execution",
             "probe endpoints": "Run HTTPX on scoped URLs to capture status/title/tech probe output",
@@ -898,6 +926,90 @@ class BurpExtender(
         manager.setInitialDelay(350)
         manager.setReshowDelay(100)
         manager.setDismissDelay(20000)
+
+    def _build_recon_invariant_status_text(self):
+        """Build compact Recon status text for cached invariant artifacts."""
+        with self.sequence_invariant_lock:
+            findings_count = len(self.sequence_invariant_findings or [])
+            meta = dict(self.sequence_invariant_meta or {})
+            ledger = dict(self.sequence_invariant_ledger or {})
+
+        if not meta and findings_count <= 0:
+            return "Not generated yet (AI export computes this automatically)."
+
+        source = self._ascii_safe(meta.get("source") or "unknown")
+        scope = self._ascii_safe(meta.get("scope") or "unknown")
+        generated_at = self._ascii_safe(meta.get("generated_at") or "unknown")
+        confidence_dist = dict(ledger.get("confidence_distribution", {}) or {})
+        high_conf = int(confidence_dist.get("high", 0) or 0)
+        return "Findings={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
+            findings_count,
+            high_conf,
+            source,
+            scope,
+            generated_at,
+        )
+
+    def _refresh_recon_invariant_status_label(self):
+        """Refresh Recon footer status label for invariant cache state."""
+        label = getattr(self, "recon_invariant_status_label", None)
+        if label is None:
+            return
+        label.setText(self._build_recon_invariant_status_text())
+
+    def _refresh_recon_invariant_status_label_async(self):
+        """Schedule Recon invariant status refresh on Swing UI thread."""
+        if getattr(self, "recon_invariant_status_label", None) is None:
+            return
+        SwingUtilities.invokeLater(self._refresh_recon_invariant_status_label)
+
+    def _refresh_sequence_invariants_from_recon(self, event):
+        """Recompute sequence invariants from Recon and refresh cache/status."""
+        if not self.api_data:
+            self.log_to_ui("[!] No endpoints captured for invariant refresh")
+            self._refresh_recon_invariant_status_label_async()
+            return
+
+        label = getattr(self, "recon_invariant_status_label", None)
+        if label is not None:
+            label.setText("Refreshing invariants...")
+
+        with self.lock:
+            data_snapshot = dict(self.api_data)
+
+        self.log_to_ui(
+            "[*] Refreshing sequence invariants from Recon snapshot ({} endpoints)".format(
+                len(data_snapshot)
+            )
+        )
+
+        def worker():
+            try:
+                package = self._build_sequence_invariant_package(data_snapshot)
+                self._sort_and_store_sequence_invariant_payload(
+                    package,
+                    source_label="recon_refresh",
+                    scope_label="All Endpoints",
+                    target_count=len(data_snapshot),
+                )
+                finding_count = int(package.get("finding_count", 0) or 0)
+                SwingUtilities.invokeLater(
+                    lambda c=finding_count: self.log_to_ui(
+                        "[+] Recon invariants refreshed ({} findings)".format(c)
+                    )
+                )
+            except Exception as e:
+                err_msg = self._ascii_safe(e)
+                SwingUtilities.invokeLater(
+                    lambda m=err_msg: self.log_to_ui(
+                        "[!] Recon invariant refresh error: {}".format(m)
+                    )
+                )
+                SwingUtilities.invokeLater(self._refresh_recon_invariant_status_label)
+
+        thread = threading.Thread(target=worker)
+        thread.daemon = True
+        thread.start()
 
     def _normalize_profile(self, profile_value):
         """Normalize profile name to fast/balanced/deep."""
@@ -2564,30 +2676,55 @@ class BurpExtender(
         controls.add(JLabel("Max:"))
         self.passive_max_field = JTextField("250", 4)
         controls.add(self.passive_max_field)
-        controls.add(
+
+        actions_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        actions_row.add(JLabel("Passive Checks:"))
+        actions_row.add(
             self._create_action_button(
                 "Run Passive", Color(40, 167, 69), lambda e: self._run_passive_discovery(e)
             )
         )
-        controls.add(
+        actions_row.add(
             self._create_action_button(
                 "Export",
                 Color(70, 130, 180),
                 lambda e: self._export_passive_discovery_results(),
             )
         )
-        controls.add(
+        actions_row.add(
             self._create_action_button(
                 "Clear",
                 Color(220, 53, 69),
                 lambda e: self.passive_area.setText(""),
             )
         )
-        controls.add(
+        actions_row.add(
             self._create_action_button(
                 "Copy",
                 Color(108, 117, 125),
                 lambda e: self._copy_to_clipboard(self.passive_area.getText()),
+            )
+        )
+
+        deep_logic_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        deep_logic_row.add(JLabel("Deep Logic:"))
+        deep_logic_row.add(
+            self._create_action_button(
+                "Run Invariants",
+                Color(106, 90, 205),
+                lambda e: self._run_sequence_invariants(e),
+            )
+        )
+        deep_logic_row.add(
+            self._create_action_button(
+                "Export Ledger",
+                Color(72, 61, 139),
+                lambda e: self._export_sequence_invariant_ledger(),
+            )
+        )
+        deep_logic_row.add(
+            JLabel(
+                "Sequence/state checks with confidence scoring (non-destructive)."
             )
         )
 
@@ -2599,12 +2736,17 @@ class BurpExtender(
         )
 
         top_panel.add(controls)
+        top_panel.add(actions_row)
+        top_panel.add(deep_logic_row)
         top_panel.add(help_row)
         panel.add(top_panel, BorderLayout.NORTH)
 
         self.passive_area, scroll = self._create_text_area_panel()
         panel.add(scroll, BorderLayout.CENTER)
         self.passive_discovery_findings = []
+        self.sequence_invariant_findings = []
+        self.sequence_invariant_ledger = {}
+        self.sequence_invariant_meta = {}
         return panel
 
     def _create_nuclei_tab(self):
@@ -5244,6 +5386,14 @@ class BurpExtender(
             ("ai_vulnerability_context.json", bundle.get("vulnerability_context", {})),
             ("ai_all_tabs_context.json", bundle.get("all_tabs_context", {})),
             ("ai_behavioral_analysis.json", bundle.get("behavioral_analysis", {})),
+            (
+                "ai_sequence_invariant_findings.json",
+                bundle.get("sequence_invariants", {}).get("findings", []),
+            ),
+            (
+                "ai_sequence_evidence_ledger.json",
+                bundle.get("sequence_invariants", {}).get("ledger", {}),
+            ),
             ("ai_feedback_template.json", bundle.get("feedback_template", {})),
             ("ai_openai_request.json", bundle.get("llm_exports", {}).get("openai", {})),
             (
@@ -5312,6 +5462,13 @@ class BurpExtender(
             data_snapshot, attacks_snapshot
         )
         behavioral_analysis = self._export_behavioral_analysis(data_snapshot)
+        sequence_invariants = self._build_sequence_invariant_package(data_snapshot)
+        self._sort_and_store_sequence_invariant_payload(
+            sequence_invariants,
+            source_label="ai_export",
+            scope_label="All Endpoints",
+            target_count=len(data_snapshot),
+        )
         feedback_template = self._create_ai_feedback_loop_export([])
         all_tabs_context = self._collect_all_tabs_ai_context(
             data_snapshot, attacks_snapshot
@@ -5362,6 +5519,7 @@ class BurpExtender(
             "authentication_flows": vulnerability_context.get("authentication_flows", {}),
             "business_logic_hints": vulnerability_context.get("business_logic_hints", []),
             "behavioral_analysis": behavioral_analysis,
+            "sequence_invariants": sequence_invariants,
             "all_tabs_context": all_tabs_context,
         }
         llm_exports = {
@@ -5392,6 +5550,7 @@ class BurpExtender(
             "enhanced_prompt": self._generate_enhanced_ai_prompt(),
             "llm_exports": llm_exports,
             "ai_prep_layer": ai_prep_layer,
+            "sequence_invariants": sequence_invariants,
         }
 
     def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
@@ -5472,6 +5631,20 @@ class BurpExtender(
                     lock_attr="passive_discovery_lock",
                 ),
                 "output_tail": self._snapshot_text_area("passive_area"),
+            },
+            "sequence_invariants": {
+                "finding_count": len(getattr(self, "sequence_invariant_findings", []) or []),
+                "findings": self._snapshot_list_attr(
+                    "sequence_invariant_findings",
+                    limit=300,
+                    lock_attr="sequence_invariant_lock",
+                ),
+                "ledger": self._snapshot_dict_attr(
+                    "sequence_invariant_ledger", lock_attr="sequence_invariant_lock"
+                ),
+                "meta": self._snapshot_dict_attr(
+                    "sequence_invariant_meta", lock_attr="sequence_invariant_lock"
+                ),
             },
             "nuclei": {
                 "output_tail": self._snapshot_text_area("nuclei_area"),
@@ -5619,6 +5792,35 @@ class BurpExtender(
                 except Exception as release_err:
                     self._callbacks.printError(
                         "AI snapshot list unlock error ({}): {}".format(
+                            attr_name, self._ascii_safe(release_err)
+                        )
+                    )
+        return self._sanitize_for_ai_payload(values)
+
+    def _snapshot_dict_attr(self, attr_name, lock_attr=None):
+        """Safely snapshot dict-like attribute and sanitize for AI export."""
+        values = {}
+        lock_obj = getattr(self, lock_attr, None) if lock_attr else None
+        try:
+            if lock_obj is not None:
+                lock_obj.acquire()
+            raw = getattr(self, attr_name, {}) or {}
+            if isinstance(raw, dict):
+                values = dict(raw)
+            else:
+                values = {}
+        except Exception as e:
+            self._callbacks.printError(
+                "AI snapshot dict error ({}): {}".format(attr_name, self._ascii_safe(e))
+            )
+            values = {}
+        finally:
+            if lock_obj is not None:
+                try:
+                    lock_obj.release()
+                except Exception as release_err:
+                    self._callbacks.printError(
+                        "AI snapshot dict unlock error ({}): {}".format(
                             attr_name, self._ascii_safe(release_err)
                         )
                     )
@@ -11867,6 +12069,195 @@ Generate a complete Burp extension that:
         worker.daemon = True
         worker.start()
 
+    def _run_sequence_invariants(self, event):
+        """Run non-destructive sequence/state invariant checks for deep logic gaps."""
+        if not self.api_data:
+            self.passive_area.setText(
+                "[!] No endpoints in Recon tab. Capture or import first\n"
+            )
+            return
+
+        max_text = self.passive_max_field.getText().strip() or "250"
+        try:
+            max_count = int(max_text)
+            if max_count < 1:
+                max_count = 1
+            if max_count > 1000:
+                max_count = 1000
+        except ValueError:
+            max_count = 250
+
+        scope = str(self.passive_scope_combo.getSelectedItem())
+        endpoint_keys, total_available = self._collect_auth_replay_targets(
+            scope, max_count
+        )
+        if not endpoint_keys:
+            self.passive_area.setText(
+                "[!] No endpoints found for scope '{}'\n".format(scope)
+            )
+            return
+
+        self.passive_area.setText("[*] Starting sequence invariant analysis...\n")
+        self.passive_area.append(
+            "[*] Scope: {} | Targets: {} of {}\n\n".format(
+                scope, len(endpoint_keys), total_available
+            )
+        )
+
+        def run_invariants():
+            try:
+                snapshot = self._collect_passive_snapshot(endpoint_keys)
+                package = self._build_sequence_invariant_package(snapshot)
+                self._sort_and_store_sequence_invariant_payload(
+                    package,
+                    source_label="passive_run",
+                    scope_label=scope,
+                    target_count=len(snapshot),
+                )
+                text = self._format_sequence_invariant_output(
+                    package, len(snapshot), total_available, scope
+                )
+                SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
+                finding_count = int(package.get("finding_count", 0) or 0)
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui(
+                        "[+] Sequence invariant analysis complete ({} findings)".format(
+                            finding_count
+                        )
+                    )
+                )
+            except Exception as e:
+                err_msg = self._ascii_safe(e)
+                err = "[!] Sequence invariant analysis failed: {}\n".format(err_msg)
+                SwingUtilities.invokeLater(lambda t=err: self.passive_area.append(t))
+                SwingUtilities.invokeLater(
+                    lambda m=err_msg: self.log_to_ui(
+                        "[!] Sequence invariant error: {}".format(m)
+                    )
+                )
+
+        worker = threading.Thread(target=run_invariants)
+        worker.daemon = True
+        worker.start()
+
+    def _build_sequence_invariant_package(self, data_snapshot):
+        """Build sequence-invariant findings and confidence ledger from snapshot."""
+        payload = behavior_analysis.build_sequence_invariant_package(
+            data_snapshot,
+            get_entry=self._get_entry,
+            extract_param_names=self._extract_param_names,
+        )
+        return self._sanitize_for_ai_payload(payload)
+
+    def _sort_and_store_sequence_invariant_payload(
+        self, package, source_label="passive", scope_label="Filtered Scope", target_count=None
+    ):
+        """Sort/store sequence invariant findings and associated ledger."""
+        findings = list((package or {}).get("findings", []) or [])
+        findings.sort(
+            key=lambda item: (
+                -float(item.get("confidence_score", 0.0) or 0.0),
+                self._ascii_safe(item.get("severity"), lower=True),
+                self._ascii_safe(item.get("resource"), lower=True),
+            )
+        )
+        ledger = dict((package or {}).get("ledger", {}) or {})
+        generated_at = self._ascii_safe(
+            (package or {}).get("generated_at") or time.strftime("%Y-%m-%d %H:%M:%S")
+        )
+        count_value = (
+            int(target_count)
+            if isinstance(target_count, int) and target_count >= 0
+            else None
+        )
+        with self.sequence_invariant_lock:
+            self.sequence_invariant_findings = list(findings)
+            self.sequence_invariant_ledger = ledger
+            self.sequence_invariant_meta = {
+                "generated_at": generated_at,
+                "source": self._ascii_safe(source_label),
+                "scope": self._ascii_safe(scope_label),
+                "target_count": count_value,
+                "finding_count": len(findings),
+            }
+        self._refresh_recon_invariant_status_label_async()
+
+    def _format_sequence_invariant_output(
+        self, package, scanned_count, total_available, scope_label
+    ):
+        """Format sequence invariant findings for Passive tab output area."""
+        findings = list((package or {}).get("findings", []) or [])
+        ledger = dict((package or {}).get("ledger", {}) or {})
+        severity_distribution = ledger.get("severity_distribution", {}) or {}
+        confidence_distribution = ledger.get("confidence_distribution", {}) or {}
+
+        lines = []
+        lines.append("=" * 80)
+        lines.append("SEQUENCE INVARIANT RESULTS")
+        lines.append("=" * 80)
+        lines.append("[*] Scope: {}".format(self._ascii_safe(scope_label)))
+        lines.append("[*] Endpoints Scanned: {} (of {})".format(scanned_count, total_available))
+        lines.append("[*] Findings: {}".format(len(findings)))
+        lines.append(
+            "[*] Severity: Critical={} High={} Medium={} Info={}".format(
+                int(severity_distribution.get("critical", 0) or 0),
+                int(severity_distribution.get("high", 0) or 0),
+                int(severity_distribution.get("medium", 0) or 0),
+                int(severity_distribution.get("info", 0) or 0),
+            )
+        )
+        lines.append(
+            "[*] Confidence: High={} Medium={} Low={}".format(
+                int(confidence_distribution.get("high", 0) or 0),
+                int(confidence_distribution.get("medium", 0) or 0),
+                int(confidence_distribution.get("low", 0) or 0),
+            )
+        )
+        lines.append("")
+
+        if not findings:
+            lines.append("[+] No sequence invariant gaps flagged for current scope.")
+            lines.append("[*] Capture richer role/state traffic, then rerun.")
+            return "\n".join(lines) + "\n"
+
+        lines.append("TOP FINDINGS")
+        lines.append("-" * 80)
+        for finding in findings[:120]:
+            severity = self._ascii_safe(finding.get("severity", "info"), lower=True).upper()
+            title = self._ascii_safe(finding.get("title", ""))
+            invariant = self._ascii_safe(finding.get("invariant", ""))
+            resource = self._ascii_safe(finding.get("resource", ""))
+            score = float(finding.get("confidence_score", 0.0) or 0.0)
+            label = self._ascii_safe(finding.get("confidence_label", ""))
+            lines.append(
+                "[{}][{} {:.2f}] {}".format(severity, label.upper(), score, title)
+            )
+            lines.append("  Invariant: {}".format(invariant))
+            lines.append("  Resource: {}".format(resource))
+            lines.append(
+                "  Endpoints: {}".format(
+                    ", ".join(
+                        [
+                            self._ascii_safe(x)
+                            for x in (finding.get("endpoint_scope", []) or [])[:6]
+                        ]
+                    )
+                )
+            )
+            evidence_lines = finding.get("evidence", []) or []
+            for evidence in evidence_lines[:3]:
+                lines.append("  Evidence: {}".format(self._ascii_safe(evidence)))
+            suggested = finding.get("suggested_checks", []) or []
+            if suggested:
+                lines.append("  Next: {}".format(self._ascii_safe(suggested[0])))
+            lines.append("")
+
+        if len(findings) > 120:
+            lines.append("[*] {} more findings not shown".format(len(findings) - 120))
+        lines.append("")
+        lines.append("[*] Use 'Export Ledger' for confidence/evidence JSON artifact.")
+        return "\n".join(lines) + "\n"
+
     def _collect_passive_snapshot(self, endpoint_keys):
         """Collect immutable-ish endpoint snapshot for passive processing."""
         raw_snapshot = {}
@@ -13059,6 +13450,71 @@ Generate a complete Burp extension that:
                             str(close_err)
                         )
                     )
+
+    def _export_sequence_invariant_ledger(self):
+        """Export sequence-invariant findings and confidence ledger to JSON."""
+        with self.sequence_invariant_lock:
+            findings = list(self.sequence_invariant_findings or [])
+            ledger = dict(self.sequence_invariant_ledger or {})
+            meta = dict(self.sequence_invariant_meta or {})
+
+        if not findings:
+            self.passive_area.append(
+                "\n[!] No sequence invariant findings to export. Run 'Run Invariants' first.\n"
+            )
+            return
+
+        import os
+
+        export_dir = self._get_export_dir("SequenceInvariant_Export")
+        if not export_dir:
+            return
+
+        files_to_write = [
+            ("sequence_invariant_findings.json", {"metadata": meta, "findings": findings}),
+            ("sequence_evidence_ledger.json", {"metadata": meta, "ledger": ledger}),
+        ]
+        written = []
+
+        for filename, payload in files_to_write:
+            writer = None
+            filepath = os.path.join(export_dir, filename)
+            try:
+                writer = FileWriter(filepath)
+                writer.write(json.dumps(payload, indent=2))
+                written.append(filepath)
+            except Exception as e:
+                self.passive_area.append(
+                    "\n[!] Sequence invariant export failed ({}): {}\n".format(
+                        filename, self._ascii_safe(e)
+                    )
+                )
+                self.log_to_ui(
+                    "[!] Sequence invariant export failed ({}): {}".format(
+                        filename, self._ascii_safe(e)
+                    )
+                )
+            finally:
+                if writer:
+                    try:
+                        writer.close()
+                    except Exception as close_err:
+                        self._callbacks.printError(
+                            "Error closing sequence export file {}: {}".format(
+                                filename, self._ascii_safe(close_err)
+                            )
+                        )
+
+        if not written:
+            return
+
+        self.passive_area.append(
+            "\n[+] Exported sequence invariant artifacts: {}\n".format(len(written))
+        )
+        self.passive_area.append("[+] Folder: {}\n".format(export_dir))
+        for path in written:
+            self.passive_area.append("[+] File: {}\n".format(path))
+        self.log_to_ui("[+] Exported sequence invariant ledger to: {}".format(export_dir))
 
     def _normalize_wayback_entry(self, line):
         """Normalize wayback line into: original | archive | timestamp."""
