@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.2.1-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)

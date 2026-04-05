@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.1] - 2026-04-05
+
+### Changed
+- **Nuclei Performance Optimization**: Dramatically improved scan speed and reliability
+  - Reduced tag set from 10 to 4 tags (exposure, api, swagger, openapi) for focused API discovery
+  - Faster timeout: 12s → 8s per request (33% faster)
+  - Fewer retries: 2 → 1 (50% reduction in wasted time)
+  - Higher throughput: rate limit 50 → 100 req/s, concurrency 10 → 20 (2x faster)
+  - Added exclusions: fuzzing, brute-force tags
+  - Expected scan time: 2-5 minutes (vs 15+ minute timeouts)
+  - Trade-off: Less comprehensive coverage, but much faster and more reliable for endpoint discovery
+- Updated "Recon Fast" preset with optimized parameters
+- Updated UI messages to reflect "optimized for speed" configuration
+
+### Fixed
+- Nuclei timeout issues on large target sets (e.g., allocine.fr)
+- Excessive template loading causing 15+ minute hangs
+
+### Documentation
+- Added `NUCLEI_OPTIMIZATION.md` explaining the performance improvements and when to use custom commands for comprehensive scans
+
 ## [1.2.0] - 2026-04-02
 
 ### Added
