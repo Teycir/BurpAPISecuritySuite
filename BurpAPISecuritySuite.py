@@ -13306,6 +13306,21 @@ Generate a complete Burp extension that:
             max_items = 50
 
         candidate_scores = {}
+        selected_host = "all"
+        force_host = False
+        scope_override = self._get_target_scope_override()
+        try:
+            if hasattr(self, "host_filter") and self.host_filter is not None:
+                selected_host = self._ascii_safe(
+                    str(self.host_filter.getSelectedItem()), lower=True
+                ).strip()
+        except Exception as e:
+            self._callbacks.printError(
+                "Asset host-filter read error: {}".format(self._ascii_safe(e))
+            )
+            selected_host = "all"
+        force_host = bool(selected_host and selected_host != "all")
+        selected_base = self._infer_base_domain(selected_host) if force_host else ""
 
         explicit_values = []
         if hasattr(self, "asset_domains_field") and self.asset_domains_field is not None:
@@ -13332,12 +13347,20 @@ Generate a complete Burp extension that:
             host = self._ascii_safe(entry.get("host") or "", lower=True).strip()
             if not host:
                 continue
+            if scope_override.get("enabled") and not self._host_matches_target_scope(
+                host, scope_override
+            ):
+                continue
+            if force_host:
+                host_base = self._infer_base_domain(host)
+                if host != selected_host and host_base != selected_base:
+                    continue
+            elif self._is_wayback_noise_host(host):
+                continue
             base = self._infer_base_domain(host)
             if not base:
                 continue
-            weight = 1
-            if not self._ffuf_is_noise_host(host):
-                weight = 2
+            weight = 2 if not self._ffuf_is_noise_host(host) else 1
             candidate_scores[base] = candidate_scores.get(base, 0) + weight
 
         ordered = sorted(
@@ -13452,6 +13475,24 @@ Generate a complete Burp extension that:
         explicit = self._ascii_safe(self.asset_domains_field.getText()).strip()
         domains = []
         seen = set()
+        source_counts = {"manual": 0, "selected": 0, "history": 0}
+        dropped_noise = 0
+        dropped_scope = 0
+        selected_host = "all"
+        force_host = False
+        scope_override = self._get_target_scope_override()
+        try:
+            if hasattr(self, "host_filter") and self.host_filter is not None:
+                selected_host = self._ascii_safe(
+                    str(self.host_filter.getSelectedItem()), lower=True
+                ).strip()
+        except Exception as e:
+            self._callbacks.printError(
+                "Asset host-filter read error: {}".format(self._ascii_safe(e))
+            )
+            selected_host = "all"
+        force_host = bool(selected_host and selected_host != "all")
+        selected_base = self._infer_base_domain(selected_host) if force_host else ""
         if explicit:
             normalized = explicit.replace(",", "\n")
             for raw in normalized.splitlines():
@@ -13463,7 +13504,15 @@ Generate a complete Burp extension that:
                 if domain and domain not in seen:
                     seen.add(domain)
                     domains.append(domain)
+                    source_counts["manual"] += 1
                     if len(domains) >= max_domains:
+                        self.asset_domain_meta = {
+                            "source_counts": source_counts,
+                            "dropped_noise": dropped_noise,
+                            "dropped_scope": dropped_scope,
+                            "selected_host": selected_host,
+                            "scope_enabled": bool(scope_override.get("enabled")),
+                        }
                         return domains
 
         selected_domains = list(getattr(self, "asset_selected_domains", []) or [])
@@ -13473,15 +13522,39 @@ Generate a complete Burp extension that:
                 continue
             seen.add(safe_domain)
             domains.append(safe_domain)
+            source_counts["selected"] += 1
             if len(domains) >= max_domains:
+                self.asset_domain_meta = {
+                    "source_counts": source_counts,
+                    "dropped_noise": dropped_noise,
+                    "dropped_scope": dropped_scope,
+                    "selected_host": selected_host,
+                    "scope_enabled": bool(scope_override.get("enabled")),
+                }
                 return domains
 
         with self.lock:
-            hosts = [self._get_entry(entries).get("host", "") for entries in self.api_data.values()]
+            hosts = [
+                self._get_entry(entries).get("host", "")
+                for entries in self.api_data.values()
+            ]
         host_counter = {}
         for host in hosts:
             host_text = self._ascii_safe(host, lower=True).strip()
             if not host_text:
+                continue
+            if scope_override.get("enabled") and not self._host_matches_target_scope(
+                host_text, scope_override
+            ):
+                dropped_scope += 1
+                continue
+            host_base = self._infer_base_domain(host_text) or host_text
+            if force_host:
+                if host_text != selected_host and host_base != selected_base:
+                    dropped_scope += 1
+                    continue
+            elif self._is_wayback_noise_host(host_text):
+                dropped_noise += 1
                 continue
             base = self._infer_base_domain(host_text) or host_text
             host_counter[base] = host_counter.get(base, 0) + 1
@@ -13490,11 +13563,27 @@ Generate a complete Burp extension that:
             if domain not in seen:
                 seen.add(domain)
                 domains.append(domain)
+                source_counts["history"] += 1
                 if len(domains) >= max_domains:
                     break
+        self.asset_domain_meta = {
+            "source_counts": source_counts,
+            "dropped_noise": dropped_noise,
+            "dropped_scope": dropped_scope,
+            "selected_host": selected_host,
+            "scope_enabled": bool(scope_override.get("enabled")),
+        }
         return domains
 
-    def _run_command_stage(self, tool_key, tool_name, cmd, output_area, timeout_seconds):
+    def _run_command_stage(
+        self,
+        tool_key,
+        tool_name,
+        cmd,
+        output_area,
+        timeout_seconds,
+        heartbeat_seconds=0,
+    ):
         """Run one subprocess stage with cancellation and timeout."""
         import subprocess
         import time as time_module
@@ -13506,13 +13595,27 @@ Generate a complete Burp extension that:
             )
             self._set_active_tool_process(tool_key, process)
             start_wait = time_module.time()
+            last_heartbeat = start_wait
             while process.poll() is None:
                 if self._is_tool_cancelled(tool_key):
                     self._terminate_process_cross_platform(process, tool_name)
                     return False, True, "", "cancelled"
-                if (time_module.time() - start_wait) > timeout_seconds:
+                elapsed = time_module.time() - start_wait
+                if elapsed > timeout_seconds:
                     self._terminate_process_cross_platform(process, tool_name)
                     return False, False, "", "timeout"
+                if (
+                    heartbeat_seconds
+                    and heartbeat_seconds > 0
+                    and (time_module.time() - last_heartbeat) >= heartbeat_seconds
+                ):
+                    last_heartbeat = time_module.time()
+                    if output_area is not None:
+                        SwingUtilities.invokeLater(
+                            lambda e=int(elapsed), t=self._ascii_safe(tool_name): output_area.append(
+                                "[*] {} still running... {}s elapsed\n".format(t, e)
+                            )
+                        )
                 time_module.sleep(0.2)
 
             stdout_data = self._safe_pipe_read(process.stdout, "{} stdout".format(tool_name))
@@ -13572,6 +13675,23 @@ Generate a complete Burp extension that:
         self.asset_area.setText("[*] Subfinder discovery starting...\n")
         self.asset_area.append("[*] Profile: {}\n".format(profile_value))
         self.asset_area.append("[*] Domains: {}\n\n".format(", ".join(domains)))
+        domain_meta = getattr(self, "asset_domain_meta", {}) or {}
+        source_counts = domain_meta.get("source_counts", {}) or {}
+        self.asset_area.append(
+            "[*] Sources: manual={}, selected={}, history={}\n".format(
+                int(source_counts.get("manual", 0) or 0),
+                int(source_counts.get("selected", 0) or 0),
+                int(source_counts.get("history", 0) or 0),
+            )
+        )
+        self.asset_area.append(
+            "[*] Filter: host={} scope_enabled={} dropped_noise={} dropped_scope={}\n\n".format(
+                self._ascii_safe(domain_meta.get("selected_host") or "all"),
+                bool(domain_meta.get("scope_enabled")),
+                int(domain_meta.get("dropped_noise", 0) or 0),
+                int(domain_meta.get("dropped_scope", 0) or 0),
+            )
+        )
         self._clear_tool_cancel("assetdiscovery")
 
         def run_discovery():
@@ -13643,6 +13763,7 @@ Generate a complete Burp extension that:
                     cmd,
                     self.asset_area,
                     timeout_seconds,
+                    heartbeat_seconds=12,
                 )
                 if was_cancelled:
                     SwingUtilities.invokeLater(
@@ -13655,10 +13776,33 @@ Generate a complete Burp extension that:
                             "[!] Subfinder failed: {}\n".format(e)
                         )
                     )
+                else:
+                    SwingUtilities.invokeLater(
+                        lambda: self.asset_area.append(
+                            "[+] Subfinder command completed successfully\n"
+                        )
+                    )
+
+                stdout_len = len(self._ascii_safe(stdout_data))
+                stderr_preview = self._ascii_safe(err or "").strip()
+                if stdout_len > 0:
+                    SwingUtilities.invokeLater(
+                        lambda n=stdout_len: self.asset_area.append(
+                            "[*] Subfinder stdout size: {} bytes\n".format(n)
+                        )
+                    )
+                if stderr_preview:
+                    SwingUtilities.invokeLater(
+                        lambda p=stderr_preview[:320]: self.asset_area.append(
+                            "[*] Subfinder stderr/stdout preview: {}\n".format(p)
+                        )
+                    )
 
                 if uses_output_file and os.path.exists(output_file):
+                    file_line_count = 0
                     with open(output_file, "r") as reader:
                         for line in reader:
+                            file_line_count += 1
                             host = self._ascii_safe(line, lower=True).strip().split(" ")[
                                 0
                             ].strip()
@@ -13666,6 +13810,11 @@ Generate a complete Burp extension that:
                             if not host:
                                 continue
                             discovered_domains.append(host)
+                    SwingUtilities.invokeLater(
+                        lambda c=file_line_count: self.asset_area.append(
+                            "[*] Subfinder output file lines: {}\n".format(c)
+                        )
+                    )
 
                 if not discovered_domains and stdout_data:
                     for line in self._ascii_safe(stdout_data).splitlines():
