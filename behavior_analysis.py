@@ -3,6 +3,7 @@
 
 import re
 import time
+import golden_ticket_analysis
 
 
 WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
@@ -369,6 +370,13 @@ def build_sequence_invariant_findings(data_snapshot, get_entry=None, extract_par
     return findings[:400]
 
 
+def build_golden_ticket_findings(data_snapshot, get_entry=None):
+    """Compatibility wrapper: delegate Golden Ticket logic to extracted module."""
+    return golden_ticket_analysis.build_golden_ticket_findings(
+        data_snapshot, get_entry=get_entry
+    )
+
+
 def build_evidence_ledger(findings):
     """Build AI/human-friendly confidence ledger from invariant findings."""
     items = list(findings or [])
@@ -412,3 +420,10 @@ def build_sequence_invariant_package(data_snapshot, get_entry=None, extract_para
         "findings": findings,
         "ledger": ledger,
     }
+
+
+def build_golden_ticket_package(data_snapshot, get_entry=None):
+    """Compatibility wrapper: delegate Golden Ticket package build to extracted module."""
+    return golden_ticket_analysis.build_golden_ticket_package(
+        data_snapshot, get_entry=get_entry
+    )

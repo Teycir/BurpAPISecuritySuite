@@ -53,3 +53,26 @@ def test_golden_replay_builds_confidence_ledger():
     assert isinstance(ledger.get("findings", []), list)
     assert len(ledger.get("findings", [])) == package.get("finding_count", -1)
     print("[PASS] test_golden_replay_builds_confidence_ledger")
+
+
+def test_golden_replay_detects_golden_ticket_patterns():
+    payload = _fixture_payload()
+    package = behavior_analysis.build_golden_ticket_package(payload)
+    findings = list(package.get("findings", []) or [])
+    assert package.get("observed_token_count", 0) >= 1
+    assert findings, "Expected Golden Ticket findings from replay corpus"
+
+    names = set([str(item.get("invariant")) for item in findings])
+    expected = set(
+        [
+            "golden_ticket_cross_resource_reuse",
+            "golden_ticket_privileged_token_overreach",
+        ]
+    )
+    assert names.intersection(expected), "Missing expected Golden Ticket invariant families"
+    assert package.get("finding_count", 0) >= 1
+    ledger = dict(package.get("ledger", {}) or {})
+    assert ledger.get("analysis_type") == "golden_ticket"
+    assert "coverage" in ledger
+    assert isinstance(ledger.get("findings", []), list)
+    print("[PASS] test_golden_replay_detects_golden_ticket_patterns")

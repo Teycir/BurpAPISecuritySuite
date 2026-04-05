@@ -476,6 +476,10 @@ class BurpExtender(
         self.sequence_invariant_ledger = {}
         self.sequence_invariant_meta = {}
         self.sequence_invariant_lock = threading.Lock()
+        self.golden_ticket_findings = []
+        self.golden_ticket_ledger = {}
+        self.golden_ticket_meta = {}
+        self.golden_ticket_lock = threading.Lock()
         self.recon_invariant_status_label = None
         self._capture_ui_refresh_timer = None
         self._capture_ui_refresh_last_ts = 0.0
@@ -689,7 +693,7 @@ class BurpExtender(
         recon_footer_panel.setLayout(BoxLayout(recon_footer_panel, BoxLayout.Y_AXIS))
         recon_footer_panel.add(btn_panel)
         invariant_status_row = JPanel(FlowLayout(FlowLayout.LEFT))
-        invariant_status_row.add(JLabel("Invariants:"))
+        invariant_status_row.add(JLabel("Invariants + Golden:"))
         self.recon_invariant_status_label = JLabel("")
         self.recon_invariant_status_label.setFont(Font("Monospaced", Font.PLAIN, 11))
         invariant_status_row.add(self.recon_invariant_status_label)
@@ -930,11 +934,13 @@ class BurpExtender(
     def _build_recon_invariant_status_text(self):
         """Build compact Recon status text for cached invariant artifacts."""
         with self.sequence_invariant_lock:
-            findings_count = len(self.sequence_invariant_findings or [])
+            sequence_count = len(self.sequence_invariant_findings or [])
             meta = dict(self.sequence_invariant_meta or {})
             ledger = dict(self.sequence_invariant_ledger or {})
+        with self.golden_ticket_lock:
+            golden_count = len(self.golden_ticket_findings or [])
 
-        if not meta and findings_count <= 0:
+        if not meta and sequence_count <= 0 and golden_count <= 0:
             return "Not generated yet (AI export computes this automatically)."
 
         source = self._ascii_safe(meta.get("source") or "unknown")
@@ -942,8 +948,9 @@ class BurpExtender(
         generated_at = self._ascii_safe(meta.get("generated_at") or "unknown")
         confidence_dist = dict(ledger.get("confidence_distribution", {}) or {})
         high_conf = int(confidence_dist.get("high", 0) or 0)
-        return "Findings={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
-            findings_count,
+        return "Seq={} | Golden={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
+            sequence_count,
+            golden_count,
             high_conf,
             source,
             scope,
@@ -986,16 +993,24 @@ class BurpExtender(
         def worker():
             try:
                 package = self._build_sequence_invariant_package(data_snapshot)
+                golden_package = self._build_golden_ticket_package(data_snapshot)
                 self._sort_and_store_sequence_invariant_payload(
                     package,
                     source_label="recon_refresh",
                     scope_label="All Endpoints",
                     target_count=len(data_snapshot),
                 )
+                self._sort_and_store_golden_ticket_payload(
+                    golden_package,
+                    source_label="recon_refresh",
+                    scope_label="All Endpoints",
+                    target_count=len(data_snapshot),
+                )
                 finding_count = int(package.get("finding_count", 0) or 0)
+                golden_count = int(golden_package.get("finding_count", 0) or 0)
                 SwingUtilities.invokeLater(
-                    lambda c=finding_count: self.log_to_ui(
-                        "[+] Recon invariants refreshed ({} findings)".format(c)
+                    lambda c=finding_count, g=golden_count: self.log_to_ui(
+                        "[+] Recon invariants refreshed (seq={} golden={})".format(c, g)
                     )
                 )
             except Exception as e:
@@ -1393,7 +1408,7 @@ class BurpExtender(
         lines.append("Export Host:")
         lines.append("  Export only endpoints matching the selected host filter.")
         lines.append("Export AI Bundle:")
-        lines.append("  Export all-tab AI bundle (not only fuzzer data).")
+        lines.append("  Export all-tab AI bundle (includes invariants + Golden Ticket findings).")
         lines.append("Import:")
         lines.append("  Import a previous Recon JSON export.")
         lines.append("Postman:")
@@ -1408,6 +1423,8 @@ class BurpExtender(
         lines.append("  Clear captured Recon state and UI list/details.")
         lines.append("Refresh:")
         lines.append("  Recompute and redraw Recon list/stats from current state.")
+        lines.append("Refresh Invariants:")
+        lines.append("  Recompute sequence + Golden Ticket analysis from captured endpoints.")
         lines.append("")
         lines.append("Tip: hover any Recon button to see a quick tooltip.")
         JOptionPane.showMessageDialog(
@@ -2724,7 +2741,7 @@ class BurpExtender(
         )
         deep_logic_row.add(
             JLabel(
-                "Sequence/state checks with confidence scoring (non-destructive)."
+                "Sequence/state checks with confidence scoring (non-destructive). Includes Golden Ticket token-overreach analysis."
             )
         )
 
@@ -2747,6 +2764,9 @@ class BurpExtender(
         self.sequence_invariant_findings = []
         self.sequence_invariant_ledger = {}
         self.sequence_invariant_meta = {}
+        self.golden_ticket_findings = []
+        self.golden_ticket_ledger = {}
+        self.golden_ticket_meta = {}
         return panel
 
     def _create_nuclei_tab(self):
@@ -5394,6 +5414,14 @@ class BurpExtender(
                 "ai_sequence_evidence_ledger.json",
                 bundle.get("sequence_invariants", {}).get("ledger", {}),
             ),
+            (
+                "ai_golden_ticket_findings.json",
+                bundle.get("golden_tickets", {}).get("findings", []),
+            ),
+            (
+                "ai_golden_ticket_ledger.json",
+                bundle.get("golden_tickets", {}).get("ledger", {}),
+            ),
             ("ai_feedback_template.json", bundle.get("feedback_template", {})),
             ("ai_openai_request.json", bundle.get("llm_exports", {}).get("openai", {})),
             (
@@ -5463,8 +5491,15 @@ class BurpExtender(
         )
         behavioral_analysis = self._export_behavioral_analysis(data_snapshot)
         sequence_invariants = self._build_sequence_invariant_package(data_snapshot)
+        golden_tickets = self._build_golden_ticket_package(data_snapshot)
         self._sort_and_store_sequence_invariant_payload(
             sequence_invariants,
+            source_label="ai_export",
+            scope_label="All Endpoints",
+            target_count=len(data_snapshot),
+        )
+        self._sort_and_store_golden_ticket_payload(
+            golden_tickets,
             source_label="ai_export",
             scope_label="All Endpoints",
             target_count=len(data_snapshot),
@@ -5520,6 +5555,7 @@ class BurpExtender(
             "business_logic_hints": vulnerability_context.get("business_logic_hints", []),
             "behavioral_analysis": behavioral_analysis,
             "sequence_invariants": sequence_invariants,
+            "golden_tickets": golden_tickets,
             "all_tabs_context": all_tabs_context,
         }
         llm_exports = {
@@ -5541,6 +5577,12 @@ class BurpExtender(
                 "vulnerability_count": len(
                     vulnerability_context.get("vulnerabilities", [])
                 ),
+                "sequence_invariant_count": int(
+                    sequence_invariants.get("finding_count", 0) or 0
+                ),
+                "golden_ticket_count": int(
+                    golden_tickets.get("finding_count", 0) or 0
+                ),
             },
             "legacy_context": legacy_context,
             "vulnerability_context": vulnerability_context,
@@ -5551,6 +5593,7 @@ class BurpExtender(
             "llm_exports": llm_exports,
             "ai_prep_layer": ai_prep_layer,
             "sequence_invariants": sequence_invariants,
+            "golden_tickets": golden_tickets,
         }
 
     def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
@@ -5644,6 +5687,20 @@ class BurpExtender(
                 ),
                 "meta": self._snapshot_dict_attr(
                     "sequence_invariant_meta", lock_attr="sequence_invariant_lock"
+                ),
+            },
+            "golden_tickets": {
+                "finding_count": len(getattr(self, "golden_ticket_findings", []) or []),
+                "findings": self._snapshot_list_attr(
+                    "golden_ticket_findings",
+                    limit=300,
+                    lock_attr="golden_ticket_lock",
+                ),
+                "ledger": self._snapshot_dict_attr(
+                    "golden_ticket_ledger", lock_attr="golden_ticket_lock"
+                ),
+                "meta": self._snapshot_dict_attr(
+                    "golden_ticket_meta", lock_attr="golden_ticket_lock"
                 ),
             },
             "nuclei": {
@@ -6919,7 +6976,7 @@ You are analyzing real API capture data with vulnerability findings, response pa
 ## Tasks
 1. Generate baseline, context-aware, evasion, and chained payloads per vulnerability.
 2. Define success indicators (status/body/header/timing) and false-positive guards.
-3. Propose exploitation chains and verification steps (automated + manual).
+3. Propose exploitation chains and verification steps (automated + manual), including token-overreach (Golden Ticket) hypotheses.
 4. Prioritize by severity, confidence, authentication context, and business impact.
 
 ## Output Requirements
@@ -12108,8 +12165,15 @@ Generate a complete Burp extension that:
             try:
                 snapshot = self._collect_passive_snapshot(endpoint_keys)
                 package = self._build_sequence_invariant_package(snapshot)
+                golden_package = self._build_golden_ticket_package(snapshot)
                 self._sort_and_store_sequence_invariant_payload(
                     package,
+                    source_label="passive_run",
+                    scope_label=scope,
+                    target_count=len(snapshot),
+                )
+                self._sort_and_store_golden_ticket_payload(
+                    golden_package,
                     source_label="passive_run",
                     scope_label=scope,
                     target_count=len(snapshot),
@@ -12117,13 +12181,13 @@ Generate a complete Burp extension that:
                 text = self._format_sequence_invariant_output(
                     package, len(snapshot), total_available, scope
                 )
+                text += self._format_golden_ticket_output(golden_package)
                 SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
                 finding_count = int(package.get("finding_count", 0) or 0)
+                golden_count = int(golden_package.get("finding_count", 0) or 0)
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui(
-                        "[+] Sequence invariant analysis complete ({} findings)".format(
-                            finding_count
-                        )
+                    lambda c=finding_count, g=golden_count: self.log_to_ui(
+                        "[+] Invariant analysis complete (seq={} golden={})".format(c, g)
                     )
                 )
             except Exception as e:
@@ -12146,6 +12210,14 @@ Generate a complete Burp extension that:
             data_snapshot,
             get_entry=self._get_entry,
             extract_param_names=self._extract_param_names,
+        )
+        return self._sanitize_for_ai_payload(payload)
+
+    def _build_golden_ticket_package(self, data_snapshot):
+        """Build Golden Ticket package from captured token behavior."""
+        payload = behavior_analysis.build_golden_ticket_package(
+            data_snapshot,
+            get_entry=self._get_entry,
         )
         return self._sanitize_for_ai_payload(payload)
 
@@ -12178,6 +12250,41 @@ Generate a complete Burp extension that:
                 "source": self._ascii_safe(source_label),
                 "scope": self._ascii_safe(scope_label),
                 "target_count": count_value,
+                "finding_count": len(findings),
+            }
+        self._refresh_recon_invariant_status_label_async()
+
+    def _sort_and_store_golden_ticket_payload(
+        self, package, source_label="passive", scope_label="Filtered Scope", target_count=None
+    ):
+        """Sort/store Golden Ticket findings and associated ledger."""
+        findings = list((package or {}).get("findings", []) or [])
+        findings.sort(
+            key=lambda item: (
+                -float(item.get("confidence_score", 0.0) or 0.0),
+                self._ascii_safe(item.get("severity"), lower=True),
+                self._ascii_safe(item.get("resource"), lower=True),
+            )
+        )
+        ledger = dict((package or {}).get("ledger", {}) or {})
+        generated_at = self._ascii_safe(
+            (package or {}).get("generated_at") or time.strftime("%Y-%m-%d %H:%M:%S")
+        )
+        count_value = (
+            int(target_count)
+            if isinstance(target_count, int) and target_count >= 0
+            else None
+        )
+        observed_token_count = int((package or {}).get("observed_token_count", 0) or 0)
+        with self.golden_ticket_lock:
+            self.golden_ticket_findings = list(findings)
+            self.golden_ticket_ledger = ledger
+            self.golden_ticket_meta = {
+                "generated_at": generated_at,
+                "source": self._ascii_safe(source_label),
+                "scope": self._ascii_safe(scope_label),
+                "target_count": count_value,
+                "observed_token_count": observed_token_count,
                 "finding_count": len(findings),
             }
         self._refresh_recon_invariant_status_label_async()
@@ -12256,6 +12363,69 @@ Generate a complete Burp extension that:
             lines.append("[*] {} more findings not shown".format(len(findings) - 120))
         lines.append("")
         lines.append("[*] Use 'Export Ledger' for confidence/evidence JSON artifact.")
+        return "\n".join(lines) + "\n"
+
+    def _format_golden_ticket_output(self, package):
+        """Format Golden Ticket findings for Passive tab output area."""
+        findings = list((package or {}).get("findings", []) or [])
+        ledger = dict((package or {}).get("ledger", {}) or {})
+        observed = int((package or {}).get("observed_token_count", 0) or 0)
+        severity_distribution = ledger.get("severity_distribution", {}) or {}
+        confidence_distribution = ledger.get("confidence_distribution", {}) or {}
+
+        lines = []
+        lines.append("")
+        lines.append("=" * 80)
+        lines.append("GOLDEN TICKET RESULTS")
+        lines.append("=" * 80)
+        lines.append("[*] Observed Tokens: {}".format(observed))
+        lines.append("[*] Findings: {}".format(len(findings)))
+        lines.append(
+            "[*] Severity: Critical={} High={} Medium={} Info={}".format(
+                int(severity_distribution.get("critical", 0) or 0),
+                int(severity_distribution.get("high", 0) or 0),
+                int(severity_distribution.get("medium", 0) or 0),
+                int(severity_distribution.get("info", 0) or 0),
+            )
+        )
+        lines.append(
+            "[*] Confidence: High={} Medium={} Low={}".format(
+                int(confidence_distribution.get("high", 0) or 0),
+                int(confidence_distribution.get("medium", 0) or 0),
+                int(confidence_distribution.get("low", 0) or 0),
+            )
+        )
+        lines.append("")
+
+        if not findings:
+            lines.append(
+                "[+] No Golden Ticket patterns flagged from current captured token usage."
+            )
+            lines.append(
+                "[*] Capture multiple roles/sessions/logout flows for stronger coverage."
+            )
+            return "\n".join(lines) + "\n"
+
+        lines.append("TOP FINDINGS")
+        lines.append("-" * 80)
+        for finding in findings[:80]:
+            severity = self._ascii_safe(finding.get("severity", "info"), lower=True).upper()
+            title = self._ascii_safe(finding.get("title", ""))
+            invariant = self._ascii_safe(finding.get("invariant", ""))
+            score = float(finding.get("confidence_score", 0.0) or 0.0)
+            label = self._ascii_safe(finding.get("confidence_label", ""))
+            lines.append("[{}][{} {:.2f}] {}".format(severity, label.upper(), score, title))
+            lines.append("  Pattern: {}".format(invariant))
+            evidence_lines = finding.get("evidence", []) or []
+            for evidence in evidence_lines[:2]:
+                lines.append("  Evidence: {}".format(self._ascii_safe(evidence)))
+            suggested = finding.get("suggested_checks", []) or []
+            if suggested:
+                lines.append("  Next: {}".format(self._ascii_safe(suggested[0])))
+            lines.append("")
+
+        if len(findings) > 80:
+            lines.append("[*] {} more findings not shown".format(len(findings) - 80))
         return "\n".join(lines) + "\n"
 
     def _collect_passive_snapshot(self, endpoint_keys):
@@ -13457,10 +13627,14 @@ Generate a complete Burp extension that:
             findings = list(self.sequence_invariant_findings or [])
             ledger = dict(self.sequence_invariant_ledger or {})
             meta = dict(self.sequence_invariant_meta or {})
+        with self.golden_ticket_lock:
+            golden_findings = list(self.golden_ticket_findings or [])
+            golden_ledger = dict(self.golden_ticket_ledger or {})
+            golden_meta = dict(self.golden_ticket_meta or {})
 
-        if not findings:
+        if (not findings) and (not golden_findings):
             self.passive_area.append(
-                "\n[!] No sequence invariant findings to export. Run 'Run Invariants' first.\n"
+                "\n[!] No invariant findings to export. Run 'Run Invariants' first.\n"
             )
             return
 
@@ -13470,10 +13644,21 @@ Generate a complete Burp extension that:
         if not export_dir:
             return
 
-        files_to_write = [
-            ("sequence_invariant_findings.json", {"metadata": meta, "findings": findings}),
-            ("sequence_evidence_ledger.json", {"metadata": meta, "ledger": ledger}),
-        ]
+        files_to_write = []
+        if findings:
+            files_to_write.extend(
+                [
+                    ("sequence_invariant_findings.json", {"metadata": meta, "findings": findings}),
+                    ("sequence_evidence_ledger.json", {"metadata": meta, "ledger": ledger}),
+                ]
+            )
+        if golden_findings:
+            files_to_write.extend(
+                [
+                    ("golden_ticket_findings.json", {"metadata": golden_meta, "findings": golden_findings}),
+                    ("golden_ticket_ledger.json", {"metadata": golden_meta, "ledger": golden_ledger}),
+                ]
+            )
         written = []
 
         for filename, payload in files_to_write:
@@ -13508,13 +13693,11 @@ Generate a complete Burp extension that:
         if not written:
             return
 
-        self.passive_area.append(
-            "\n[+] Exported sequence invariant artifacts: {}\n".format(len(written))
-        )
+        self.passive_area.append("\n[+] Exported invariant artifacts: {}\n".format(len(written)))
         self.passive_area.append("[+] Folder: {}\n".format(export_dir))
         for path in written:
             self.passive_area.append("[+] File: {}\n".format(path))
-        self.log_to_ui("[+] Exported sequence invariant ledger to: {}".format(export_dir))
+        self.log_to_ui("[+] Exported invariant ledgers to: {}".format(export_dir))
 
     def _normalize_wayback_entry(self, line):
         """Normalize wayback line into: original | archive | timestamp."""

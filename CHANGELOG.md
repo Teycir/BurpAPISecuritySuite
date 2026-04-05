@@ -2,6 +2,41 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.6] - 2026-04-06
+
+### Added
+- Non-destructive **Golden Ticket** analysis from captured traffic (no active probing):
+  - Finds tokens reused across unrelated resources
+  - Flags likely over-privileged token patterns
+  - Checks JWT expiry/scope/audience signals when claims are available
+- Extracted Golden Ticket logic to a dedicated module: `golden_ticket_analysis.py`.
+- Kept compatibility wrappers in `behavior_analysis.py`:
+  - `build_golden_ticket_findings(...)`
+  - `build_golden_ticket_package(...)`
+- New AI export artifacts:
+  - `ai_golden_ticket_findings.json`
+  - `ai_golden_ticket_ledger.json`
+- Extended `Export Ledger` artifact set:
+  - `golden_ticket_findings.json`
+  - `golden_ticket_ledger.json`
+
+### Changed
+- `Run Invariants` and Recon `Refresh Invariants` now compute/store both Sequence and Golden findings.
+- Recon status line now shows both Sequence and Golden counts.
+- AI export bundle/all-tabs context now include `golden_tickets` with `sequence_invariants`.
+- AI prompt guidance now also asks for token-overreach (Golden Ticket) hypotheses.
+
+### Documentation
+- Added a plain-language "recent additions" summary in `README.md` covering shipped updates across v1.3.2 -> v1.3.5 in one place.
+- Clarified invariant workflow order in docs as:
+  - `Run Invariants` (Passive Discovery) -> `Refresh Invariants` (Recon) -> `Export AI Bundle`.
+- Documented shipped Sequence/Golden artifacts and optional AI prep artifacts in simpler language.
+- Updated README to show Golden Ticket as shipped and where related files are exported.
+
+### Tests
+- Expanded source-contract assertions to cover Golden Ticket wiring and artifact filenames.
+- Added golden replay test coverage for Golden Ticket detection/ledger output.
+
 ## [1.3.5] - 2026-04-05
 
 ### Changed

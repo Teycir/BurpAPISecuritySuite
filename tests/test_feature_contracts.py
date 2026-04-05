@@ -14,6 +14,7 @@ def _source_text():
         os.path.join(base_dir, "heavy_runners.py"),
         os.path.join(base_dir, "ai_prep_layer.py"),
         os.path.join(base_dir, "behavior_analysis.py"),
+        os.path.join(base_dir, "golden_ticket_analysis.py"),
     ]
     chunks = []
     for source_path in source_paths:
@@ -705,6 +706,11 @@ def test_ai_export_bundle_contains_rich_context_and_llm_formats():
         "ai_openai_request.json",
         "ai_anthropic_request.json",
         "ai_ollama_request.json",
+        "ai_golden_ticket_findings.json",
+        "ai_golden_ticket_ledger.json",
+        "\"golden_tickets\": golden_tickets,",
+        "def _build_golden_ticket_package(",
+        "def _sort_and_store_golden_ticket_payload(",
     ]
     for token in required_tokens:
         assert token in text, "Missing enhanced AI export token: {}".format(token)
@@ -750,15 +756,25 @@ def test_sequence_invariants_and_ledger_are_wired():
         'self._create_action_button(\n                "Export Ledger"',
         "def _run_sequence_invariants(",
         "def _build_sequence_invariant_package(",
+        "def _build_golden_ticket_package(",
         "behavior_analysis.build_sequence_invariant_package(",
+        "behavior_analysis.build_golden_ticket_package(",
+        "def _format_golden_ticket_output(",
         "def _export_sequence_invariant_ledger(",
         "\"sequence_invariant_findings.json\"",
         "\"sequence_evidence_ledger.json\"",
+        "\"golden_ticket_findings.json\"",
+        "\"golden_ticket_ledger.json\"",
         "\"ai_sequence_invariant_findings.json\"",
         "\"ai_sequence_evidence_ledger.json\"",
+        "\"ai_golden_ticket_findings.json\"",
+        "\"ai_golden_ticket_ledger.json\"",
         "\"sequence_invariants\": sequence_invariants,",
+        "\"golden_tickets\": golden_tickets,",
         "\"sequence_invariants\": {",
         "\"sequence_invariant_meta\"",
+        "\"golden_tickets\": {",
+        "\"golden_ticket_meta\"",
         "source_label=\"ai_export\"",
         "def _snapshot_dict_attr(",
     ]
@@ -788,3 +804,18 @@ def test_heavy_runner_methods_are_delegated_for_jython_compile_safety():
     for token in required_tokens:
         assert token in text, "Missing heavy-runner delegation token: {}".format(token)
     print("[PASS] test_heavy_runner_methods_are_delegated_for_jython_compile_safety")
+
+
+def test_golden_ticket_logic_is_extracted_to_dedicated_module():
+    text = _source_text()
+    required_tokens = [
+        "import golden_ticket_analysis",
+        "def build_golden_ticket_findings(data_snapshot, get_entry=None):",
+        "return golden_ticket_analysis.build_golden_ticket_findings(",
+        "def build_golden_ticket_package(data_snapshot, get_entry=None):",
+        "return golden_ticket_analysis.build_golden_ticket_package(",
+        "def _build_golden_ticket_package(",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing extracted golden-ticket token: {}".format(token)
+    print("[PASS] test_golden_ticket_logic_is_extracted_to_dedicated_module")
