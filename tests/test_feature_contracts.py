@@ -662,3 +662,24 @@ def test_ai_export_bundle_contains_rich_context_and_llm_formats():
     for token in required_tokens:
         assert token in text, "Missing enhanced AI export token: {}".format(token)
     print("[PASS] test_ai_export_bundle_contains_rich_context_and_llm_formats")
+
+
+def test_ai_prep_layer_exports_are_additive_and_non_destructive():
+    text = _source_text()
+    required_tokens = [
+        "AI_PREP_LAYER_ENV_VAR = \"AI_PREP_LAYER\"",
+        "def _ai_prep_layer_enabled(",
+        "def _build_ai_prep_layer(",
+        "def _build_ai_prep_invariant_hints(",
+        "def _build_ai_prep_sequence_candidates(",
+        "def _build_ai_prep_evidence_graph(",
+        "\"ai_prep_layer\": ai_prep_layer,",
+        "if self._ai_prep_layer_enabled():",
+        "ai_prep_invariant_hints.json",
+        "ai_prep_sequence_candidates.json",
+        "ai_prep_evidence_graph.json",
+        "No endpoint filtering or suppression is applied in runtime scanning.",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing AI prep layer token: {}".format(token)
+    print("[PASS] test_ai_prep_layer_exports_are_additive_and_non_destructive")

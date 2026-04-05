@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.4] - 2026-04-05
+
+### Added
+- Non-destructive AI prep export layer for deeper post-collection triage:
+  - `ai_prep_invariant_hints.json`
+  - `ai_prep_sequence_candidates.json`
+  - `ai_prep_evidence_graph.json`
+- New additive AI prep builders in `BurpAPISecuritySuite.py`:
+  - Invariant hints for state consistency, auth boundaries, lifecycle integrity, and financial-integrity checks.
+  - Sequence candidate generation for multi-step abuse paths (create/read, read/modify/read, delete/re-read, race probes, cross-context replay).
+  - Evidence graph linking endpoints, parameters, auth contexts, and attack candidates.
+- Feature flag support via `AI_PREP_LAYER` environment variable for controlled rollout.
+
+### Changed
+- `Export for LLM` now conditionally writes AI prep artifacts when `AI_PREP_LAYER` is enabled, while preserving all existing export files and schemas unchanged.
+- Refactored heavy AI prep builder logic into `ai_prep_layer.py` and kept lightweight wrappers in `BurpAPISecuritySuite.py` to reduce single-module compile pressure in Jython/Burp environments.
+
+### Tests
+- Expanded `tests/test_feature_contracts.py` with additive export-contract checks for:
+  - AI prep feature-flag wiring.
+  - AI prep helper method presence.
+  - AI prep artifact filenames and non-destructive intent messaging.
+
 ## [1.3.3] - 2026-04-05
 
 ### Added

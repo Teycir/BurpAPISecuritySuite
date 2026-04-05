@@ -5,6 +5,7 @@ import re
 import shlex
 import threading
 import time
+import ai_prep_layer
 
 from burp import IBurpExtender, IContextMenuFactory, IHttpListener, IProxyListener, ITab
 from java.awt import BorderLayout, Color, Dimension, FlowLayout, Font, GridLayout
@@ -72,6 +73,8 @@ class BurpExtender(
     PARAM_BODY = 1
     PARAM_COOKIE = 2
     PARAM_JSON = 6
+    AI_PREP_LAYER_ENV_VAR = "AI_PREP_LAYER"
+    AI_PREP_LAYER_DEFAULT_ENABLED = True
 
     # Pre-compiled regex patterns for performance
     NUMERIC_ID_PATTERN = re.compile(r"/\d+")
@@ -5062,6 +5065,24 @@ class BurpExtender(
             ),
             ("ai_ollama_request.json", bundle.get("llm_exports", {}).get("local", {})),
         ]
+        if self._ai_prep_layer_enabled():
+            prep_layer = bundle.get("ai_prep_layer", {}) or {}
+            files_to_write.extend(
+                [
+                    (
+                        "ai_prep_invariant_hints.json",
+                        prep_layer.get("invariant_hints", {}),
+                    ),
+                    (
+                        "ai_prep_sequence_candidates.json",
+                        prep_layer.get("sequence_candidates", {}),
+                    ),
+                    (
+                        "ai_prep_evidence_graph.json",
+                        prep_layer.get("evidence_graph", {}),
+                    ),
+                ]
+            )
 
         written_files = []
         for filename_only, payload in files_to_write:
@@ -5161,6 +5182,11 @@ class BurpExtender(
             "anthropic": self._export_for_llm_platform("anthropic", ai_input),
             "local": self._export_for_llm_platform("local", ai_input),
         }
+        ai_prep_layer = {}
+        if self._ai_prep_layer_enabled():
+            ai_prep_layer = self._build_ai_prep_layer(
+                data_snapshot, attacks_snapshot
+            )
 
         return {
             "metadata": {
@@ -5178,6 +5204,7 @@ class BurpExtender(
             "feedback_template": feedback_template,
             "enhanced_prompt": self._generate_enhanced_ai_prompt(),
             "llm_exports": llm_exports,
+            "ai_prep_layer": ai_prep_layer,
         }
 
     def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
@@ -5344,6 +5371,42 @@ class BurpExtender(
             },
         }
         return self._sanitize_for_ai_payload(all_tabs)
+
+    def _ai_prep_layer_enabled(self):
+        """Toggle additive AI prep artifacts without affecting scanner behavior."""
+        import os
+
+        raw = self._ascii_safe(
+            os.environ.get(self.AI_PREP_LAYER_ENV_VAR, "")
+        ).strip().lower()
+        if not raw:
+            return bool(self.AI_PREP_LAYER_DEFAULT_ENABLED)
+        if raw in ["0", "false", "no", "off", "disable", "disabled"]:
+            return False
+        if raw in ["1", "true", "yes", "on", "enable", "enabled"]:
+            return True
+        return bool(self.AI_PREP_LAYER_DEFAULT_ENABLED)
+
+    def _build_ai_prep_layer(self, data_snapshot, attacks_snapshot):
+        """Build non-destructive AI prep artifacts for post-collection triage."""
+        # No endpoint filtering or suppression is applied in runtime scanning.
+        return ai_prep_layer.build_ai_prep_layer(
+            self, data_snapshot, attacks_snapshot
+        )
+
+    def _build_ai_prep_invariant_hints(self, data_snapshot):
+        """Infer business/workflow invariants auditors often miss in request-level review."""
+        return ai_prep_layer.build_ai_prep_invariant_hints(self, data_snapshot)
+
+    def _build_ai_prep_sequence_candidates(self, data_snapshot):
+        """Generate adversarial multi-step sequences for deep logic abuse testing."""
+        return ai_prep_layer.build_ai_prep_sequence_candidates(self, data_snapshot)
+
+    def _build_ai_prep_evidence_graph(self, data_snapshot, attacks_snapshot):
+        """Build graph links between endpoints, params, auth context, and findings."""
+        return ai_prep_layer.build_ai_prep_evidence_graph(
+            self, data_snapshot, attacks_snapshot
+        )
 
     def _snapshot_list_attr(self, attr_name, limit=200, lock_attr=None):
         """Safely snapshot list-like attribute and sanitize for AI export."""
