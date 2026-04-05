@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.2] - 2026-04-05
+
+### Added
+- New `GraphQL` tab wired into the external workflow with run/export/send-to-Recon actions.
+- OpenAPI Drift spec auto-detection from proxy history:
+  - Automatic best-candidate preselection.
+  - Manual `Detect` action to refresh candidate selection.
+- Subfinder command presets and optional custom command override in the asset discovery tab.
+- Copy-ready output blocks for discovered asset domains and generated asset URLs.
+
+### Changed
+- Inlined tool profile and command builder helpers into `BurpAPISecuritySuite.py` to simplify runtime dependencies.
+- Version Scanner path generation now preserves or replaces existing version segments more safely via `_build_version_test_path`.
+- API asset discovery flow now runs a Subfinder-first workflow with stronger fallback behavior when command output is limited.
+- External tab labels and ordering updated in UI wiring:
+  - `sqlmap`, `Delfox`, `Subfinder`, `OpenAPI Drift`, `GraphQL`.
+
+### Removed
+- Removed legacy standalone `tool_profiles.py` helper module.
+- Removed `tests/test_tool_profiles.py` and consolidated coverage through feature contract tests.
+
+### Tests
+- Updated `tests/test_feature_contracts.py` to assert:
+  - OpenAPI spec auto-detection flow and detect action wiring.
+  - Subfinder copy-ready output and fallback behavior.
+  - GraphQL tab and action wiring.
+  - In-file profile helper wiring after `tool_profiles` module removal.
+- Updated `tests/run_all_tests.py` to stop invoking the removed `test_tool_profiles` suite.
+
 ## [1.3.1] - 2026-04-05
 
 ### Changed
