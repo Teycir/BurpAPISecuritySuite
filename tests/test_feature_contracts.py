@@ -626,3 +626,39 @@ def test_preset_selection_no_longer_forces_custom_enable():
         "Preset dropdown fills Command text only; override stays opt-in." in text
     )
     print("[PASS] test_preset_selection_no_longer_forces_custom_enable")
+
+
+def test_ai_export_bundle_contains_rich_context_and_llm_formats():
+    text = _source_text()
+    required_tokens = [
+        "def _build_ai_export_bundle(",
+        "def _collect_all_tabs_ai_context(",
+        "def _export_vulnerability_context_for_ai(",
+        "def _snapshot_list_attr(",
+        "def _snapshot_text_area(",
+        "def _sanitize_for_ai_payload(",
+        "def _extract_response_patterns(",
+        "def _extract_error_signatures(",
+        "def _format_ai_sample(",
+        "def _sanitize_headers_for_ai(",
+        "def _sanitize_text_for_ai(",
+        "def _export_behavioral_analysis(",
+        "def _analyze_param_dependencies(",
+        "def _create_ai_feedback_loop_export(",
+        "def _export_for_llm_platform(",
+        "def _export_openai_format(",
+        "def _export_anthropic_format(",
+        "def _export_ollama_format(",
+        "def _find_similar_endpoints(",
+        "def _generate_enhanced_ai_prompt(",
+        "ai_vulnerability_context.json",
+        "ai_all_tabs_context.json",
+        "ai_behavioral_analysis.json",
+        "ai_feedback_template.json",
+        "ai_openai_request.json",
+        "ai_anthropic_request.json",
+        "ai_ollama_request.json",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing enhanced AI export token: {}".format(token)
+    print("[PASS] test_ai_export_bundle_contains_rich_context_and_llm_formats")

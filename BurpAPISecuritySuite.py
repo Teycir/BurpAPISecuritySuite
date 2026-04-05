@@ -5022,87 +5022,1463 @@ class BurpExtender(
                     )
 
     def _export_ai_context(self):
-        """Export context for AI-powered payload generation"""
+        """Export rich AI analysis bundle from captured + generated findings."""
         import os
 
-        if not self.api_data or not self.fuzzing_attacks:
-            msg = "[!] Generate fuzzing attacks first"
+        if not self.api_data:
+            msg = "[!] No endpoints captured. Import data or capture traffic first."
             self.fuzzer_area.append("\n" + msg + "\n")
             self.log_to_ui(msg)
             return
 
+        with self.lock:
+            data_snapshot = dict(self.api_data)
+        attacks_snapshot = list(getattr(self, "fuzzing_attacks", []) or [])
+
+        if not attacks_snapshot:
+            self.fuzzer_area.append(
+                "\n[*] No fuzzing attacks found yet; exporting context from captured API traffic only.\n"
+            )
+
         self.fuzzer_area.append("\n" + "=" * 80 + "\n")
-        self.fuzzer_area.append("[*] Exporting AI context...\n")
+        self.fuzzer_area.append("[*] Exporting enhanced AI context bundle...\n")
 
         export_dir = self._get_export_dir("AI_Context")
         if not export_dir:
             return
 
-        ai_context = {
+        bundle = self._build_ai_export_bundle(data_snapshot, attacks_snapshot)
+        files_to_write = [
+            ("ai_context.json", bundle.get("legacy_context", {})),
+            ("ai_bundle.json", bundle),
+            ("ai_vulnerability_context.json", bundle.get("vulnerability_context", {})),
+            ("ai_all_tabs_context.json", bundle.get("all_tabs_context", {})),
+            ("ai_behavioral_analysis.json", bundle.get("behavioral_analysis", {})),
+            ("ai_feedback_template.json", bundle.get("feedback_template", {})),
+            ("ai_openai_request.json", bundle.get("llm_exports", {}).get("openai", {})),
+            (
+                "ai_anthropic_request.json",
+                bundle.get("llm_exports", {}).get("anthropic", {}),
+            ),
+            ("ai_ollama_request.json", bundle.get("llm_exports", {}).get("local", {})),
+        ]
+
+        written_files = []
+        for filename_only, payload in files_to_write:
+            writer = None
+            filepath = os.path.join(export_dir, filename_only)
+            try:
+                writer = FileWriter(filepath)
+                writer.write(json.dumps(payload, indent=2))
+                written_files.append(filepath)
+            except Exception as e:
+                self._callbacks.printError(
+                    "AI export write failed ({}): {}".format(filename_only, str(e))
+                )
+            finally:
+                if writer:
+                    try:
+                        writer.close()
+                    except Exception as e:
+                        self._callbacks.printError(
+                            "AI export close failed ({}): {}".format(filename_only, str(e))
+                        )
+
+        if not written_files:
+            self.fuzzer_area.append("[!] AI export failed: no files were written\n")
+            self.log_to_ui("[!] AI context export failed")
+            return
+
+        self.fuzzer_area.append(
+            "[+] Exported enhanced AI context files: {}\n".format(len(written_files))
+        )
+        self.fuzzer_area.append("[+] Feed these files to ChatGPT/Claude/Ollama\n")
+        self.fuzzer_area.append("[+] Folder: {}\n".format(export_dir))
+        for filepath in written_files:
+            self.fuzzer_area.append("[+] File: {}\n".format(filepath))
+        self.log_to_ui("[+] Exported enhanced AI context to: {}".format(export_dir))
+
+    def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
+        """Build one consolidated structure for AI-focused analysis/export."""
+        vulnerability_context = self._export_vulnerability_context_for_ai(
+            data_snapshot, attacks_snapshot
+        )
+        behavioral_analysis = self._export_behavioral_analysis(data_snapshot)
+        feedback_template = self._create_ai_feedback_loop_export([])
+        all_tabs_context = self._collect_all_tabs_ai_context(
+            data_snapshot, attacks_snapshot
+        )
+
+        legacy_endpoints = []
+        for endpoint_key, attack in attacks_snapshot[:20]:
+            entries = data_snapshot.get(endpoint_key)
+            if not entries:
+                continue
+            entry = self._get_entry(entries)
+            legacy_endpoints.append(
+                {
+                    "endpoint": endpoint_key,
+                    "method": entry.get("method", ""),
+                    "path": entry.get("normalized_path", ""),
+                    "attack_type": self._ascii_safe((attack or {}).get("type") or ""),
+                    "params": entry.get("parameters", {}) or {},
+                    "auth": entry.get("auth_detected", []) or [],
+                    "sample_request": self._format_ai_sample(entry),
+                }
+            )
+        if (not legacy_endpoints) and data_snapshot:
+            for endpoint_key, entries in sorted(data_snapshot.items(), key=lambda item: item[0])[:20]:
+                entry = self._get_entry(entries)
+                legacy_endpoints.append(
+                    {
+                        "endpoint": endpoint_key,
+                        "method": entry.get("method", ""),
+                        "path": entry.get("normalized_path", ""),
+                        "attack_type": "Unknown",
+                        "params": entry.get("parameters", {}) or {},
+                        "auth": entry.get("auth_detected", []) or [],
+                        "sample_request": self._format_ai_sample(entry),
+                    }
+                )
+
+        legacy_context = {
             "task": "Generate custom payloads for API security testing",
-            "endpoints": [],
+            "endpoints": legacy_endpoints,
             "prompt": self._generate_ai_prompt(),
         }
 
-        for endpoint_key, attack in self.fuzzing_attacks[:20]:
-            entry = self._get_entry(self.api_data[endpoint_key])
-            ai_context["endpoints"].append(
+        ai_input = {
+            "scan_metadata": vulnerability_context.get("scan_metadata", {}),
+            "vulnerabilities": vulnerability_context.get("vulnerabilities", []),
+            "api_patterns": vulnerability_context.get("api_patterns", {}),
+            "authentication_flows": vulnerability_context.get("authentication_flows", {}),
+            "business_logic_hints": vulnerability_context.get("business_logic_hints", []),
+            "behavioral_analysis": behavioral_analysis,
+            "all_tabs_context": all_tabs_context,
+        }
+        llm_exports = {
+            "openai": self._export_for_llm_platform("openai", ai_input),
+            "anthropic": self._export_for_llm_platform("anthropic", ai_input),
+            "local": self._export_for_llm_platform("local", ai_input),
+        }
+
+        return {
+            "metadata": {
+                "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "total_endpoints": len(data_snapshot),
+                "total_attacks": len(attacks_snapshot),
+                "vulnerability_count": len(
+                    vulnerability_context.get("vulnerabilities", [])
+                ),
+            },
+            "legacy_context": legacy_context,
+            "vulnerability_context": vulnerability_context,
+            "all_tabs_context": all_tabs_context,
+            "behavioral_analysis": behavioral_analysis,
+            "feedback_template": feedback_template,
+            "enhanced_prompt": self._generate_enhanced_ai_prompt(),
+            "llm_exports": llm_exports,
+        }
+
+    def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
+        """Aggregate AI-ready context from all tabs (not only fuzzer)."""
+        attack_samples = []
+        for endpoint_key, attack in (attacks_snapshot or [])[:200]:
+            attack_obj = attack if isinstance(attack, dict) else {}
+            attack_samples.append(
                 {
-                    "endpoint": endpoint_key,
-                    "method": entry["method"],
-                    "path": entry["normalized_path"],
-                    "attack_type": attack["type"],
-                    "params": entry.get("parameters", {}),
-                    "auth": entry.get("auth_detected", []),
-                    "sample_request": self._format_sample(entry),
+                    "endpoint": self._ascii_safe(endpoint_key),
+                    "type": self._ascii_safe(attack_obj.get("type") or "Unknown"),
+                    "severity": self._calculate_attack_severity(attack_obj),
+                    "confidence": self._ascii_safe(attack_obj.get("confidence") or "Medium"),
+                    "risk": self._ascii_safe(attack_obj.get("risk") or ""),
+                    "note": self._ascii_safe(attack_obj.get("note") or ""),
+                    "params": self._sanitize_for_ai_payload(attack_obj.get("params") or []),
                 }
             )
 
-        filename = os.path.join(export_dir, "ai_context.json")
+        all_tabs = {
+            "summary": {
+                "captured_endpoints": len(data_snapshot or {}),
+                "fuzzing_attacks": len(attacks_snapshot or []),
+            },
+            "recon": {
+                "endpoint_count": len(data_snapshot or {}),
+                "endpoint_samples": self._sanitize_for_ai_payload(
+                    sorted(list((data_snapshot or {}).keys()))[:250]
+                ),
+            },
+            "version_scanner": {
+                "configured_versions": self._sanitize_for_ai_payload(
+                    self._parse_comma_newline_values(
+                        self.version_input.getText()
+                        if hasattr(self, "version_input") and self.version_input is not None
+                        else ""
+                    )
+                ),
+                "result_count": len(getattr(self, "version_results", []) or []),
+                "result_samples": self._snapshot_list_attr(
+                    "version_results", limit=250
+                ),
+                "output_tail": self._snapshot_text_area("version_area"),
+            },
+            "param_miner": {
+                "configured_params": self._sanitize_for_ai_payload(
+                    self._parse_comma_newline_values(
+                        self.param_input.getText()
+                        if hasattr(self, "param_input") and self.param_input is not None
+                        else ""
+                    )
+                ),
+                "result_count": len(getattr(self, "param_results", []) or []),
+                "result_samples": self._snapshot_list_attr(
+                    "param_results", limit=250
+                ),
+                "output_tail": self._snapshot_text_area("param_area"),
+            },
+            "fuzzer": {
+                "attack_count": len(attacks_snapshot or []),
+                "attack_samples": self._sanitize_for_ai_payload(attack_samples),
+                "output_tail": self._snapshot_text_area("fuzzer_area"),
+            },
+            "auth_replay": {
+                "finding_count": len(getattr(self, "auth_replay_findings", []) or []),
+                "findings": self._snapshot_list_attr(
+                    "auth_replay_findings",
+                    limit=250,
+                    lock_attr="auth_replay_lock",
+                ),
+                "output_tail": self._snapshot_text_area("auth_replay_area"),
+            },
+            "passive_discovery": {
+                "finding_count": len(getattr(self, "passive_discovery_findings", []) or []),
+                "findings": self._snapshot_list_attr(
+                    "passive_discovery_findings",
+                    limit=300,
+                    lock_attr="passive_discovery_lock",
+                ),
+                "output_tail": self._snapshot_text_area("passive_area"),
+            },
+            "nuclei": {
+                "output_tail": self._snapshot_text_area("nuclei_area"),
+            },
+            "httpx": {
+                "output_tail": self._snapshot_text_area("httpx_area"),
+            },
+            "katana": {
+                "discovered_count": len(getattr(self, "katana_discovered", []) or []),
+                "discovered_samples": self._snapshot_list_attr(
+                    "katana_discovered", limit=300, lock_attr="katana_lock"
+                ),
+                "output_tail": self._snapshot_text_area("katana_area"),
+            },
+            "ffuf": {
+                "result_count": len(getattr(self, "ffuf_results", []) or []),
+                "result_samples": self._snapshot_list_attr(
+                    "ffuf_results", limit=300, lock_attr="ffuf_lock"
+                ),
+                "output_tail": self._snapshot_text_area("ffuf_area"),
+            },
+            "wayback": {
+                "snapshot_count": len(getattr(self, "wayback_discovered", []) or []),
+                "snapshot_samples": self._snapshot_list_attr(
+                    "wayback_discovered", limit=300, lock_attr="wayback_lock"
+                ),
+                "output_tail": self._snapshot_text_area("wayback_area"),
+            },
+            "sqlmap_verify": {
+                "finding_count": len(getattr(self, "sqlmap_findings", []) or []),
+                "findings": self._snapshot_list_attr(
+                    "sqlmap_findings", limit=300, lock_attr="sqlmap_lock"
+                ),
+                "verified_candidates": self._snapshot_list_attr(
+                    "sqlmap_verified_candidates", limit=200, lock_attr="sqlmap_lock"
+                ),
+                "output_tail": self._snapshot_text_area("sqlmap_area"),
+            },
+            "dalfox_verify": {
+                "finding_count": len(getattr(self, "dalfox_findings", []) or []),
+                "findings": self._snapshot_list_attr(
+                    "dalfox_findings", limit=300, lock_attr="dalfox_lock"
+                ),
+                "verified_candidates": self._snapshot_list_attr(
+                    "dalfox_verified_candidates", limit=200, lock_attr="dalfox_lock"
+                ),
+                "output_tail": self._snapshot_text_area("dalfox_area"),
+            },
+            "asset_discovery": {
+                "discovered_count": len(getattr(self, "asset_discovered", []) or []),
+                "discovered_samples": self._snapshot_list_attr(
+                    "asset_discovered", limit=300, lock_attr="asset_lock"
+                ),
+                "selected_domains": self._sanitize_for_ai_payload(
+                    list(getattr(self, "asset_selected_domains", []) or [])
+                ),
+                "output_tail": self._snapshot_text_area("asset_area"),
+            },
+            "openapi_drift": {
+                "result_line_count": len(getattr(self, "openapi_drift_results", []) or []),
+                "result_lines": self._snapshot_list_attr(
+                    "openapi_drift_results", limit=300, lock_attr="openapi_lock"
+                ),
+                "missing_candidates": self._snapshot_list_attr(
+                    "openapi_missing_candidates", limit=200, lock_attr="openapi_lock"
+                ),
+                "selected_spec_targets": self._snapshot_list_attr(
+                    "openapi_selected_spec_targets", limit=50
+                ),
+                "output_tail": self._snapshot_text_area("openapi_area"),
+            },
+            "graphql": {
+                "result_line_count": len(getattr(self, "graphql_results", []) or []),
+                "result_lines": self._snapshot_list_attr(
+                    "graphql_results", limit=300, lock_attr="graphql_lock"
+                ),
+                "recon_candidates": self._snapshot_list_attr(
+                    "graphql_recon_candidates", limit=200, lock_attr="graphql_lock"
+                ),
+                "selected_targets": self._snapshot_list_attr(
+                    "graphql_selected_targets", limit=80, lock_attr="graphql_lock"
+                ),
+                "output_tail": self._snapshot_text_area("graphql_area"),
+            },
+        }
+        return self._sanitize_for_ai_payload(all_tabs)
+
+    def _snapshot_list_attr(self, attr_name, limit=200, lock_attr=None):
+        """Safely snapshot list-like attribute and sanitize for AI export."""
+        values = []
+        lock_obj = getattr(self, lock_attr, None) if lock_attr else None
         try:
-            writer = FileWriter(filename)
-            writer.write(json.dumps(ai_context, indent=2))
-            writer.close()
-            self.fuzzer_area.append("[+] Exported AI context\n")
-            self.fuzzer_area.append(
-                "[+] Feed this JSON to ChatGPT/Claude for custom payloads\n"
-            )
-            self.fuzzer_area.append("[+] Folder: {}\n".format(export_dir))
-            self.fuzzer_area.append("[+] File: {}\n".format(filename))
-            self.log_to_ui("[+] Exported AI context to: {}".format(export_dir))
+            if lock_obj is not None:
+                lock_obj.acquire()
+            raw = getattr(self, attr_name, []) or []
+            if isinstance(raw, list):
+                values = list(raw[:limit])
+            else:
+                values = list(raw)[:limit]
         except Exception as e:
-            self.fuzzer_area.append("[!] Export failed: {}\n".format(str(e)))
-            self.log_to_ui("[!] AI context export failed: {}".format(str(e)))
+            self._callbacks.printError(
+                "AI snapshot list error ({}): {}".format(attr_name, self._ascii_safe(e))
+            )
+            values = []
+        finally:
+            if lock_obj is not None:
+                try:
+                    lock_obj.release()
+                except Exception as release_err:
+                    self._callbacks.printError(
+                        "AI snapshot list unlock error ({}): {}".format(
+                            attr_name, self._ascii_safe(release_err)
+                        )
+                    )
+        return self._sanitize_for_ai_payload(values)
+
+    def _snapshot_text_area(self, area_attr, max_chars=12000):
+        """Snapshot bounded tail of tab output text for AI context."""
+        area = getattr(self, area_attr, None)
+        if area is None:
+            return ""
+        try:
+            text = self._ascii_safe(area.getText() or "")
+        except Exception as e:
+            self._callbacks.printError(
+                "AI snapshot text error ({}): {}".format(area_attr, self._ascii_safe(e))
+            )
+            return ""
+        if len(text) > max_chars:
+            text = text[-max_chars:]
+        return self._sanitize_text_for_ai(text)
+
+    def _sanitize_for_ai_payload(self, value, depth=0):
+        """Recursively sanitize payload fields before sharing with external AI."""
+        if depth > 8:
+            return "<truncated>"
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, dict):
+            sanitized = {}
+            count = 0
+            for key, val in value.items():
+                if count >= 400:
+                    break
+                count += 1
+                safe_key = self._ascii_safe(key)
+                key_lower = self._ascii_safe(key, lower=True)
+                if any(
+                    marker in key_lower
+                    for marker in [
+                        "authorization",
+                        "cookie",
+                        "token",
+                        "secret",
+                        "password",
+                        "api_key",
+                        "apikey",
+                        "set-cookie",
+                    ]
+                ):
+                    sanitized[safe_key] = "<redacted>"
+                else:
+                    sanitized[safe_key] = self._sanitize_for_ai_payload(val, depth + 1)
+            return sanitized
+        if isinstance(value, (list, tuple, set)):
+            out = []
+            idx = 0
+            for item in value:
+                if idx >= 500:
+                    break
+                idx += 1
+                out.append(self._sanitize_for_ai_payload(item, depth + 1))
+            return out
+        return self._sanitize_text_for_ai(self._ascii_safe(value))
+
+    def _export_vulnerability_context_for_ai(
+        self, data_snapshot, attacks_snapshot, max_items=120
+    ):
+        """Export detailed vulnerability context optimized for AI analysis."""
+        context = {
+            "scan_metadata": {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "total_endpoints": len(data_snapshot),
+                "total_attacks": len(attacks_snapshot),
+                "vulnerability_summary": self._get_vuln_summary(attacks_snapshot),
+            },
+            "vulnerabilities": [],
+            "api_patterns": self._extract_api_patterns(data_snapshot),
+            "authentication_flows": self._extract_auth_flows(data_snapshot),
+            "business_logic_hints": self._extract_business_logic(data_snapshot),
+        }
+
+        for endpoint_key, attack in attacks_snapshot[:max_items]:
+            entries = data_snapshot.get(endpoint_key)
+            if not entries:
+                continue
+            entries_list = entries if isinstance(entries, list) else [entries]
+            entry = self._get_entry(entries_list)
+            attack_obj = attack if isinstance(attack, dict) else {}
+            reflected = (
+                entry.get("param_patterns", {}).get("reflected", [])
+                if isinstance(entry.get("param_patterns", {}), dict)
+                else []
+            )
+            vuln_context = {
+                "endpoint": endpoint_key,
+                "vulnerability_type": self._ascii_safe(
+                    attack_obj.get("type") or "Unknown"
+                ),
+                "severity": self._calculate_attack_severity(attack_obj),
+                "confidence": self._ascii_safe(
+                    attack_obj.get("confidence") or "Medium"
+                ),
+                "request_sample": self._format_ai_sample(entry),
+                "response_patterns": self._extract_response_patterns(entries_list),
+                "error_messages": self._extract_errors(entries_list),
+                "parameter_analysis": {
+                    "names": self._extract_param_names(entry),
+                    "types_detected": self._infer_param_types(entry),
+                    "validation_hints": self._detect_validation(entry),
+                },
+                "attack_surface": {
+                    "injection_points": self._identify_injection_points(entry),
+                    "reflection_points": reflected[:20],
+                    "encoding_context": self._detect_encoding_context(entry),
+                },
+                "similar_endpoints": self._find_similar_endpoints(
+                    endpoint_key, data_snapshot, limit=5
+                ),
+                "exploitation_hints": {
+                    "waf_detected": self._detect_waf(entry),
+                    "rate_limiting": self._detect_rate_limit(entries_list),
+                    "authentication_bypass_vectors": self._suggest_auth_bypass(
+                        entry, attack_obj
+                    ),
+                },
+            }
+            context["vulnerabilities"].append(vuln_context)
+
+        return context
+
+    def _format_ai_sample(self, entry):
+        """Build request/response sample with secret redaction for AI sharing."""
+        base = self._format_sample(entry)
+        redacted = dict(base)
+        redacted["headers"] = self._sanitize_headers_for_ai(base.get("headers", {}))
+        redacted["query"] = self._sanitize_text_for_ai(base.get("query", ""))
+        redacted["request_body"] = self._sanitize_text_for_ai(
+            base.get("request_body", "")
+        )
+        redacted["response_body"] = self._sanitize_text_for_ai(
+            base.get("response_body", "")
+        )
+        return redacted
+
+    def _sanitize_headers_for_ai(self, headers):
+        if not isinstance(headers, dict):
+            return {}
+        sensitive = set(
+            [
+                "authorization",
+                "cookie",
+                "set-cookie",
+                "x-api-key",
+                "api-key",
+                "x-access-token",
+                "x-auth-token",
+                "proxy-authorization",
+            ]
+        )
+        sanitized = {}
+        for key, value in headers.items():
+            key_text = self._ascii_safe(key)
+            lower_key = self._ascii_safe(key, lower=True)
+            value_text = self._ascii_safe(value)
+            if lower_key in sensitive or any(
+                marker in lower_key for marker in ["token", "secret", "apikey", "api-key"]
+            ):
+                sanitized[key_text] = "<redacted>"
+            else:
+                sanitized[key_text] = self._sanitize_text_for_ai(value_text)[:300]
+        return sanitized
+
+    def _sanitize_text_for_ai(self, text):
+        safe = self._ascii_safe(text or "")
+        if not safe:
+            return ""
+        redacted = safe
+        redacted = re.sub(
+            r"(?i)(authorization\s*:\s*bearer\s+)[A-Za-z0-9\-\._~\+/=]+",
+            r"\1<redacted>",
+            redacted,
+        )
+        redacted = re.sub(
+            r"(?i)(\b(?:access_token|refresh_token|id_token|api_key|apikey|secret|password)\b\s*[:=]\s*[\"']?)[^\"'&\s]+",
+            r"\1<redacted>",
+            redacted,
+        )
+        redacted = re.sub(
+            r"\b[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\b",
+            "<redacted_jwt>",
+            redacted,
+        )
+        return redacted
+
+    def _extract_response_patterns(self, entries):
+        """Extract response patterns that help AI detect success/failure signals."""
+        entries_list = entries if isinstance(entries, list) else [entries]
+        statuses = []
+        lengths = []
+        timings = []
+        aggregated_signatures = {
+            "sql_errors": set(),
+            "stack_traces": set(),
+            "debug_info": set(),
+            "framework_errors": set(),
+        }
+        response_headers = []
+        for sample in entries_list[:12]:
+            if not isinstance(sample, dict):
+                continue
+            status_code = sample.get("response_status", 0)
+            if isinstance(status_code, int):
+                statuses.append(status_code)
+            length_value = sample.get("response_length", 0)
+            if isinstance(length_value, int):
+                lengths.append(length_value)
+            timing_value = sample.get("response_time_ms", 0)
+            if isinstance(timing_value, int):
+                timings.append(timing_value)
+            if isinstance(sample.get("response_headers"), dict):
+                response_headers.append(sample.get("response_headers"))
+            body_text = sample.get("response_body", "")
+            signatures = self._extract_error_signatures(body_text)
+            for category, values in signatures.items():
+                for value in values[:8]:
+                    aggregated_signatures[category].add(self._ascii_safe(value))
+
+        error_signatures = {
+            key: list(values)[:12] for key, values in aggregated_signatures.items()
+        }
+        return {
+            "status_codes": sorted(list(set(statuses))),
+            "content_length_variance": self._calc_length_variance(lengths),
+            "timing_patterns_ms": timings[:20],
+            "error_signatures": error_signatures,
+            "success_indicators": {
+                "json_structure": self._analyze_json_structure(entries_list),
+                "html_elements": self._extract_html_elements(entries_list),
+                "headers": self._extract_interesting_headers(response_headers),
+            },
+            "anomalies": self._detect_response_anomalies(
+                statuses, lengths, timings, error_signatures
+            ),
+        }
+
+    def _calc_length_variance(self, lengths):
+        values = [x for x in (lengths or []) if isinstance(x, int)]
+        if not values:
+            return {"min": 0, "max": 0, "delta": 0}
+        min_v = min(values)
+        max_v = max(values)
+        return {"min": min_v, "max": max_v, "delta": max_v - min_v}
+
+    def _extract_error_signatures(self, response_body):
+        """Extract error signatures that often indicate exploitable behavior."""
+        body = self._ascii_safe(response_body or "")
+        signatures = {
+            "sql_errors": [],
+            "stack_traces": [],
+            "debug_info": [],
+            "framework_errors": [],
+        }
+        if not body:
+            return signatures
+
+        sql_patterns = [
+            r"SQL syntax.*?error",
+            r"mysql_fetch",
+            r"ORA-\d+",
+            r"PostgreSQL.*?ERROR",
+            r"SQLite.*?error",
+            r"Unclosed quotation mark after the character string",
+        ]
+        for pattern in sql_patterns:
+            matches = re.findall(pattern, body, re.I)
+            for match in matches[:5]:
+                signatures["sql_errors"].append(self._ascii_safe(match))
+
+        if (" at " in body and ("Exception" in body or "Error" in body)) or (
+            "Traceback (most recent call last)" in body
+        ):
+            signatures["stack_traces"].append(body[:500])
+
+        debug_patterns = [r"\bdebug\b", r"\bverbose\b", r"\btrace\b", r"\bstack\b"]
+        for pattern in debug_patterns:
+            if re.search(pattern, body, re.I):
+                signatures["debug_info"].append(pattern.strip("\\b"))
+
+        framework_patterns = [
+            r"Laravel",
+            r"Symfony",
+            r"Spring Boot",
+            r"Django",
+            r"Express",
+            r"Rails",
+            r"ASP\.NET",
+        ]
+        for pattern in framework_patterns:
+            if re.search(pattern, body, re.I):
+                signatures["framework_errors"].append(self._ascii_safe(pattern))
+
+        for key in signatures.keys():
+            signatures[key] = list(dict.fromkeys(signatures[key]))[:10]
+        return signatures
+
+    def _analyze_json_structure(self, entries):
+        paths = set()
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for sample in entries_list[:8]:
+            if not isinstance(sample, dict):
+                continue
+            parsed = self._parse_json_loose(sample.get("response_body", ""))
+            if parsed is None:
+                continue
+            self._flatten_json_paths(parsed, "", paths, 0)
+        return sorted(list(paths))[:60]
+
+    def _extract_html_elements(self, entries):
+        tags = set()
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for sample in entries_list[:5]:
+            if not isinstance(sample, dict):
+                continue
+            body = self._ascii_safe(sample.get("response_body", ""))
+            if not body:
+                continue
+            for tag in re.findall(r"<([a-zA-Z0-9]{1,24})", body):
+                tags.add(self._ascii_safe(tag, lower=True))
+                if len(tags) >= 30:
+                    break
+            if len(tags) >= 30:
+                break
+        return sorted(list(tags))
+
+    def _extract_interesting_headers(self, header_list):
+        interesting = {}
+        keys_of_interest = [
+            "content-type",
+            "x-powered-by",
+            "server",
+            "set-cookie",
+            "cache-control",
+            "x-ratelimit-limit",
+            "x-ratelimit-remaining",
+            "retry-after",
+            "x-frame-options",
+            "content-security-policy",
+            "x-content-type-options",
+        ]
+        for headers in header_list[:8]:
+            if not isinstance(headers, dict):
+                continue
+            for key, value in headers.items():
+                key_lower = self._ascii_safe(key, lower=True)
+                if key_lower in keys_of_interest:
+                    interesting[key_lower] = self._ascii_safe(value)[:200]
+        return interesting
+
+    def _detect_response_anomalies(
+        self, statuses, lengths, timings, error_signatures
+    ):
+        anomalies = []
+        unique_statuses = list(set(statuses))
+        if len(unique_statuses) >= 3:
+            anomalies.append("high_status_variation")
+        if any(s >= 500 for s in unique_statuses):
+            anomalies.append("server_error_present")
+        length_delta = self._calc_length_variance(lengths).get("delta", 0)
+        if length_delta > 2500:
+            anomalies.append("large_response_length_delta")
+        if timings and (max(timings) - min(timings)) > 1500:
+            anomalies.append("high_response_time_variance")
+        if any(error_signatures.get(k) for k in ["sql_errors", "stack_traces"]):
+            anomalies.append("error_signature_detected")
+        return anomalies
+
+    def _extract_errors(self, entries):
+        entries_list = entries if isinstance(entries, list) else [entries]
+        collected = []
+        for sample in entries_list[:8]:
+            if not isinstance(sample, dict):
+                continue
+            signatures = self._extract_error_signatures(sample.get("response_body", ""))
+            for category, values in signatures.items():
+                for value in values[:4]:
+                    collected.append(
+                        {
+                            "category": category,
+                            "message": self._ascii_safe(value)[:300],
+                            "status_code": sample.get("response_status", 0),
+                        }
+                    )
+                    if len(collected) >= 30:
+                        return collected
+        return collected
+
+    def _extract_param_names(self, entry):
+        names = set()
+        params = entry.get("parameters", {}) or {}
+        if not isinstance(params, dict):
+            return []
+        for _, values in params.items():
+            if isinstance(values, dict):
+                for key in values.keys():
+                    names.add(self._ascii_safe(key))
+            elif isinstance(values, list):
+                for item in values:
+                    names.add(self._ascii_safe(item))
+        return sorted([name for name in names if name])[:120]
+
+    def _infer_param_types(self, entry):
+        inferred = {}
+        param_patterns = entry.get("param_patterns", {}) or {}
+        type_hints = param_patterns.get("param_types", {}) if isinstance(param_patterns, dict) else {}
+        if isinstance(type_hints, dict):
+            for key, value in type_hints.items():
+                inferred[self._ascii_safe(key)] = self._ascii_safe(value)
+
+        params = entry.get("parameters", {}) or {}
+        if isinstance(params, dict):
+            for _, values in params.items():
+                if isinstance(values, dict):
+                    for key, value in values.items():
+                        key_str = self._ascii_safe(key)
+                        if key_str in inferred:
+                            continue
+                        raw_value = self._ascii_safe(value)
+                        lower_value = self._ascii_safe(value, lower=True)
+                        if lower_value in ["true", "false"]:
+                            inferred[key_str] = "boolean"
+                        elif re.match(r"^-?\d+$", raw_value):
+                            inferred[key_str] = "integer"
+                        elif re.match(r"^-?\d+\.\d+$", raw_value):
+                            inferred[key_str] = "float"
+                        elif re.match(
+                            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            lower_value,
+                        ):
+                            inferred[key_str] = "uuid"
+                        elif "@" in raw_value:
+                            inferred[key_str] = "email"
+                        elif raw_value.startswith("{") or raw_value.startswith("["):
+                            inferred[key_str] = "json"
+                        else:
+                            inferred[key_str] = "string"
+                elif isinstance(values, list):
+                    for item in values:
+                        key_str = self._ascii_safe(item)
+                        if key_str and key_str not in inferred:
+                            inferred[key_str] = "unknown"
+        return inferred
+
+    def _detect_validation(self, entry):
+        body = self._ascii_safe(entry.get("response_body", ""), lower=True)
+        status_code = int(entry.get("response_status", 0) or 0)
+        keywords = []
+        for keyword in [
+            "invalid",
+            "required",
+            "must be",
+            "too long",
+            "too short",
+            "format",
+            "constraint",
+            "validation",
+        ]:
+            if keyword in body:
+                keywords.append(keyword)
+        return {
+            "detected": bool(keywords or status_code in [400, 422]),
+            "status_code": status_code,
+            "keywords": keywords[:10],
+        }
+
+    def _identify_injection_points(self, entry):
+        points = set(self._extract_param_names(entry))
+        request_body = self._ascii_safe(entry.get("request_body", ""))
+        parsed_body = self._parse_json_loose(request_body)
+        if parsed_body is not None:
+            json_paths = set()
+            self._flatten_json_paths(parsed_body, "", json_paths, 0)
+            points.update([self._ascii_safe(path) for path in json_paths])
+        return sorted([x for x in points if x and x != "<root>"])[:80]
+
+    def _detect_encoding_context(self, entry):
+        content_type = self._ascii_safe(entry.get("content_type", ""), lower=True)
+        enc = entry.get("encryption_indicators", {}) or {}
+        request_body = self._ascii_safe(entry.get("request_body", ""))
+        hints = []
+        if re.search(r"[A-Za-z0-9+/]{32,}={0,2}", request_body):
+            hints.append("base64-like")
+        if re.search(r"[0-9a-fA-F]{32,}", request_body):
+            hints.append("hex-like")
+        return {
+            "content_type": content_type,
+            "encryption_detected": bool(enc.get("likely_encrypted")),
+            "encryption_types": list(enc.get("types", []) or []),
+            "body_encoding_hints": hints,
+        }
+
+    def _find_similar_endpoints(self, endpoint_key, data_snapshot, limit=5):
+        target_entries = data_snapshot.get(endpoint_key)
+        if not target_entries:
+            return []
+        target_entry = self._get_entry(target_entries)
+
+        similarities = []
+        for key, entries in data_snapshot.items():
+            if key == endpoint_key:
+                continue
+            entry = self._get_entry(entries)
+            similarity_score = self._calculate_endpoint_similarity(target_entry, entry)
+            if similarity_score > 0.35:
+                similarities.append(
+                    {
+                        "endpoint": key,
+                        "similarity": similarity_score,
+                        "shared_params": self._get_shared_params(target_entry, entry),
+                        "behavioral_similarity": self._compare_behaviors(
+                            target_entry, entry
+                        ),
+                    }
+                )
+        similarities = sorted(similarities, key=lambda x: x["similarity"], reverse=True)
+        return similarities[:limit]
+
+    def _calculate_endpoint_similarity(self, target_entry, other_entry):
+        target_path = self._ascii_safe(
+            target_entry.get("normalized_path") or target_entry.get("path") or "/",
+            lower=True,
+        )
+        other_path = self._ascii_safe(
+            other_entry.get("normalized_path") or other_entry.get("path") or "/",
+            lower=True,
+        )
+        target_segs = set(self._split_path_segments(target_path))
+        other_segs = set(self._split_path_segments(other_path))
+        path_union = target_segs.union(other_segs)
+        path_score = 0.0
+        if path_union:
+            path_score = float(len(target_segs.intersection(other_segs))) / float(
+                len(path_union)
+            )
+
+        method_score = 0.25 if (
+            self._ascii_safe(target_entry.get("method"), lower=True)
+            == self._ascii_safe(other_entry.get("method"), lower=True)
+        ) else 0.0
+
+        target_params = set(self._extract_param_names(target_entry))
+        other_params = set(self._extract_param_names(other_entry))
+        param_union = target_params.union(other_params)
+        param_score = 0.0
+        if param_union:
+            param_score = float(
+                len(target_params.intersection(other_params))
+            ) / float(len(param_union))
+
+        score = (0.5 * path_score) + method_score + (0.25 * param_score)
+        return round(min(1.0, max(0.0, score)), 3)
+
+    def _get_shared_params(self, target_entry, other_entry):
+        target_params = set(self._extract_param_names(target_entry))
+        other_params = set(self._extract_param_names(other_entry))
+        return sorted(list(target_params.intersection(other_params)))[:30]
+
+    def _compare_behaviors(self, target_entry, other_entry):
+        target_status = int(target_entry.get("response_status", 0) or 0)
+        other_status = int(other_entry.get("response_status", 0) or 0)
+        target_auth = set(
+            [self._ascii_safe(x, lower=True) for x in (target_entry.get("auth_detected", []) or [])]
+        )
+        other_auth = set(
+            [self._ascii_safe(x, lower=True) for x in (other_entry.get("auth_detected", []) or [])]
+        )
+        return {
+            "status_proximity": abs(target_status - other_status),
+            "auth_overlap": bool(target_auth.intersection(other_auth)),
+            "content_type_match": self._ascii_safe(
+                target_entry.get("content_type", ""), lower=True
+            )
+            == self._ascii_safe(other_entry.get("content_type", ""), lower=True),
+        }
+
+    def _detect_waf(self, entry):
+        headers = entry.get("response_headers", {}) or {}
+        body = self._ascii_safe(entry.get("response_body", ""), lower=True)
+        signals = []
+        waf_header_markers = [
+            "cf-ray",
+            "x-sucuri-id",
+            "x-akamai",
+            "x-imperva-id",
+            "x-cdn",
+        ]
+        for header_key, header_value in headers.items():
+            key_lower = self._ascii_safe(header_key, lower=True)
+            value_lower = self._ascii_safe(header_value, lower=True)
+            if any(marker in key_lower for marker in waf_header_markers):
+                signals.append("header:" + key_lower)
+            if key_lower == "server" and any(
+                vendor in value_lower
+                for vendor in ["cloudflare", "akamai", "sucuri", "imperva", "incapsula"]
+            ):
+                signals.append("server:" + value_lower[:40])
+
+        if any(
+            marker in body
+            for marker in [
+                "request blocked",
+                "access denied",
+                "waf",
+                "security rule",
+                "forbidden by policy",
+            ]
+        ):
+            signals.append("body:block_page")
+
+        return {"detected": bool(signals), "signals": list(dict.fromkeys(signals))[:8]}
+
+    def _detect_rate_limit(self, entries):
+        entries_list = entries if isinstance(entries, list) else [entries]
+        rate_headers = {}
+        status_429_count = 0
+        for sample in entries_list[:20]:
+            if not isinstance(sample, dict):
+                continue
+            status_code = int(sample.get("response_status", 0) or 0)
+            if status_code == 429:
+                status_429_count += 1
+            headers = sample.get("response_headers", {}) or {}
+            for key, value in headers.items():
+                key_lower = self._ascii_safe(key, lower=True)
+                if key_lower in [
+                    "x-ratelimit-limit",
+                    "x-ratelimit-remaining",
+                    "x-ratelimit-reset",
+                    "retry-after",
+                ]:
+                    rate_headers[key_lower] = self._ascii_safe(value)[:80]
+        rpm = None
+        limit_val = self._ascii_safe(rate_headers.get("x-ratelimit-limit", ""))
+        if re.match(r"^\d+$", limit_val):
+            rpm = int(limit_val)
+        return {
+            "detected": bool(status_429_count > 0 or rate_headers),
+            "status_429_count": status_429_count,
+            "header_hints": rate_headers,
+            "requests_per_minute": rpm,
+        }
+
+    def _suggest_auth_bypass(self, entry, attack):
+        auth_types = [self._ascii_safe(x, lower=True) for x in (entry.get("auth_detected", []) or [])]
+        attack_type = self._ascii_safe((attack or {}).get("type") or "", lower=True)
+        vectors = []
+
+        if "bearer token" in auth_types:
+            vectors.extend(
+                [
+                    "remove authorization header",
+                    "use expired or malformed bearer token",
+                    "swap token subject with another user identifier",
+                ]
+            )
+        if "session cookie" in auth_types:
+            vectors.extend(
+                [
+                    "strip session cookie",
+                    "replay stale session cookie",
+                    "tamper session identifier format",
+                ]
+            )
+        if "none" in auth_types or not auth_types:
+            vectors.append("attempt forced browsing without auth")
+        if attack_type in ["bola", "auth bypass", "idor"]:
+            vectors.extend(
+                [
+                    "parameter object-id swapping",
+                    "cross-account identifier replay",
+                ]
+            )
+
+        dedup = []
+        seen = set()
+        for vector in vectors:
+            key = self._ascii_safe(vector, lower=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            dedup.append(vector)
+        return dedup[:12]
+
+    def _export_behavioral_analysis(self, data_snapshot):
+        """Export endpoint behavior patterns for AI logic-flaw analysis."""
+        return {
+            "state_transitions": self._analyze_state_transitions(data_snapshot),
+            "parameter_dependencies": self._analyze_param_dependencies(data_snapshot),
+            "rate_limit_patterns": self._analyze_rate_limits(data_snapshot),
+            "session_management": self._analyze_sessions(data_snapshot),
+            "authorization_matrix": self._build_authz_matrix(data_snapshot),
+        }
+
+    def _analyze_state_transitions(self, data_snapshot):
+        transitions = {}
+        for endpoint_key, entries in data_snapshot.items():
+            entry = self._get_entry(entries)
+            method = self._ascii_safe(entry.get("method")).upper()
+            path = self._ascii_safe(
+                entry.get("normalized_path") or entry.get("path") or "/",
+                lower=True,
+            )
+            segments = self._split_path_segments(path)
+            resource = segments[0] if segments else "root"
+            if resource not in transitions:
+                transitions[resource] = {
+                    "methods": set(),
+                    "endpoints": [],
+                    "write_methods": 0,
+                }
+            transitions[resource]["methods"].add(method)
+            transitions[resource]["endpoints"].append(endpoint_key)
+            if method in ["POST", "PUT", "PATCH", "DELETE"]:
+                transitions[resource]["write_methods"] += 1
+
+        result = []
+        for resource, info in transitions.items():
+            result.append(
+                {
+                    "resource": resource,
+                    "methods": sorted(list(info["methods"])),
+                    "endpoint_count": len(info["endpoints"]),
+                    "write_method_count": info["write_methods"],
+                    "sample_endpoints": info["endpoints"][:8],
+                }
+            )
+        return sorted(result, key=lambda x: x["endpoint_count"], reverse=True)[:120]
+
+    def _analyze_param_dependencies(self, data_snapshot):
+        dependencies = {}
+        for endpoint_key, entries in data_snapshot.items():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            dependencies[endpoint_key] = {
+                "required_params": self._identify_required_params(entries_list),
+                "optional_params": self._identify_optional_params(entries_list),
+                "hidden_params": self._identify_hidden_params(entries_list),
+                "param_interactions": self._detect_param_interactions(entries_list),
+            }
+        return dependencies
+
+    def _identify_required_params(self, entries):
+        entries_list = [e for e in (entries or []) if isinstance(e, dict)]
+        if not entries_list:
+            return []
+        param_sets = []
+        for sample in entries_list:
+            param_sets.append(set(self._extract_param_names(sample)))
+        required = set(param_sets[0]) if param_sets else set()
+        for param_set in param_sets[1:]:
+            required = required.intersection(param_set)
+        return sorted(list(required))[:80]
+
+    def _identify_optional_params(self, entries):
+        entries_list = [e for e in (entries or []) if isinstance(e, dict)]
+        if not entries_list:
+            return []
+        param_sets = []
+        for sample in entries_list:
+            param_sets.append(set(self._extract_param_names(sample)))
+        union_set = set()
+        for param_set in param_sets:
+            union_set.update(param_set)
+        required = set(self._identify_required_params(entries_list))
+        optional = union_set.difference(required)
+        return sorted(list(optional))[:80]
+
+    def _identify_hidden_params(self, entries):
+        hidden_keywords = ["admin", "debug", "internal", "test", "dev", "secret", "role", "is_admin"]
+        names = set()
+        entries_list = [e for e in (entries or []) if isinstance(e, dict)]
+        for sample in entries_list:
+            for name in self._extract_param_names(sample):
+                lower = self._ascii_safe(name, lower=True)
+                if any(keyword in lower for keyword in hidden_keywords):
+                    names.add(name)
+        return sorted(list(names))[:40]
+
+    def _detect_param_interactions(self, entries):
+        pair_counts = {}
+        entries_list = [e for e in (entries or []) if isinstance(e, dict)]
+        for sample in entries_list:
+            names = sorted(list(set(self._extract_param_names(sample))))
+            for i in range(len(names)):
+                for j in range(i + 1, len(names)):
+                    pair = "{}|{}".format(names[i], names[j])
+                    pair_counts[pair] = pair_counts.get(pair, 0) + 1
+        ranked = sorted(pair_counts.items(), key=lambda item: item[1], reverse=True)
+        interactions = []
+        for pair, count in ranked[:20]:
+            left, right = pair.split("|", 1)
+            interactions.append({"params": [left, right], "cooccurrence_count": count})
+        return interactions
+
+    def _analyze_rate_limits(self, data_snapshot):
+        patterns = []
+        for endpoint_key, entries in data_snapshot.items():
+            rate_info = self._detect_rate_limit(entries)
+            if rate_info.get("detected"):
+                patterns.append({"endpoint": endpoint_key, "rate_limit": rate_info})
+        return patterns[:120]
+
+    def _analyze_sessions(self, data_snapshot):
+        auth_counts = {}
+        cookie_names = set()
+        for _, entries in data_snapshot.items():
+            entry = self._get_entry(entries)
+            for auth_type in entry.get("auth_detected", []) or []:
+                auth_key = self._ascii_safe(auth_type)
+                auth_counts[auth_key] = auth_counts.get(auth_key, 0) + 1
+            headers = entry.get("headers", {}) or {}
+            cookie_header = self._ascii_safe(headers.get("Cookie") or headers.get("cookie") or "")
+            if cookie_header:
+                for part in cookie_header.split(";"):
+                    name = self._ascii_safe(part.split("=", 1)[0]).strip()
+                    if name:
+                        cookie_names.add(name)
+        return {
+            "auth_method_counts": auth_counts,
+            "cookie_names": sorted(list(cookie_names))[:80],
+        }
+
+    def _build_authz_matrix(self, data_snapshot):
+        matrix = []
+        for endpoint_key, entries in data_snapshot.items():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            auth_contexts = set()
+            statuses = set()
+            for sample in entries_list:
+                if not isinstance(sample, dict):
+                    continue
+                for auth_type in sample.get("auth_detected", []) or []:
+                    auth_contexts.add(self._ascii_safe(auth_type))
+                status_code = sample.get("response_status", 0)
+                if isinstance(status_code, int):
+                    statuses.add(status_code)
+            matrix.append(
+                {
+                    "endpoint": endpoint_key,
+                    "auth_contexts": sorted(list(auth_contexts)),
+                    "observed_status_codes": sorted(list(statuses)),
+                    "sample_count": len(entries_list),
+                }
+            )
+        return matrix[:200]
+
+    def _create_ai_feedback_loop_export(self, test_results):
+        """Export test results so AI can refine payload generation strategy."""
+        results = test_results if isinstance(test_results, list) else []
+        feedback = {
+            "tested_payloads": [],
+            "successful_attacks": [],
+            "failed_attempts": [],
+            "learned_patterns": {},
+        }
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            vulnerable = bool(result.get("vulnerable"))
+            feedback_entry = {
+                "payload": result.get("payload"),
+                "success": vulnerable,
+                "response_analysis": {
+                    "status": result.get("status"),
+                    "body_snippet": self._ascii_safe(result.get("body", ""))[:200],
+                    "headers": result.get("headers", {}),
+                    "timing": result.get("response_time"),
+                },
+                "refinement_hints": self._generate_refinement_hints(result),
+            }
+            feedback["tested_payloads"].append(feedback_entry)
+            if vulnerable:
+                feedback["successful_attacks"].append(feedback_entry)
+            else:
+                feedback["failed_attempts"].append(feedback_entry)
+
+        feedback["learned_patterns"] = self._extract_learned_patterns(results)
+        if not results:
+            feedback["instructions"] = [
+                "Populate tested_payloads with real execution results.",
+                "Mark vulnerable=true when exploit indicators are confirmed.",
+                "Re-export this file and submit to AI for refinement.",
+            ]
+        return feedback
+
+    def _generate_refinement_hints(self, result):
+        hints = []
+        status = int(result.get("status", 0) or 0)
+        body = self._ascii_safe(result.get("body", ""), lower=True)
+        if status in [401, 403]:
+            hints.append("focus on auth context or privilege mismatch")
+        elif status in [429]:
+            hints.append("throttle requests or rotate request cadence")
+        elif status >= 500:
+            hints.append("server-side error observed, check for injection pivot")
+        if "blocked" in body or "waf" in body or "access denied" in body:
+            hints.append("try encoding/header/path bypass variants")
+        if not hints:
+            hints.append("adjust payload syntax and parameter placement")
+        return hints[:6]
+
+    def _extract_learned_patterns(self, test_results):
+        results = test_results if isinstance(test_results, list) else []
+        summary = {"total": len(results), "successful": 0, "by_category": {}}
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            category = self._ascii_safe(result.get("category") or result.get("type") or "unknown")
+            if category not in summary["by_category"]:
+                summary["by_category"][category] = {"total": 0, "successful": 0}
+            summary["by_category"][category]["total"] += 1
+            if bool(result.get("vulnerable")):
+                summary["successful"] += 1
+                summary["by_category"][category]["successful"] += 1
+        return summary
+
+    def _export_for_llm_platform(self, platform, ai_input):
+        """Export in format optimized for specific LLM platforms."""
+        if platform == "openai":
+            return self._export_openai_format(ai_input)
+        if platform == "anthropic":
+            return self._export_anthropic_format(ai_input)
+        return self._export_ollama_format(ai_input)
+
+    def _export_openai_format(self, ai_input):
+        """Format optimized for OpenAI chat/completions style consumption."""
+        return {
+            "model": "gpt-5.4",
+            "messages": [
+                {"role": "system", "content": self._generate_enhanced_ai_prompt()},
+                {"role": "user", "content": json.dumps(ai_input)},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "generate_security_payloads",
+                        "description": "Generate context-aware security testing payloads",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "payloads": {"type": "array"},
+                                "exploitation_chain": {"type": "array"},
+                                "confidence_scores": {"type": "object"},
+                            },
+                        },
+                    },
+                }
+            ],
+            "temperature": 0.2,
+        }
+
+    def _export_anthropic_format(self, ai_input):
+        return {
+            "model": "claude-3-5-sonnet-latest",
+            "system": self._generate_enhanced_ai_prompt(),
+            "messages": [{"role": "user", "content": json.dumps(ai_input)}],
+            "max_tokens": 4096,
+            "temperature": 0.2,
+        }
+
+    def _export_ollama_format(self, ai_input):
+        return {
+            "model": "llama3.1:8b-instruct",
+            "prompt": "{}\n\nINPUT:\n{}".format(
+                self._generate_enhanced_ai_prompt(), json.dumps(ai_input, indent=2)
+            ),
+            "options": {"temperature": 0.2},
+        }
+
+    def _get_vuln_summary(self, attacks_snapshot):
+        summary = {"total": len(attacks_snapshot), "by_type": {}, "by_severity": {}}
+        for _, attack in attacks_snapshot:
+            attack_obj = attack if isinstance(attack, dict) else {}
+            attack_type = self._ascii_safe(attack_obj.get("type") or "Unknown")
+            severity = self._calculate_attack_severity(attack_obj)
+            summary["by_type"][attack_type] = summary["by_type"].get(attack_type, 0) + 1
+            summary["by_severity"][severity] = summary["by_severity"].get(severity, 0) + 1
+        return summary
+
+    def _extract_api_patterns(self, data_snapshot):
+        counts = {}
+        for _, entries in data_snapshot.items():
+            entry = self._get_entry(entries)
+            for pattern in entry.get("api_patterns", []) or []:
+                key = self._ascii_safe(pattern)
+                counts[key] = counts.get(key, 0) + 1
+        ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+        return [{"pattern": key, "count": value} for key, value in ranked[:40]]
+
+    def _extract_auth_flows(self, data_snapshot):
+        counts = {}
+        protected = []
+        public = []
+        for endpoint_key, entries in data_snapshot.items():
+            entry = self._get_entry(entries)
+            auth_types = entry.get("auth_detected", []) or []
+            auth_lower = [self._ascii_safe(x, lower=True) for x in auth_types]
+            is_public = ("none" in auth_lower) or (len(auth_lower) == 0)
+            if is_public:
+                public.append(endpoint_key)
+            else:
+                protected.append(endpoint_key)
+            for auth_type in auth_types:
+                key = self._ascii_safe(auth_type)
+                counts[key] = counts.get(key, 0) + 1
+        return {
+            "auth_method_counts": counts,
+            "protected_examples": protected[:30],
+            "public_examples": public[:30],
+        }
+
+    def _extract_business_logic(self, data_snapshot):
+        hints = []
+        keywords = [
+            "price",
+            "amount",
+            "cost",
+            "total",
+            "quantity",
+            "stock",
+            "discount",
+            "coupon",
+            "balance",
+            "wallet",
+            "refund",
+            "checkout",
+            "payment",
+            "transfer",
+            "withdraw",
+            "role",
+            "permission",
+            "admin",
+            "limit",
+            "quota",
+        ]
+        for endpoint_key, entries in data_snapshot.items():
+            entry = self._get_entry(entries)
+            path = self._ascii_safe(
+                entry.get("normalized_path") or entry.get("path") or "/", lower=True
+            )
+            param_names = [self._ascii_safe(x, lower=True) for x in self._extract_param_names(entry)]
+            joined = " ".join([path] + param_names)
+            matched = [word for word in keywords if word in joined]
+            if matched:
+                hints.append(
+                    {
+                        "endpoint": endpoint_key,
+                        "keywords": matched[:8],
+                        "method": self._ascii_safe(entry.get("method", "")).upper(),
+                    }
+                )
+        return hints[:120]
+
+    def _calculate_attack_severity(self, attack):
+        attack_type = self._ascii_safe((attack or {}).get("type") or "", lower=True)
+        if attack_type in [
+            "bola",
+            "idor",
+            "auth bypass",
+            "sql injection",
+            "ssrf",
+            "xxe",
+            "deserialization",
+        ]:
+            return "Critical"
+        if attack_type in [
+            "xss",
+            "nosql injection",
+            "ssti",
+            "mass assignment",
+            "waf bypass",
+            "jwt",
+        ]:
+            return "High"
+        return "Medium"
+
+    def _generate_enhanced_ai_prompt(self):
+        return """# Advanced API Security Payload Generation
+
+## Context
+You are analyzing real API capture data with vulnerability findings, response patterns, and behavior analytics.
+
+## Tasks
+1. Generate baseline, context-aware, evasion, and chained payloads per vulnerability.
+2. Define success indicators (status/body/header/timing) and false-positive guards.
+3. Propose exploitation chains and verification steps (automated + manual).
+4. Prioritize by severity, confidence, authentication context, and business impact.
+
+## Output Requirements
+- Return JSON only.
+- Include endpoint, payload category, payload value, method, headers/body placement, confidence, and remediation.
+- Provide at least one exploitation chain when related endpoints suggest escalation paths.
+"""
 
     def _generate_ai_prompt(self):
-        return """# AI Payload Generation Task
-
-Analyze the provided API endpoints and generate custom, context-aware payloads for:
-
-1. **IDOR/BOLA**: Generate IDs based on observed patterns (sequential, UUID, hash)
-2. **SQLi**: Craft payloads specific to detected database type and query structure
-3. **XSS**: Generate context-aware payloads based on reflection points
-4. **Auth Bypass**: Create token manipulation payloads based on auth method
-5. **Business Logic**: Generate edge cases for price/quantity fields
-
-## Requirements:
-- Analyze parameter names and types
-- Consider authentication mechanisms
-- Generate 20-50 payloads per vulnerability type
-- Include bypass techniques for WAF/filters
-- Provide success detection patterns
-
-## Output Format:
-```json
-{
-  "endpoint": "GET:/api/users/{id}",
-  "payloads": [
-    {"value": "1", "description": "Sequential ID", "expected": "200 OK"},
-    {"value": "../admin", "description": "Path traversal", "expected": "403 or data leak"}
-  ]
-}
-```
-"""
+        """Backward-compatible alias for older AI export consumers."""
+        return self._generate_enhanced_ai_prompt()
 
     def _export_turbo_intruder(self):
         """Export Turbo Intruder Python scripts for race conditions and high-speed attacks"""
