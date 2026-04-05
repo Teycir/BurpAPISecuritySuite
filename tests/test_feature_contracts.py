@@ -225,6 +225,82 @@ def test_param_and_version_collectors_scope_out_noise():
     print("[PASS] test_param_and_version_collectors_scope_out_noise")
 
 
+def test_recon_exports_include_postman_and_insomnia():
+    text = _source_text()
+    required_tokens = [
+        'postman_btn = JButton("Postman")',
+        'insomnia_btn = JButton("Insomnia")',
+        "postman_btn.addActionListener(lambda e: self._export_postman_collection())",
+        "insomnia_btn.addActionListener(lambda e: self._export_insomnia_collection())",
+        "def _export_postman_collection(",
+        "def _export_insomnia_collection(",
+        "def _build_postman_collection(",
+        "def _build_insomnia_export(",
+        "def _select_export_scope_data(",
+        "collection/v2.1.0/collection.json",
+        "postman_collection.json",
+        "insomnia_collection.json",
+        '"__export_format": 4',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Postman/Insomnia export token: {}".format(token)
+    print("[PASS] test_recon_exports_include_postman_and_insomnia")
+
+
+def test_new_verification_and_discovery_tabs_are_wired():
+    text = _source_text()
+    required_tokens = [
+        'self.tabbed_pane.addTab("SQLMap Verify", sqlmap_verify_panel)',
+        'self.tabbed_pane.addTab("Dalfox Verify", dalfox_verify_panel)',
+        'self.tabbed_pane.addTab("API Assets", asset_discovery_panel)',
+        'self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)',
+        "def _create_sqlmap_verify_tab(",
+        "def _create_dalfox_verify_tab(",
+        "def _create_api_asset_discovery_tab(",
+        "def _create_openapi_drift_tab(",
+        "def _run_sqlmap_verify(",
+        "def _run_dalfox_verify(",
+        "def _run_api_asset_discovery(",
+        "def _run_openapi_drift(",
+        "def _send_sqlmap_to_recon(",
+        "def _send_dalfox_to_recon(",
+        "def _send_asset_discovery_to_recon(",
+        "def _send_openapi_to_recon(",
+        "def _export_sqlmap_results(",
+        "def _export_dalfox_results(",
+        "def _export_asset_discovery_results(",
+        "def _export_openapi_drift_results(",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing new tab wiring token: {}".format(token)
+    print("[PASS] test_new_verification_and_discovery_tabs_are_wired")
+
+
+def test_tool_profiles_and_health_button_are_wired():
+    text = _source_text()
+    required_tokens = [
+        "import tool_profiles",
+        'tool_health_btn = JButton("Tool Health")',
+        "tool_health_btn.addActionListener(lambda e: self._run_tool_health_check(e))",
+        "def _run_tool_health_check(",
+        "def _tool_health_specs(",
+        "def _resolve_tool_health_path(",
+        "tool_profiles.probe_binary_help(",
+        "tool_profiles.evaluate_help_text(",
+        'self.sqlmap_profile_combo = JComboBox(self._profile_labels())',
+        'self.dalfox_profile_combo = JComboBox(self._profile_labels())',
+        'self.asset_profile_combo = JComboBox(self._profile_labels())',
+        'self.nuclei_profile_combo = JComboBox(self._profile_labels())',
+        "tool_profiles.build_sqlmap_command(",
+        "tool_profiles.build_dalfox_command(",
+        "tool_profiles.build_asset_stage_commands(",
+        "tool_profiles.nuclei_profile_settings(",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing tool profile/health token: {}".format(token)
+    print("[PASS] test_tool_profiles_and_health_button_are_wired")
+
+
 def test_ffuf_target_filtering_hardening_present():
     text = _source_text()
     assert "FFUF_NOISE_HOST_PATTERNS" in text
@@ -302,9 +378,12 @@ def test_nuclei_timeout_uses_partial_parse_and_speed_flags():
         "supports_scan_strategy = bool(",
         "supports_no_httpx = bool(",
         "supports_project_mode = bool(",
-        'cmd.extend(["-bs", str(self.NUCLEI_BULK_SIZE)])',
-        'cmd.extend(["-mhe", str(self.NUCLEI_MAX_HOST_ERROR)])',
-        'cmd.extend(["-ss", self.NUCLEI_SCAN_STRATEGY])',
+        '"-bs",',
+        '"bulk_size", self.NUCLEI_BULK_SIZE',
+        '"-mhe",',
+        '"max_host_error",',
+        '"-ss",',
+        '"scan_strategy", self.NUCLEI_SCAN_STRATEGY',
         'cmd.append("-no-httpx")',
         'cmd.extend(["-project", "-project-path", temp_dir])',
         "adaptive_timeout = max(360, target_count * 30)",

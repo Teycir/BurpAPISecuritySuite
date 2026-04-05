@@ -16,7 +16,8 @@ def run_tests():
     tests = [
         'test_fuzzer_logic',
         'test_real_data',
-        'test_feature_contracts'
+        'test_feature_contracts',
+        'test_tool_profiles'
     ]
     
     passed = 0
