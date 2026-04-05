@@ -466,6 +466,9 @@ class BurpExtender(
         }
         self.passive_discovery_findings = []
         self.passive_discovery_lock = threading.Lock()
+        self._capture_ui_refresh_timer = None
+        self._capture_ui_refresh_last_ts = 0.0
+        self._capture_ui_refresh_min_interval_ms = 250
 
         # Pagination state
         self.current_page = 0
@@ -5755,7 +5758,6 @@ def handleResponse(req, interesting):
         """Run GraphQL-focused analysis using available external tools."""
         import os
         import tempfile
-        import subprocess
 
         max_targets = self._parse_positive_int(
             self.graphql_max_targets_field.getText(), 12, 1, 50
@@ -6393,9 +6395,10 @@ def handleResponse(req, interesting):
                 )
             except Exception as e:
                 append_line("[!] GraphQL analysis error: {}\n".format(self._ascii_safe(e)))
+                err_msg = self._ascii_safe(e)
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui(
-                        "[!] GraphQL analysis error: {}".format(self._ascii_safe(e))
+                    lambda m=err_msg: self.log_to_ui(
+                        "[!] GraphQL analysis error: {}".format(m)
                     )
                 )
             finally:
@@ -6710,10 +6713,18 @@ def handleResponse(req, interesting):
 
                 start_time = time_module.time()
                 timed_out = False
+                capture_path = os.path.join(temp_dir, "nuclei_runtime.log")
                 try:
-                    process = subprocess.Popen(  # nosec B603
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
-                    )
+                    capture_handle = open(capture_path, "wb")
+                    try:
+                        process = subprocess.Popen(  # nosec B603
+                            cmd,
+                            stdout=capture_handle,
+                            stderr=subprocess.STDOUT,
+                            shell=False,
+                        )
+                    finally:
+                        capture_handle.close()
                     self._set_active_tool_process("nuclei", process)
                 except Exception as e:
                     err_msg = str(e)
@@ -6776,9 +6787,17 @@ def handleResponse(req, interesting):
 
                 process.wait()
                 elapsed = int(time_module.time() - start_time)
-                stdout_data = self._safe_pipe_read(process.stdout, "Nuclei stdout")
-                stderr_data = self._safe_pipe_read(process.stderr, "Nuclei stderr")
-                combined_output = "{}\n{}".format(stdout_data or "", stderr_data or "")
+                combined_output = ""
+                if os.path.exists(capture_path):
+                    try:
+                        with open(capture_path, "rb") as capture_reader:
+                            combined_output = self._decode_process_data(
+                                capture_reader.read(), "Nuclei output"
+                            )
+                    except Exception as capture_err:
+                        self._callbacks.printError(
+                            "Nuclei output read error: {}".format(str(capture_err))
+                        )
 
                 if cancelled_by_user:
                     SwingUtilities.invokeLater(
@@ -6790,6 +6809,8 @@ def handleResponse(req, interesting):
                         lambda: self.log_to_ui("[!] Nuclei cancelled by user")
                     )
                     return
+
+                output_preview = self._ascii_safe(combined_output or "").strip()
 
                 SwingUtilities.invokeLater(
                     lambda: self.log_to_ui(
@@ -6893,12 +6914,9 @@ def handleResponse(req, interesting):
                             "[!] Exit code: {}".format(process.returncode),
                             "[!] Command: {}".format(display_cmd),
                         ]
-                        if stderr_data and stderr_data.strip():
-                            fail_lines.append("[!] STDERR:")
-                            fail_lines.append(stderr_data.strip()[:3000])
-                        elif stdout_data and stdout_data.strip():
+                        if output_preview:
                             fail_lines.append("[!] Output:")
-                            fail_lines.append(stdout_data.strip()[:3000])
+                            fail_lines.append(output_preview[:3000])
                         if "flag provided but not defined" in combined_output:
                             fail_lines.append(
                                 "[*] Tip: your Nuclei version does not support one of these flags."
@@ -6941,9 +6959,9 @@ def handleResponse(req, interesting):
                             "[!] Fallback output file: {}".format(output_file),
                             "[!] Command: {}".format(display_cmd),
                         ]
-                        if stderr_data and stderr_data.strip():
-                            warn_lines.append("[!] STDERR:")
-                            warn_lines.append(stderr_data.strip()[:3000])
+                        if output_preview:
+                            warn_lines.append("[!] Output:")
+                            warn_lines.append(output_preview[:3000])
                         if use_custom_nuclei:
                             warn_lines.append(
                                 "[*] Tip: include {json_file} in Custom Cmd and make nuclei write json output there"
@@ -7272,9 +7290,7 @@ def handleResponse(req, interesting):
                             method, normalized_path, url.getHost(), len(self.api_data)
                         )
                     )
-                SwingUtilities.invokeLater(lambda: self._update_host_filter())
-                SwingUtilities.invokeLater(lambda: self._update_stats())
-                SwingUtilities.invokeLater(lambda: self.refresh_view())
+                self._schedule_capture_ui_refresh()
 
         except Exception as e:
             self._callbacks.printError("Error processing: " + str(e))
@@ -7508,7 +7524,7 @@ def handleResponse(req, interesting):
             },
             "endpoints": [],
             "api_structure": self._analyze_structure_for(data_snapshot),
-            "security_observations": self._analyze_security(),
+            "security_observations": self._analyze_security(data_snapshot),
             "llm_prompt": self._generate_llm_prompt(),
         }
 
@@ -7688,16 +7704,30 @@ def handleResponse(req, interesting):
                 obs["recommendation"] = recommendation
             observations.append(obs)
 
-    def _analyze_security(self):
+    def _analyze_security(self, data_snapshot=None):
         observations = []
 
-        with self.lock:
-            data_snapshot = dict(self.api_data)
+        if data_snapshot is None:
+            with self.lock:
+                data_snapshot = dict(self.api_data)
+        else:
+            data_snapshot = dict(data_snapshot)
+
+        normalized_snapshot = {}
+        for key, entries in data_snapshot.items():
+            if isinstance(entries, list):
+                entries_list = [x for x in entries if isinstance(x, dict)]
+            elif isinstance(entries, dict):
+                entries_list = [entries]
+            else:
+                entries_list = []
+            if entries_list:
+                normalized_snapshot[key] = entries_list
 
         # Process snapshot without holding lock
         def check_snapshot(check_func):
             matches = []
-            for key, entries in data_snapshot.items():
+            for key, entries in normalized_snapshot.items():
                 if check_func(key, entries):
                     matches.append(key)
             return matches
@@ -7806,7 +7836,7 @@ def handleResponse(req, interesting):
                     )
                 ),
             )
-            for k, e in data_snapshot.items()
+            for k, e in normalized_snapshot.items()
             if any(x.get("response_status", 200) >= 400 for x in e)
         ]
         if error_endpoints:
@@ -7833,7 +7863,7 @@ def handleResponse(req, interesting):
                     )
                 ),
             }
-            for k, e in data_snapshot.items()
+            for k, e in normalized_snapshot.items()
             if any(
                 x.get("encryption_indicators", {}).get("likely_encrypted")
                 and "Base64" in x.get("encryption_indicators", {}).get("types", [])
@@ -8328,6 +8358,55 @@ Generate a complete Burp extension that:
             self.host_filter.addItem(host)
         if current in hosts or current == "All":
             self.host_filter.setSelectedItem(current)
+
+    def _schedule_capture_ui_refresh(self, force=False):
+        """Debounce expensive Recon UI refresh work during bursty captures."""
+        timer = None
+        with self.lock:
+            if force and self._capture_ui_refresh_timer is not None:
+                try:
+                    self._capture_ui_refresh_timer.cancel()
+                except Exception as cancel_err:
+                    self._callbacks.printError(
+                        "Capture UI refresh cancel error: {}".format(str(cancel_err))
+                    )
+                self._capture_ui_refresh_timer = None
+
+            if self._capture_ui_refresh_timer is not None:
+                return
+
+            now = time.time()
+            elapsed_ms = int((now - self._capture_ui_refresh_last_ts) * 1000)
+            delay_ms = 0
+            if not force:
+                delay_ms = max(
+                    0, int(self._capture_ui_refresh_min_interval_ms - elapsed_ms)
+                )
+
+            def _queue_refresh():
+                with self.lock:
+                    self._capture_ui_refresh_timer = None
+                    self._capture_ui_refresh_last_ts = time.time()
+                SwingUtilities.invokeLater(lambda: self._run_capture_ui_refresh())
+
+            timer = threading.Timer(delay_ms / 1000.0, _queue_refresh)
+            timer.daemon = True
+            self._capture_ui_refresh_timer = timer
+
+        if timer is not None:
+            timer.start()
+
+    def _run_capture_ui_refresh(self):
+        """Apply a full Recon list/stats refresh on the EDT."""
+        try:
+            renderer = self.endpoint_list.getCellRenderer()
+            if renderer:
+                renderer.invalidate_cache()
+            self._update_host_filter()
+            self._update_stats()
+            self.refresh_view()
+        except Exception as e:
+            self._callbacks.printError("Capture UI refresh error: {}".format(str(e)))
 
     def _open_target_base_scope_popup(self):
         """Open popup editor for multiline base URL/host targeting scope."""
@@ -9051,15 +9130,7 @@ Generate a complete Burp extension that:
 
     def _analyze_security_for(self, data):
         """Analyze security for specific dataset"""
-        observations = []
-
-        # Reuse existing security analysis but on filtered data
-        temp_data = self.api_data
-        self.api_data = data
-        observations = self._analyze_security()
-        self.api_data = temp_data
-
-        return observations
+        return self._analyze_security(data)
 
     def show_endpoint_details(self, endpoint_key):
         """Show detailed information for selected endpoint"""
@@ -12798,7 +12869,11 @@ Generate a complete Burp extension that:
 
                 start_time = time_module.time()
                 process = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1, shell=False
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    bufsize=1,
+                    shell=False,
                 )
                 self._set_active_tool_process("httpx", process)
 
@@ -12828,7 +12903,8 @@ Generate a complete Burp extension that:
                         time_module.sleep(0.1)
                         continue
 
-                    clean_line = re.sub(r"\x1b\[[0-9;]*[mK]", "", line).strip()
+                    line_text = self._decode_process_data(line, "HTTPX stdout line")
+                    clean_line = re.sub(r"\x1b\[[0-9;]*[mK]", "", line_text).strip()
                     if clean_line and "http" in clean_line and "[" in clean_line:
                         try:
                             status = clean_line[clean_line.rfind('[')+1:clean_line.rfind(']')]
@@ -13165,7 +13241,9 @@ Generate a complete Burp extension that:
 
     def _run_sqlmap_verify(self, event):
         """Run SQLMap verification over SQLi candidates."""
+        import os
         import subprocess
+        import tempfile
         import time as time_module
 
         sqlmap_path = self.sqlmap_path_field.getText().strip()
@@ -13265,10 +13343,22 @@ Generate a complete Burp extension that:
 
                 process = None
                 timed_out = False
+                capture_path = None
                 try:
-                    process = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
+                    capture_fd, capture_path = tempfile.mkstemp(
+                        prefix="burp_sqlmap_", suffix=".log"
                     )
+                    os.close(capture_fd)
+                    capture_handle = open(capture_path, "wb")
+                    try:
+                        process = subprocess.Popen(
+                            cmd,
+                            stdout=capture_handle,
+                            stderr=subprocess.STDOUT,
+                            shell=False,
+                        )
+                    finally:
+                        capture_handle.close()
                     self._set_active_tool_process("sqlmap", process)
                     start_wait = time_module.time()
                     while process.poll() is None:
@@ -13283,9 +13373,12 @@ Generate a complete Burp extension that:
                         time_module.sleep(0.2)
                     if process.poll() is None:
                         process.wait()
-                    stdout_data = self._safe_pipe_read(process.stdout, "SQLMap stdout")
-                    stderr_data = self._safe_pipe_read(process.stderr, "SQLMap stderr")
-                    combined = "{}\n{}".format(stdout_data or "", stderr_data or "")
+                    combined = ""
+                    if capture_path and os.path.exists(capture_path):
+                        with open(capture_path, "rb") as capture_reader:
+                            combined = self._decode_process_data(
+                                capture_reader.read(), "SQLMap output"
+                            )
                     evidence = self._extract_sqlmap_evidence(combined)
 
                     if evidence:
@@ -13304,6 +13397,15 @@ Generate a complete Burp extension that:
                         )
                     )
                 finally:
+                    if capture_path and os.path.exists(capture_path):
+                        try:
+                            os.remove(capture_path)
+                        except Exception as cleanup_err:
+                            self._callbacks.printError(
+                                "SQLMap capture cleanup error: {}".format(
+                                    str(cleanup_err)
+                                )
+                            )
                     self._clear_active_tool_process("sqlmap", process)
 
                 if cancelled:
@@ -13465,10 +13567,22 @@ Generate a complete Burp extension that:
 
                     process = None
                     timed_out = False
+                    capture_path = None
                     try:
-                        process = subprocess.Popen(
-                            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
+                        capture_fd, capture_path = tempfile.mkstemp(
+                            prefix="burp_dalfox_", suffix=".log"
                         )
+                        os.close(capture_fd)
+                        capture_handle = open(capture_path, "wb")
+                        try:
+                            process = subprocess.Popen(
+                                cmd,
+                                stdout=capture_handle,
+                                stderr=subprocess.STDOUT,
+                                shell=False,
+                            )
+                        finally:
+                            capture_handle.close()
                         self._set_active_tool_process("dalfox", process)
                         start_wait = time_module.time()
                         while process.poll() is None:
@@ -13484,9 +13598,12 @@ Generate a complete Burp extension that:
 
                         if process.poll() is None:
                             process.wait()
-                        stdout_data = self._safe_pipe_read(process.stdout, "Dalfox stdout")
-                        stderr_data = self._safe_pipe_read(process.stderr, "Dalfox stderr")
-                        combined = "{}\n{}".format(stdout_data or "", stderr_data or "")
+                        combined = ""
+                        if capture_path and os.path.exists(capture_path):
+                            with open(capture_path, "rb") as capture_reader:
+                                combined = self._decode_process_data(
+                                    capture_reader.read(), "Dalfox output"
+                                )
                         evidence = ""
 
                         if os.path.exists(out_file) and os.path.getsize(out_file) > 0:
@@ -13512,6 +13629,15 @@ Generate a complete Burp extension that:
                             )
                         )
                     finally:
+                        if capture_path and os.path.exists(capture_path):
+                            try:
+                                os.remove(capture_path)
+                            except Exception as cleanup_err:
+                                self._callbacks.printError(
+                                    "Dalfox capture cleanup error: {}".format(
+                                        str(cleanup_err)
+                                    )
+                                )
                         self._clear_active_tool_process("dalfox", process)
 
                     if cancelled:
@@ -15129,7 +15255,7 @@ Generate a complete Burp extension that:
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
                     bufsize=1,
                     shell=False,
                 )
@@ -15157,7 +15283,8 @@ Generate a complete Burp extension that:
                             last_update = current_time
                         time_module.sleep(0.1)
                         continue
-                    clean_line = re.sub(r"\x1b\[[0-9;]*[mK]", "", line.strip())
+                    line_text = self._decode_process_data(line, "Katana stdout line")
+                    clean_line = re.sub(r"\x1b\[[0-9;]*[mK]", "", line_text.strip())
                     if clean_line:
                         if uses_recon_host_list and not self._katana_result_in_scope(
                             clean_line, target_meta
@@ -15788,7 +15915,7 @@ Generate a complete Burp extension that:
                             "User-Agent: Mozilla/5.0",
                         ],
                         stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
                         bufsize=1,
                     )
                     self._set_active_tool_process("ffuf", process)
@@ -15799,10 +15926,16 @@ Generate a complete Burp extension that:
 
                     def stream_reader(pipe, output_list, lock=output_lock):
                         try:
-                            for line in iter(pipe.readline, ""):
-                                if line:
+                            while True:
+                                line = pipe.readline()
+                                if not line:
+                                    break
+                                line_text = self._decode_process_data(
+                                    line, "FFUF stdout line"
+                                )
+                                if line_text:
                                     with lock:
-                                        output_list.append(line)
+                                        output_list.append(line_text)
                         finally:
                             pipe.close()
 
@@ -15854,8 +15987,6 @@ Generate a complete Burp extension that:
 
                         invalid_json_lines = 0
                         for line in lines_snapshot:
-                            line = self._decode_process_data(line, "FFUF stdout line")
-
                             line = line.strip()
                             if not line:
                                 continue
@@ -16350,7 +16481,7 @@ Generate a complete Burp extension that:
                     process = subprocess.Popen(
                         cmd,
                         stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
                         bufsize=1,
                         shell=False,
                     )
@@ -16393,7 +16524,7 @@ Generate a complete Burp extension that:
                             )
                             )
 
-                    stderr_data = process.stderr.read()
+                    stderr_data = process.stderr.read() if process.stderr else ""
                     process.wait()
                     if self._is_tool_cancelled("wayback"):
                         cancelled_by_user = True

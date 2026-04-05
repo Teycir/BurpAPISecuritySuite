@@ -417,8 +417,9 @@ def test_balanced_runtime_defaults_and_safe_pipe_read_present():
         "KATANA_MAX_TARGETS",
         "WAYBACK_MAX_QUERIES",
         "def _safe_pipe_read(",
-        "self._safe_pipe_read(process.stdout, \"Nuclei stdout\")",
-        "self._safe_pipe_read(process.stderr, \"Nuclei stderr\")",
+        'capture_path = os.path.join(temp_dir, "nuclei_runtime.log")',
+        "with open(capture_path, \"rb\") as capture_reader:",
+        "combined_output = self._decode_process_data(",
     ]
     for token in required_tokens:
         assert token in text, "Missing runtime hardening token: {}".format(token)
