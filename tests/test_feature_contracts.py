@@ -308,8 +308,15 @@ def test_recon_exports_include_postman_and_insomnia():
     required_tokens = [
         'postman_btn = JButton("Postman")',
         'insomnia_btn = JButton("Insomnia")',
+        'ai_export_btn = JButton("Export AI Bundle")',
+        'help_btn = JButton("Button Help")',
+        "ai_export_btn.addActionListener(lambda e: self._export_ai_context())",
+        "help_btn.addActionListener(lambda e: self._show_recon_button_help(e))",
         "postman_btn.addActionListener(lambda e: self._export_postman_collection())",
         "insomnia_btn.addActionListener(lambda e: self._export_insomnia_collection())",
+        "def _show_recon_button_help(",
+        "Tip: hover any Recon button to see a quick tooltip.",
+        "Export AI Bundle:",
         "def _export_postman_collection(",
         "def _export_insomnia_collection(",
         "def _build_postman_collection(",
@@ -322,7 +329,23 @@ def test_recon_exports_include_postman_and_insomnia():
     ]
     for token in required_tokens:
         assert token in text, "Missing Postman/Insomnia export token: {}".format(token)
+    assert '"AI Payloads"' not in text
     print("[PASS] test_recon_exports_include_postman_and_insomnia")
+
+
+def test_tooltip_wiring_is_generalized():
+    text = _source_text()
+    required_tokens = [
+        "def _set_component_tooltip(",
+        "def _apply_component_tooltips(",
+        "self._set_component_tooltip(btn, tooltip)",
+        "self._apply_component_tooltips(",
+        "help_btn: \"Show what each Recon button does\"",
+        "refresh_btn: \"Refresh endpoint list, stats, and details view\"",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing generalized tooltip token: {}".format(token)
+    print("[PASS] test_tooltip_wiring_is_generalized")
 
 
 def test_new_verification_and_discovery_tabs_are_wired():

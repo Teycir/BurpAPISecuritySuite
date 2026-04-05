@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.5] - 2026-04-05
+
+### Changed
+- Moved AI export action from the Fuzzer tab to the Recon tab to reflect its real scope:
+  - New Recon button: `Export AI Bundle`
+  - Removed misleading Fuzzer-only `AI Payloads` action placement.
+- Added explicit Recon button explanations:
+  - Per-button tooltips for Recon actions.
+  - New `Button Help` dialog describing each Recon control and expected output.
+- Generalized tooltip wiring with reusable helpers (`_set_component_tooltip`, `_apply_component_tooltips`) to reduce repetitive per-button tooltip code.
+
+### Tests
+- Updated `tests/test_feature_contracts.py` to assert:
+  - Recon AI export + help button wiring.
+  - Recon help dialog content and tooltip guidance.
+  - Removal of legacy `AI Payloads` button label from source.
+
 ## [1.3.4] - 2026-04-05
 
 ### Added

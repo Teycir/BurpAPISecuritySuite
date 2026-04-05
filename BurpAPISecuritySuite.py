@@ -591,7 +591,7 @@ class BurpExtender(
         bottom_split.setResizeWeight(0.7)
         recon_panel.add(bottom_split, BorderLayout.CENTER)
 
-        btn_panel = JPanel(GridLayout(1, 7, 5, 5))
+        btn_panel = JPanel(GridLayout(1, 0, 5, 5))
 
         export_btn = JButton("Export All")
         export_btn.setBackground(Color(40, 167, 69))
@@ -602,6 +602,11 @@ class BurpExtender(
         export_host_btn.setBackground(Color(23, 162, 184))
         export_host_btn.setForeground(Color.WHITE)
         export_host_btn.addActionListener(lambda e: self.export_by_host())
+
+        ai_export_btn = JButton("Export AI Bundle")
+        ai_export_btn.setBackground(Color(138, 43, 226))
+        ai_export_btn.setForeground(Color.WHITE)
+        ai_export_btn.addActionListener(lambda e: self._export_ai_context())
 
         import_btn = JButton("Import")
         import_btn.setBackground(Color(0, 123, 255))
@@ -623,6 +628,11 @@ class BurpExtender(
         tool_health_btn.setForeground(Color.WHITE)
         tool_health_btn.addActionListener(lambda e: self._run_tool_health_check(e))
 
+        help_btn = JButton("Button Help")
+        help_btn.setBackground(Color(108, 117, 125))
+        help_btn.setForeground(Color.WHITE)
+        help_btn.addActionListener(lambda e: self._show_recon_button_help(e))
+
         clear_btn = JButton("Clear Data")
         clear_btn.setBackground(Color(220, 53, 69))
         clear_btn.setForeground(Color.WHITE)
@@ -632,13 +642,29 @@ class BurpExtender(
         refresh_btn.setBackground(Color(108, 117, 125))
         refresh_btn.setForeground(Color.WHITE)
         refresh_btn.addActionListener(lambda e: self.refresh_view())
+        self._apply_component_tooltips(
+            {
+                export_btn: "Export all captured Recon endpoints and analysis to a JSON file",
+                export_host_btn: "Export only endpoints for the selected host filter",
+                ai_export_btn: "Export all-tab AI context bundle (Recon, scanners, findings, and LLM-ready files)",
+                import_btn: "Import previously exported Recon JSON data",
+                postman_btn: "Export scoped endpoints as a Postman Collection v2.1 file",
+                insomnia_btn: "Export scoped endpoints as an Insomnia import JSON file",
+                tool_health_btn: "Run local CLI compatibility checks for integrated external tools",
+                help_btn: "Show what each Recon button does",
+                clear_btn: "Clear all captured Recon data and reset views",
+                refresh_btn: "Refresh endpoint list, stats, and details view",
+            }
+        )
 
         btn_panel.add(export_btn)
         btn_panel.add(export_host_btn)
+        btn_panel.add(ai_export_btn)
         btn_panel.add(import_btn)
         btn_panel.add(postman_btn)
         btn_panel.add(insomnia_btn)
         btn_panel.add(tool_health_btn)
+        btn_panel.add(help_btn)
         btn_panel.add(clear_btn)
         btn_panel.add(refresh_btn)
 
@@ -735,13 +761,29 @@ class BurpExtender(
 
         self.log_to_ui("[+] API Security Suite loaded - Capturing API traffic...")
 
-    def _create_action_button(self, text, color, action):
+    def _create_action_button(self, text, color, action, tooltip=None):
         """Helper to create styled action button"""
         btn = JButton(text)
         btn.setBackground(color)
         btn.setForeground(Color.WHITE)
         btn.addActionListener(action)
+        self._set_component_tooltip(btn, tooltip)
         return btn
+
+    def _set_component_tooltip(self, component, text):
+        """Safely apply tooltip text to any Swing component."""
+        if component is None:
+            return
+        safe_text = self._ascii_safe(text or "").strip()
+        if safe_text:
+            component.setToolTipText(safe_text)
+
+    def _apply_component_tooltips(self, component_tooltips):
+        """Apply tooltip text across multiple components."""
+        if not isinstance(component_tooltips, dict):
+            return
+        for component, text in component_tooltips.items():
+            self._set_component_tooltip(component, text)
 
     def _normalize_profile(self, profile_value):
         """Normalize profile name to fast/balanced/deep."""
@@ -1113,6 +1155,41 @@ class BurpExtender(
         area.setEditable(False)
         area.setFont(Font("Monospaced", Font.PLAIN, 11))
         return area, JScrollPane(area)
+
+    def _show_recon_button_help(self, _event=None):
+        """Show Recon button reference to reduce UI ambiguity."""
+        lines = []
+        lines.append("Recon Button Help")
+        lines.append("=" * 60)
+        lines.append("")
+        lines.append("Export All:")
+        lines.append("  Export full Recon dataset and analysis to JSON.")
+        lines.append("Export Host:")
+        lines.append("  Export only endpoints matching the selected host filter.")
+        lines.append("Export AI Bundle:")
+        lines.append("  Export all-tab AI bundle (not only fuzzer data).")
+        lines.append("Import:")
+        lines.append("  Import a previous Recon JSON export.")
+        lines.append("Postman:")
+        lines.append("  Export scoped endpoints to Postman Collection v2.1.")
+        lines.append("Insomnia:")
+        lines.append("  Export scoped endpoints to Insomnia import JSON.")
+        lines.append("Tool Health:")
+        lines.append("  Verify local external-tool binaries and key options.")
+        lines.append("Button Help:")
+        lines.append("  Show this reference dialog.")
+        lines.append("Clear Data:")
+        lines.append("  Clear captured Recon state and UI list/details.")
+        lines.append("Refresh:")
+        lines.append("  Recompute and redraw Recon list/stats from current state.")
+        lines.append("")
+        lines.append("Tip: hover any Recon button to see a quick tooltip.")
+        JOptionPane.showMessageDialog(
+            self._panel,
+            "\n".join(lines),
+            "Recon Button Help",
+            JOptionPane.INFORMATION_MESSAGE,
+        )
 
     def _copy_to_clipboard(self, text):
         """Copy text to system clipboard"""
@@ -1816,11 +1893,6 @@ class BurpExtender(
         controls.add(
             self._create_action_button(
                 "Export Payloads", Color(0, 123, 255), lambda e: self._export_payloads()
-            )
-        )
-        controls.add(
-            self._create_action_button(
-                "AI Payloads", Color(138, 43, 226), lambda e: self._export_ai_context()
             )
         )
         controls.add(
