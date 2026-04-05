@@ -12,6 +12,9 @@ All notable changes to this project are documented in this file.
   - Per-button tooltips for Recon actions.
   - New `Button Help` dialog describing each Recon control and expected output.
 - Generalized tooltip wiring with reusable helpers (`_set_component_tooltip`, `_apply_component_tooltips`) to reduce repetitive per-button tooltip code.
+- Unified tooltip rendering to a single deterministic path and enabled a global Swing tooltip policy (`ToolTipManager`) to avoid missing Recon tooltips.
+- Added centralized auto-tooltips for all action buttons created via `_create_action_button`, so non-Recon tabs now get consistent hover guidance too.
+- Upgraded auto-generated button tooltips from generic verb text to operator-focused guidance (scope, action outcome, and export/reuse intent).
 
 ### Tests
 - Updated `tests/test_feature_contracts.py` to assert:

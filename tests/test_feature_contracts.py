@@ -336,10 +336,24 @@ def test_recon_exports_include_postman_and_insomnia():
 def test_tooltip_wiring_is_generalized():
     text = _source_text()
     required_tokens = [
+        "self._configure_tooltips()",
+        "def _configure_tooltips(",
+        "ToolTipManager.sharedInstance()",
         "def _set_component_tooltip(",
         "def _apply_component_tooltips(",
-        "self._set_component_tooltip(btn, tooltip)",
+        "def _resolve_action_button_tooltip(",
+        "self._set_component_tooltip(",
+        "self._resolve_action_button_tooltip(text, tooltip)",
         "self._apply_component_tooltips(",
+        "\"copy\": \"Copy this tab output text to your system clipboard for AI/reports\"",
+        "\"clear\": \"Clear this tab output panel only (does not delete Recon capture data)\"",
+        "\"run verify\": \"Run verifier against ranked candidates and keep evidence in this tab output\"",
+        "if lower_label.startswith(\"run \"):",
+        "if lower_label.startswith(\"stop \"):",
+        "if lower_label.startswith(\"export \"):",
+        "return \"Run '{}' using current tab context and controls\".format(normalized)",
+        "tooltip_text = text if isinstance(text, text_type) else text_type(text)",
+        "component.setToolTipText(tooltip_text if tooltip_text else None)",
         "help_btn: \"Show what each Recon button does\"",
         "refresh_btn: \"Refresh endpoint list, stats, and details view\"",
     ]

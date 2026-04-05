@@ -37,6 +37,7 @@ from javax.swing import (
     JTextField,
     ListCellRenderer,
     SwingUtilities,
+    ToolTipManager,
 )
 from javax.swing.event import DocumentListener, ListSelectionListener
 
@@ -484,6 +485,7 @@ class BurpExtender(
 
         # Create tabbed pane
         self.tabbed_pane = JTabbedPane()
+        self._configure_tooltips()
 
         # Recon tab
         recon_panel = JPanel(BorderLayout())
@@ -767,16 +769,120 @@ class BurpExtender(
         btn.setBackground(color)
         btn.setForeground(Color.WHITE)
         btn.addActionListener(action)
-        self._set_component_tooltip(btn, tooltip)
+        self._set_component_tooltip(
+            btn, self._resolve_action_button_tooltip(text, tooltip)
+        )
         return btn
 
+    def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
+        """Generate consistent tooltips for tab action buttons."""
+        if explicit_tooltip is not None:
+            return explicit_tooltip
+
+        label = self._ascii_safe(text or "").strip()
+        if not label:
+            return None
+
+        normalized = label.rstrip(".").strip()
+        lower_label = self._ascii_safe(normalized, lower=True).strip()
+        direct_map = {
+            "target bases": "Open scope editor for base URLs/hosts used by external scanners",
+            "pkill tools": "Emergency stop for all external scanner processes launched by this extension",
+            "copy": "Copy this tab output text to your system clipboard for AI/reports",
+            "copy as curl": "Copy selected/generated attack request as a reusable curl command",
+            "clear": "Clear this tab output panel only (does not delete Recon capture data)",
+            "compare": "Compare two exported Recon snapshots and list added/removed endpoints",
+            "standard": "Load standard version tokens preset into the Versions input field",
+            "decimal": "Load decimal version format preset (for example v1.0, v2.1)",
+            "environments": "Load environment keyword preset (dev, test, staging, prod)",
+            "legacy": "Load legacy/deprecated version keyword preset into input field",
+            "all": "Load combined full preset list into this tab input field",
+            "admin": "Load admin-privilege parameter keyword preset into Params input",
+            "debug": "Load debug/verbose parameter keyword preset into Params input",
+            "access": "Load access-control/secret parameter keyword preset into Params input",
+            "callback": "Load callback/redirect URL parameter keyword preset into Params input",
+            "generate": "Generate fuzz payload candidates from Recon endpoints and selected attack type",
+            "send to intruder": "Send generated requests/targets to Burp Intruder for manual exploitation",
+            "export payloads": "Export generated fuzz payloads from this tab to disk",
+            "turbo intruder": "Export a Turbo Intruder-ready script/payload package from current attacks",
+            "run verify": "Run verifier against ranked candidates and keep evidence in this tab output",
+            "send to recon": "Import verified/discovered results into Recon endpoint inventory",
+            "show targets": "Preview target list that this tab will process before launching scans",
+            "run subfinder": "Run Subfinder on selected domains and collect discovered asset hosts",
+            "browse": "Browse local filesystem and select OpenAPI specification file",
+            "detect": "Auto-detect likely OpenAPI spec endpoints from captured traffic history",
+            "run drift": "Compare observed traffic against OpenAPI spec to identify drift/missing coverage",
+            "run replay": "Replay requests across auth profiles (guest/user/admin) for auth gap checks",
+            "extract": "Extract header value from captured traffic into the selected auth profile field",
+            "run passive": "Analyze captured traffic only (no active requests) for API risk patterns",
+            "export": "Export this tab findings to a timestamped file in the project export folder",
+            "run nuclei": "Launch Nuclei with current profile/scope and parse findings back into this tab",
+            "export targets": "Export current scoped target URLs prepared for Nuclei execution",
+            "probe endpoints": "Run HTTPX on scoped URLs to capture status/title/tech probe output",
+            "export urls": "Export probed/reachable URLs from this tab for reuse in other tools",
+            "crawl endpoints": "Run Katana crawl on scoped targets to discover additional API paths",
+            "export discovered": "Export URLs/endpoints discovered by crawler or passive sources",
+            "fuzz directories": "Run FFUF directory/content discovery against scoped API hosts",
+            "discover": "Query historical URL sources (Wayback/gau) for archived endpoint paths",
+            "run analysis": "Run GraphQL-focused multi-tool workflow and aggregate findings in this tab",
+            "scan versions": "Probe version/path variants from input list against captured API base paths",
+            "export results": "Export findings shown in this tab to a structured text/JSON artifact",
+            "mine params": "Mine parameter candidates from Recon endpoints and rank by operation risk",
+        }
+        if lower_label in direct_map:
+            return direct_map[lower_label]
+
+        if lower_label.startswith("run "):
+            return "Run {} using current tab settings and scoped targets".format(
+                normalized[4:].strip()
+            )
+        if lower_label.startswith("stop "):
+            return "Stop {} process currently running for this tab".format(
+                normalized[5:].strip()
+            )
+        if lower_label.startswith("export "):
+            return "Export {} data from this tab to a file".format(normalized[7:].strip())
+        if lower_label.startswith("import "):
+            return "Import data for {} workflow".format(normalized[7:].strip())
+        if lower_label.startswith("send "):
+            return "Send selected {} output to the downstream workflow target".format(
+                normalized[5:].strip()
+            )
+        if lower_label.startswith("clear "):
+            return "Clear {} data shown in this tab".format(normalized[6:].strip())
+        if lower_label.startswith("refresh "):
+            return "Refresh {} view with latest in-memory data".format(
+                normalized[8:].strip()
+            )
+        if lower_label.startswith("open "):
+            return "Open {} helper dialog".format(normalized[5:].strip())
+        if lower_label.startswith("save "):
+            return "Save {} configuration to disk".format(normalized[5:].strip())
+        if lower_label.startswith("load "):
+            return "Load {} configuration from disk".format(normalized[5:].strip())
+        if lower_label.startswith("detect "):
+            return "Detect {} from captured traffic and tab settings".format(
+                normalized[7:].strip()
+            )
+        if lower_label.startswith("analyze "):
+            return "Analyze {} with current tab options".format(normalized[8:].strip())
+
+        return "Run '{}' using current tab context and controls".format(normalized)
+
     def _set_component_tooltip(self, component, text):
-        """Safely apply tooltip text to any Swing component."""
+        """Apply tooltip text with a single conversion path."""
         if component is None:
             return
-        safe_text = self._ascii_safe(text or "").strip()
-        if safe_text:
-            component.setToolTipText(safe_text)
+        if text is None:
+            component.setToolTipText(None)
+            return
+        try:
+            text_type = unicode  # noqa: F821 (Python2/Jython)
+        except NameError:
+            text_type = str
+        tooltip_text = text if isinstance(text, text_type) else text_type(text)
+        tooltip_text = tooltip_text.strip()
+        component.setToolTipText(tooltip_text if tooltip_text else None)
 
     def _apply_component_tooltips(self, component_tooltips):
         """Apply tooltip text across multiple components."""
@@ -784,6 +890,14 @@ class BurpExtender(
             return
         for component, text in component_tooltips.items():
             self._set_component_tooltip(component, text)
+
+    def _configure_tooltips(self):
+        """Use one deterministic tooltip policy for all tabs."""
+        manager = ToolTipManager.sharedInstance()
+        manager.setEnabled(True)
+        manager.setInitialDelay(350)
+        manager.setReshowDelay(100)
+        manager.setDismissDelay(20000)
 
     def _normalize_profile(self, profile_value):
         """Normalize profile name to fast/balanced/deep."""
