@@ -2,6 +2,40 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.3] - 2026-04-05
+
+### Added
+- Enhanced AI context export bundle for security analysis workflows:
+  - New multi-file outputs including `ai_bundle.json`, `ai_vulnerability_context.json`, `ai_all_tabs_context.json`, and per-platform request payloads for OpenAI/Anthropic/Ollama.
+  - Cross-tab context aggregation (Recon, Fuzzer, Passive Discovery, Auth Replay, Nuclei/HTTPX/Katana/FFUF/Wayback, SQLMap, Dalfox, API Assets, OpenAPI Drift, GraphQL).
+  - Payload sanitization/redaction helpers for sensitive fields before exporting to external LLMs.
+- New `Lenient JSON GET` mode controls in `Fuzzer`, `Param Miner`, and `Version Scanner` tabs for structured-content API targeting beyond strict `/api/` path heuristics.
+- Stricter path/parameter keyword markers for targeted fuzzing decisions:
+  - Added dedicated strict noise marker sets for Fuzzer/Param Miner/Version Scanner.
+  - Added SQLi/SSRF/SSTI parameter keyword sets to prioritize likely injection points.
+- Capture UI refresh debouncing for Recon updates to reduce refresh churn during high-volume traffic capture.
+- Runtime heartbeat messages for long-running staged command execution (e.g., Subfinder stage output progress).
+
+### Changed
+- Fuzzer candidate selection and attack generation now apply stronger API-signal and object-target checks to reduce false positives in BOLA/Auth Bypass/SQLi/SSRF/SSTI paths.
+- Param Miner and Version Scanner collection flow now supports strict-vs-lenient routing behavior with clearer endpoint filtering summaries.
+- External command streaming hardened across tools by consolidating stderr into stdout and decoding streamed bytes consistently.
+- Nuclei runtime output handling now uses capture-file based ingestion (`nuclei_runtime.log`) for safer parse and diagnostics flow.
+- SQLMap and Dalfox verification output capture now uses temporary log files with cleanup to improve evidence extraction reliability.
+- Asset discovery domain selection now applies host-filter/scope-aware prioritization with source metadata (`manual`, `selected`, `history`) and dropped-item telemetry.
+
+### Fixed
+- GraphQL analysis error logging now preserves exception text safely when emitting asynchronous UI log callbacks.
+- Security observation analysis now works against normalized snapshots directly instead of mutating shared capture state.
+
+### Tests
+- Expanded `tests/test_feature_contracts.py` to cover:
+  - Enhanced AI export bundle and LLM payload format builders.
+  - Strict/lenient endpoint filtering behavior in Fuzzer/Param Miner/Version Scanner.
+  - Runtime output capture-path contracts for Nuclei and staged command execution.
+  - Target-base scope and host-filter enforcement paths.
+- Updated `tests/test_fuzzer_logic.py` normalization assertions for `host` and `protocol` handling.
+
 ## [1.3.2] - 2026-04-05
 
 ### Added
