@@ -248,6 +248,20 @@ class BurpExtender(
         "/adserver",
         "/sync",
     )
+    PARAM_MINER_STRICT_NOISE_PATH_MARKERS = (
+        "/cdn-cgi",
+        "/__cf_chl_",
+        "/captcha",
+        "/recaptcha",
+        "/sodar",
+    )
+    VERSION_SCANNER_NOISE_PATH_MARKERS = (
+        "/cdn-cgi",
+        "/__cf_chl_",
+        "/captcha",
+        "/recaptcha",
+        "/sodar",
+    )
     FFUF_NOISE_HOST_PATTERNS = (
         "google.com",
         "doubleclick.net",
@@ -1287,6 +1301,7 @@ class BurpExtender(
         ]
         self.version_results = []
         lines = []
+        excluded_missing_host = 0
 
         api_endpoints, filter_meta = self._collect_version_targets()
 
@@ -1300,8 +1315,15 @@ class BurpExtender(
             entry = self._get_entry(entries)
             normalized = self._normalize_endpoint_data(entry)
             path = normalized.get("path") or "/"
-            host = self._ascii_safe(normalized.get("host"), lower=True)
-            protocol = self._ascii_safe(normalized.get("protocol"), lower=True)
+            host = self._ascii_safe(normalized.get("host"), lower=True).strip() or self._ascii_safe(
+                entry.get("host"), lower=True
+            ).strip()
+            protocol = self._ascii_safe(
+                normalized.get("protocol"), lower=True
+            ).strip() or self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
+            if not host:
+                excluded_missing_host += 1
+                continue
 
             for ver in versions:
                 test_path = self._build_version_test_path(path, ver)
@@ -1315,6 +1337,12 @@ class BurpExtender(
                 len(api_endpoints), filter_meta.get("excluded_endpoints", 0)
             )
         )
+        if excluded_missing_host:
+            summary.append(
+                "[*] Skipped: {} endpoints missing host metadata".format(
+                    excluded_missing_host
+                )
+            )
         summary.append("[*] Testing {} version variations".format(len(versions)))
         summary.append("[*] Total tests: {}\n".format(len(self.version_results)))
 
@@ -3551,6 +3579,9 @@ class BurpExtender(
         return {
             "path": entry["normalized_path"],
             "method": entry["method"],
+            "host": self._ascii_safe(entry.get("host"), lower=True).strip(),
+            "protocol": self._ascii_safe(entry.get("protocol"), lower=True).strip()
+            or "https",
             "auth": entry.get("auth_detected", []),
             "params": {
                 "url": self._normalize_param_list(params.get("url", [])),
@@ -4013,6 +4044,7 @@ class BurpExtender(
         filtered = {}
         excluded_method = 0
         excluded_noise = 0
+        excluded_non_api = 0
 
         for key, entries in base_targets.items():
             entry = self._get_entry(entries)
@@ -4023,15 +4055,52 @@ class BurpExtender(
                 continue
 
             path = self._ascii_safe(normalized.get("path") or "/", lower=True)
+            content_type = self._ascii_safe(
+                normalized.get("content_type"), lower=True
+            ).strip()
             auth = [
                 self._ascii_safe(x, lower=True)
                 for x in (normalized.get("auth", []) or [])
             ]
             has_auth_context = any(x != "none" for x in auth)
+            has_api_marker = bool(
+                "/api/" in path
+                or "/graphql" in path
+                or "/rest/" in path
+                or "/openapi" in path
+                or "/swagger" in path
+                or "/metadata/" in path
+                or "/oauth" in path
+                or "/auth/" in path
+                or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+            )
+            has_structured_content = bool(
+                (
+                    "json" in content_type
+                    or "xml" in content_type
+                    or "protobuf" in content_type
+                    or "x-www-form-urlencoded" in content_type
+                    or "multipart/form-data" in content_type
+                )
+                and "javascript" not in content_type
+                and "html" not in content_type
+            )
+
+            if self._path_contains_noise_marker(
+                path, self.PARAM_MINER_STRICT_NOISE_PATH_MARKERS
+            ):
+                excluded_noise += 1
+                continue
             if (not has_auth_context) and self._path_contains_noise_marker(
                 path, self.PARAM_MINER_NOISE_PATH_MARKERS
             ):
                 excluded_noise += 1
+                continue
+            if method == "GET" and (not has_api_marker) and (not has_structured_content):
+                excluded_non_api += 1
+                continue
+            if self._is_frontend_route(path, content_type):
+                excluded_non_api += 1
                 continue
 
             filtered[key] = entries
@@ -4041,9 +4110,11 @@ class BurpExtender(
             "filtered_endpoints": len(filtered),
             "excluded_endpoints": base_meta.get("excluded_endpoints", 0)
             + excluded_method
-            + excluded_noise,
+            + excluded_noise
+            + excluded_non_api,
             "excluded_method": excluded_method,
             "excluded_noise": excluded_noise,
+            "excluded_non_api": excluded_non_api,
         }
 
     def _collect_version_targets(self):
@@ -4051,6 +4122,7 @@ class BurpExtender(
         param_targets, param_meta = self._collect_param_targets()
         filtered = {}
         excluded_non_api = 0
+        excluded_noise = 0
         retained_versioned = 0
 
         for key, entries in param_targets.items():
@@ -4058,6 +4130,11 @@ class BurpExtender(
             normalized = self._normalize_endpoint_data(entry)
             path = self._ascii_safe(normalized.get("path") or "/", lower=True)
             method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+            if self._path_contains_noise_marker(
+                path, self.VERSION_SCANNER_NOISE_PATH_MARKERS
+            ):
+                excluded_noise += 1
+                continue
             already_versioned = bool(self._extract_version_segment(path))
 
             api_marker = any(x in path for x in ["/api/", "/svc/", "/rest/", "/graphql"])
@@ -4077,8 +4154,10 @@ class BurpExtender(
         return filtered, {
             "raw_endpoints": param_meta.get("raw_endpoints", 0),
             "filtered_endpoints": len(filtered),
+            "excluded_noise": excluded_noise,
             "excluded_endpoints": param_meta.get("excluded_endpoints", 0)
-            + excluded_non_api,
+            + excluded_non_api
+            + excluded_noise,
             "retained_versioned": retained_versioned,
             "excluded_non_api": excluded_non_api,
         }

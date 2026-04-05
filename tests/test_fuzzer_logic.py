@@ -39,6 +39,8 @@ class FuzzerLogic:
         return {
             "path": entry["normalized_path"],
             "method": entry["method"],
+            "host": (entry.get("host") or "").strip().lower(),
+            "protocol": (entry.get("protocol") or "").strip().lower() or "https",
             "auth": entry.get("auth_detected", []),
             "params": {
                 "url": self._normalize_param_list(params.get("url", [])),
@@ -156,6 +158,8 @@ def test_normalize_endpoint_data_imported():
     
     assert normalized["path"] == "/api/users/{id}"
     assert normalized["method"] == "GET"
+    assert normalized["host"] == ""
+    assert normalized["protocol"] == "https"
     assert normalized["auth"] == ["Bearer Token"]
     assert normalized["params"]["url"] == ["id", "filter"]
     assert normalized["params"]["cookie"] == ["session"]
@@ -173,6 +177,8 @@ def test_normalize_endpoint_data_live():
     entry = {
         "normalized_path": "/api/users/{id}",
         "method": "GET",
+        "host": "API.EXAMPLE.COM",
+        "protocol": "HTTP",
         "auth_detected": ["Bearer Token"],
         "parameters": {
             "url": {"id": "123", "filter": "active"},
@@ -189,6 +195,8 @@ def test_normalize_endpoint_data_live():
     normalized = fuzzer._normalize_endpoint_data(entry)
     
     assert normalized["path"] == "/api/users/{id}"
+    assert normalized["host"] == "api.example.com"
+    assert normalized["protocol"] == "http"
     assert set(normalized["params"]["url"]) == {"id", "filter"}
     assert set(normalized["params"]["cookie"]) == {"session"}
     

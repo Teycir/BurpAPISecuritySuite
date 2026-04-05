@@ -212,15 +212,24 @@ def test_param_and_version_collectors_scope_out_noise():
     text = _source_text()
     required_tokens = [
         "PARAM_MINER_NOISE_PATH_MARKERS = (",
+        "PARAM_MINER_STRICT_NOISE_PATH_MARKERS = (",
+        "VERSION_SCANNER_NOISE_PATH_MARKERS = (",
         "def _collect_param_targets(",
         "def _collect_version_targets(",
         "def _build_version_test_path(",
         "api_endpoints, filter_meta = self._collect_param_targets()",
         "api_endpoints, filter_meta = self._collect_version_targets()",
         '"[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(',
+        "if self._path_contains_noise_marker(",
+        "path, self.PARAM_MINER_STRICT_NOISE_PATH_MARKERS",
         "if (not has_auth_context) and self._path_contains_noise_marker(",
+        "path, self.VERSION_SCANNER_NOISE_PATH_MARKERS",
+        "if method == \"GET\" and (not has_api_marker) and (not has_structured_content):",
+        "if self._is_frontend_route(path, content_type):",
         "already_versioned = bool(self._extract_version_segment(path))",
         "if (not already_versioned) and (not api_marker) and method not in [",
+        "excluded_missing_host = 0",
+        "excluded_missing_host += 1",
         "test_path = self._build_version_test_path(path, ver)",
     ]
     for token in required_tokens:
