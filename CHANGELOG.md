@@ -2,6 +2,43 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.1] - 2026-04-05
+
+### Changed
+- Reordered tab layout to keep internal workflow tabs first:
+  - `Recon`, `Diff`, `Version Scanner`, `Param Miner`, `Fuzzer`, `Auth Replay`, `Passive Discovery`
+- Moved external scanner/tool tabs to the end in operational order:
+  - `Nuclei`, `HTTPX`, `Katana`, `FFUF`, `Wayback`, `SQLMap Verify`, `Dalfox Verify`, `API Assets`, `OpenAPI Drift`
+
+### Documentation
+- Updated README Tab Overview ordering and numbering to match the in-app UI.
+- Added explicit `Passive Discovery` tab documentation in Tab Overview.
+- Updated README release/version references for semver consistency after `1.3.0`.
+
+## [1.2.2] - 2026-04-05
+
+### Added
+- **Enhanced GraphQL Fuzzing**: Expanded GraphQL attack payloads from 5 to 40+ vectors
+  - Advanced introspection queries (queryType, mutationType, __type)
+  - Field suggestion attacks for schema discovery when introspection is disabled
+  - Directive overloading (@skip, @include, @deprecated abuse)
+  - Circular fragment DoS attacks
+  - Array-based batching attacks
+  - Improved depth attacks with deeper nesting
+  - Additional mutation injection payloads
+- GraphQL FAQ entry with three-pronged testing approach (Fuzzer + Nuclei + Manual)
+- Nuclei GraphQL template documentation (29+ templates available)
+
+### Changed
+- GraphQL attack detection now includes 7 attack categories (was 4)
+- Updated GraphQL risk description to include schema disclosure and field suggestion
+- Improved GraphQL payload organization by attack type
+
+### Documentation
+- Updated README with detailed GraphQL attack capabilities
+- Added GraphQL testing guidance in FAQ section
+- Documented Nuclei GraphQL template integration
+
 ## [1.2.1] - 2026-04-05
 
 ### Changed
