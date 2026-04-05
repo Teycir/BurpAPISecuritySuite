@@ -231,6 +231,61 @@ class BurpExtender(
         "tr",
         "ac",
     )
+    FUZZER_STRICT_NOISE_PATH_MARKERS = (
+        "/cdn-cgi",
+        "/__cf_chl_",
+        "/captcha",
+        "/recaptcha",
+        "/sodar",
+        "/_/js",
+        "/_/tvty",
+    )
+    FUZZER_SQLI_PARAM_KEYWORDS = (
+        "id",
+        "user",
+        "account",
+        "email",
+        "name",
+        "search",
+        "query",
+        "q",
+        "filter",
+        "sort",
+        "order",
+        "where",
+        "page",
+        "limit",
+        "offset",
+    )
+    FUZZER_SSRF_PARAM_KEYWORDS = (
+        "url",
+        "uri",
+        "dest",
+        "destination",
+        "target",
+        "redirect",
+        "endpoint",
+        "webhook",
+        "proxy",
+        "image",
+        "file",
+        "download",
+        "fetch",
+        "callback_url",
+    )
+    FUZZER_SSTI_PARAM_KEYWORDS = (
+        "template",
+        "tpl",
+        "view",
+        "render",
+        "content",
+        "message",
+        "body",
+        "subject",
+        "html",
+        "markdown",
+        "text",
+    )
     PARAM_MINER_NOISE_PATH_MARKERS = (
         "/openrtb",
         "/prebid",
@@ -1246,6 +1301,11 @@ class BurpExtender(
 
         # Action buttons
         action_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        self.version_lenient_checkbox = JCheckBox("Lenient JSON GET", False)
+        self.version_lenient_checkbox.setToolTipText(
+            "Include JSON/XML GET routes without explicit /api/ marker"
+        )
+        action_row.add(self.version_lenient_checkbox)
         action_row.add(
             self._create_action_button(
                 "Scan Versions", Color(40, 167, 69), lambda e: self._scan_versions()
@@ -1302,8 +1362,13 @@ class BurpExtender(
         self.version_results = []
         lines = []
         excluded_missing_host = 0
+        lenient_mode = bool(
+            hasattr(self, "version_lenient_checkbox")
+            and self.version_lenient_checkbox is not None
+            and self.version_lenient_checkbox.isSelected()
+        )
 
-        api_endpoints, filter_meta = self._collect_version_targets()
+        api_endpoints, filter_meta = self._collect_version_targets(lenient=lenient_mode)
 
         if not api_endpoints:
             self.version_area.setText(
@@ -1332,6 +1397,9 @@ class BurpExtender(
                 self.version_results.append(result)
 
         summary = []
+        summary.append(
+            "[*] Mode: {}".format("Lenient JSON GET" if lenient_mode else "Strict")
+        )
         summary.append(
             "[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(
                 len(api_endpoints), filter_meta.get("excluded_endpoints", 0)
@@ -1493,6 +1561,11 @@ class BurpExtender(
 
         # Action buttons
         action_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        self.param_lenient_checkbox = JCheckBox("Lenient JSON GET", False)
+        self.param_lenient_checkbox.setToolTipText(
+            "Include structured GET routes even without explicit /api/ marker"
+        )
+        action_row.add(self.param_lenient_checkbox)
         action_row.add(
             self._create_action_button(
                 "Mine Params", Color(40, 167, 69), lambda e: self._mine_params()
@@ -1537,8 +1610,15 @@ class BurpExtender(
 
         base_params = [p.strip() for p in self.param_input.getText().split(",")]
         self.param_results = []
+        lenient_mode = bool(
+            hasattr(self, "param_lenient_checkbox")
+            and self.param_lenient_checkbox is not None
+            and self.param_lenient_checkbox.isSelected()
+        )
 
-        api_endpoints, filter_meta = self._collect_param_targets()
+        api_endpoints, filter_meta = self._collect_param_targets(
+            strict_base=not lenient_mode
+        )
 
         if not api_endpoints:
             self.param_area.setText(
@@ -1564,6 +1644,9 @@ class BurpExtender(
                 medium_priority[key] = entries
 
         lines = []
+        lines.append(
+            "[*] Mode: {}".format("Lenient JSON GET" if lenient_mode else "Strict")
+        )
         lines.append(
             "[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(
                 len(api_endpoints), filter_meta.get("excluded_endpoints", 0)
@@ -1702,6 +1785,11 @@ class BurpExtender(
             ]
         )
         controls.add(self.attack_type_combo)
+        self.fuzzer_lenient_checkbox = JCheckBox("Lenient JSON GET", False)
+        self.fuzzer_lenient_checkbox.setToolTipText(
+            "Broaden endpoint selection to include structured GET routes"
+        )
+        controls.add(self.fuzzer_lenient_checkbox)
         controls.add(
             self._create_action_button(
                 "Generate",
@@ -3617,6 +3705,59 @@ class BurpExtender(
                 return True
         return False
 
+    def _fuzzer_has_api_signal(self, normalized, include_write_method=False):
+        """Check whether endpoint looks like an API target (not generic frontend traffic)."""
+        method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+        path = self._ascii_safe(normalized.get("path") or "/", lower=True).strip()
+        content_type = self._ascii_safe(normalized.get("content_type"), lower=True).strip()
+        has_api_marker = bool(
+            "/api/" in path
+            or "/graphql" in path
+            or "/rest/" in path
+            or "/openapi" in path
+            or "/swagger" in path
+            or "/metadata/" in path
+            or "/oauth" in path
+            or "/auth/" in path
+            or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+        )
+        has_structured_content = bool(
+            (
+                "json" in content_type
+                or "xml" in content_type
+                or "protobuf" in content_type
+                or "x-www-form-urlencoded" in content_type
+                or "multipart/form-data" in content_type
+            )
+            and "javascript" not in content_type
+            and "html" not in content_type
+        )
+        if include_write_method and method in ["POST", "PUT", "PATCH", "DELETE"]:
+            return True
+        return has_api_marker or has_structured_content
+
+    def _fuzzer_has_object_target(self, normalized):
+        """Check for object/resource targeting hints for auth/BOLA style tests."""
+        path = self._ascii_safe(normalized.get("path") or "/", lower=True)
+        if any(x in path for x in ["{id}", "{uuid}", "{objectid}"]):
+            return True
+        if self.NUMERIC_ID_PATTERN.search(path):
+            return True
+        if self.UUID_PATTERN.search(path):
+            return True
+        if self.OBJECTID_PATTERN.search(path):
+            return True
+        params = normalized.get("params", {})
+        param_names = (
+            list(params.get("url", []))
+            + list(params.get("body", []))
+            + list(params.get("json", []))
+        )
+        for name in [self._ascii_safe(x, lower=True) for x in param_names]:
+            if any(token in name for token in ["id", "uuid", "object", "user", "account"]):
+                return True
+        return False
+
     def _check_idor(self, normalized, attack_type):
         """Check if endpoint is vulnerable to IDOR - verify ID params are used"""
         if not self._attack_selected(attack_type, ["BOLA", "IDOR"]):
@@ -3656,10 +3797,14 @@ class BurpExtender(
         }
 
     def _check_bola(self, normalized, attack_type):
-        """Check for BOLA-specific attacks (all endpoints with auth)"""
+        """Check for BOLA-specific attacks on authenticated API-like object targets."""
         if not self._attack_selected(attack_type, ["BOLA"]):
             return None
         if "None" in normalized["auth"]:
+            return None
+        if not self._fuzzer_has_api_signal(normalized):
+            return None
+        if not self._fuzzer_has_object_target(normalized):
             return None
 
         techniques = self._get_bola_techniques()
@@ -3692,10 +3837,14 @@ class BurpExtender(
         }
 
     def _check_auth_bypass(self, normalized, attack_type):
-        """Check if endpoint has auth bypass potential"""
+        """Check auth bypass potential for authenticated API-like object targets."""
         if not self._attack_selected(attack_type, ["Auth Bypass"]):
             return None
         if "None" in normalized["auth"]:
+            return None
+        if not self._fuzzer_has_api_signal(normalized):
+            return None
+        if not self._fuzzer_has_object_target(normalized):
             return None
         details = ["Remove auth, invalid tokens, expired tokens"]
         if "Bearer Token" in normalized["auth"]:
@@ -3711,27 +3860,42 @@ class BurpExtender(
         }
 
     def _check_sqli(self, normalized, attack_type):
-        """Check if endpoint has SQLi potential - verify params are used"""
+        """Check SQLi potential with API + parameter + route semantics."""
         if not self._attack_selected(attack_type, ["SQLi", "SQL Injection"]):
             return None
-        params = normalized["params"]
-        if not params["url"] and not params["body"]:
+        if not self._fuzzer_has_api_signal(normalized):
             return None
-        
-        # Prioritize endpoints that look like they query databases
+        params = normalized["params"]
+        candidate_params = list(params.get("url", [])) + list(params.get("body", [])) + list(
+            params.get("json", [])
+        )
+        if not candidate_params:
+            return None
+
+        candidate_params_lower = [self._ascii_safe(x, lower=True) for x in candidate_params]
+        sqli_params = []
+        for idx, name in enumerate(candidate_params_lower):
+            if any(keyword in name for keyword in self.FUZZER_SQLI_PARAM_KEYWORDS):
+                sqli_params.append(candidate_params[idx])
+        if not sqli_params:
+            return None
+
+        # Require route semantics that suggest server-side querying
         path = normalized["path"].lower()
         likely_db_query = any(
             indicator in path for indicator in [
-                "search", "query", "filter", "find", "list", "get", "user", "account"
+                "search", "query", "filter", "find", "list", "lookup", "report", "user", "account"
             ]
         )
-        
+        if not likely_db_query:
+            return None
+
         return {
             "type": "SQL Injection",
-            "params": params["url"][:5] if params["url"] else [],
+            "params": sqli_params[:5],
             "payloads": self._get_sqli_payloads()[:5],
             "risk": "Database compromise",
-            "confidence": "High" if likely_db_query else "Medium",
+            "confidence": "High",
             "note": "Test for actual SQL errors in response before confirming vulnerability"
         }
 
@@ -3759,25 +3923,30 @@ class BurpExtender(
         """Check for SSRF candidates using path/parameter hints."""
         if not self._attack_selected(attack_type, ["SSRF"]):
             return None
+        if not self._fuzzer_has_api_signal(normalized):
+            return None
         params = normalized["params"]
         candidate_params = list(params.get("url", [])) + list(params.get("body", [])) + list(
             params.get("json", [])
         )
-        candidate_params_lower = [str(x).lower() for x in candidate_params]
+        candidate_params_lower = [self._ascii_safe(x, lower=True) for x in candidate_params]
         path = normalized["path"].lower()
-        param_hits = any(
-            any(keyword in name for keyword in self.PASSIVE_CALLBACK_PARAM_KEYWORDS)
-            for name in candidate_params_lower
-        )
+        ssrf_params = []
+        for idx, name in enumerate(candidate_params_lower):
+            if any(keyword in name for keyword in self.FUZZER_SSRF_PARAM_KEYWORDS):
+                ssrf_params.append(candidate_params[idx])
         path_hits = any(
             marker in path
-            for marker in ["/proxy", "/fetch", "/callback", "/redirect", "/webhook", "/import", "/image", "/url"]
+            for marker in ["/proxy", "/fetch", "/webhook", "/import", "/redirect", "/url"]
         )
-        if not param_hits and not path_hits:
+        if not ssrf_params:
+            return None
+        method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+        if (not path_hits) and method not in ["POST", "PUT", "PATCH"]:
             return None
         return {
             "type": "SSRF",
-            "params": candidate_params[:6],
+            "params": ssrf_params[:6],
             "payloads": self._get_ssrf_payloads()[:6],
             "test": "Probe internal hosts, metadata endpoints, and protocol confusion",
             "risk": "Internal network access, metadata theft, and pivoting",
@@ -3905,7 +4074,7 @@ class BurpExtender(
         lines.append("")  # Blank line between attacks
         return lines
 
-    def _fuzzer_endpoint_is_api_like(self, normalized):
+    def _fuzzer_endpoint_is_api_like(self, normalized, strict=True):
         """Gate fuzzer candidates to API-like traffic, not static/ad-tech routes."""
         method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
         path = self._ascii_safe(normalized.get("path") or "/", lower=True).strip()
@@ -3920,7 +4089,13 @@ class BurpExtender(
         if parts:
             first_part = parts[0]
 
+        if strict and self._path_contains_noise_marker(
+            path, self.FUZZER_STRICT_NOISE_PATH_MARKERS
+        ):
+            return False
         if path.endswith(self.PASSIVE_STATIC_EXTENSIONS):
+            return False
+        if path.endswith(".html") and "/api/" not in path:
             return False
         if first_part in self.FUZZER_STATIC_PATH_PARTS:
             return False
@@ -3937,28 +4112,7 @@ class BurpExtender(
         ):
             return False
 
-        has_api_marker = bool(
-            "/api/" in path
-            or "/graphql" in path
-            or "/rest/" in path
-            or "/openapi" in path
-            or "/swagger" in path
-            or "/metadata/" in path
-            or "/oauth" in path
-            or "/auth/" in path
-            or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
-        )
-        has_structured_content = bool(
-            (
-                "json" in content_type
-                or "xml" in content_type
-                or "protobuf" in content_type
-                or "x-www-form-urlencoded" in content_type
-                or "multipart/form-data" in content_type
-            )
-            and "javascript" not in content_type
-            and "html" not in content_type
-        )
+        has_api_signal = self._fuzzer_has_api_signal(normalized)
 
         params = normalized.get("params", {})
         param_count = 0
@@ -3971,26 +4125,27 @@ class BurpExtender(
         has_auth_context = any(x != "none" for x in auth)
         has_write_method = method in ["POST", "PUT", "PATCH", "DELETE"]
 
-        if len(path) > 220 and not (
-            has_api_marker or has_structured_content or has_write_method
-        ):
+        if len(path) > 220 and not (has_api_signal or has_write_method):
             return False
-        if re.search(r"/[a-z0-9_-]{80,}", path) and not (
-            has_api_marker or has_structured_content or has_write_method
-        ):
+        if re.search(r"/[a-z0-9_-]{80,}", path) and not (has_api_signal or has_write_method):
             return False
 
-        if has_write_method:
+        if has_api_signal:
             return True
-        if has_api_marker or has_structured_content:
+        if has_write_method and has_auth_context:
             return True
-        if has_id_hint and has_auth_context:
+        if has_id_hint and has_auth_context and has_api_signal:
             return True
-        if param_count >= 4 and first_part and first_part not in self.FUZZER_STATIC_PATH_PARTS:
+        if (
+            method in ["POST", "PUT", "PATCH"]
+            and param_count >= 2
+            and first_part
+            and first_part not in self.FUZZER_STATIC_PATH_PARTS
+        ):
             return True
         return False
 
-    def _collect_fuzzer_targets(self):
+    def _collect_fuzzer_targets(self, strict=True):
         """Collect fuzzer targets from first-party/API-like entries only."""
         raw_snapshot = {}
         with self.lock:
@@ -4016,7 +4171,7 @@ class BurpExtender(
                 status = int(normalized.get("response_status", 200) or 200)
                 if status == 404:
                     continue
-                if not self._fuzzer_endpoint_is_api_like(normalized):
+                if not self._fuzzer_endpoint_is_api_like(normalized, strict=strict):
                     continue
                 kept_entries.append(entry)
 
@@ -4038,9 +4193,9 @@ class BurpExtender(
             return False
         return any(marker in text for marker in markers)
 
-    def _collect_param_targets(self):
+    def _collect_param_targets(self, strict_base=True):
         """Collect Param Miner targets with first-party/API-like and ad-tech noise filtering."""
-        base_targets, base_meta = self._collect_fuzzer_targets()
+        base_targets, base_meta = self._collect_fuzzer_targets(strict=strict_base)
         filtered = {}
         excluded_method = 0
         excluded_noise = 0
@@ -4117,9 +4272,11 @@ class BurpExtender(
             "excluded_non_api": excluded_non_api,
         }
 
-    def _collect_version_targets(self):
+    def _collect_version_targets(self, lenient=False):
         """Collect Version Scanner targets from Param Miner scoped target set."""
-        param_targets, param_meta = self._collect_param_targets()
+        param_targets, param_meta = self._collect_param_targets(
+            strict_base=not bool(lenient)
+        )
         filtered = {}
         excluded_non_api = 0
         excluded_noise = 0
@@ -4130,6 +4287,20 @@ class BurpExtender(
             normalized = self._normalize_endpoint_data(entry)
             path = self._ascii_safe(normalized.get("path") or "/", lower=True)
             method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+            content_type = self._ascii_safe(
+                normalized.get("content_type"), lower=True
+            ).strip()
+            has_structured_content = bool(
+                (
+                    "json" in content_type
+                    or "xml" in content_type
+                    or "protobuf" in content_type
+                    or "x-www-form-urlencoded" in content_type
+                    or "multipart/form-data" in content_type
+                )
+                and "javascript" not in content_type
+                and "html" not in content_type
+            )
             if self._path_contains_noise_marker(
                 path, self.VERSION_SCANNER_NOISE_PATH_MARKERS
             ):
@@ -4144,6 +4315,9 @@ class BurpExtender(
                 "PATCH",
                 "DELETE",
             ]:
+                if lenient and has_structured_content:
+                    filtered[key] = entries
+                    continue
                 excluded_non_api += 1
                 continue
 
@@ -4266,12 +4440,30 @@ class BurpExtender(
     def _check_ssti(self, normalized, attack_type):
         if not self._attack_selected(attack_type, ["SSTI"]):
             return None
+        if not self._fuzzer_has_api_signal(normalized):
+            return None
         params = normalized["params"]
-        if not params["url"] and not params["body"]:
+        candidate_params = list(params.get("url", [])) + list(params.get("body", [])) + list(
+            params.get("json", [])
+        )
+        if not candidate_params:
+            return None
+        candidate_params_lower = [self._ascii_safe(x, lower=True) for x in candidate_params]
+        path = self._ascii_safe(normalized.get("path") or "/", lower=True)
+        ssti_params = []
+        for idx, name in enumerate(candidate_params_lower):
+            if any(keyword in name for keyword in self.FUZZER_SSTI_PARAM_KEYWORDS):
+                ssti_params.append(candidate_params[idx])
+        path_hits = any(
+            marker in path
+            for marker in ["/template", "/render", "/preview", "/email", "/view", "/compile"]
+        )
+        if not ssti_params and not path_hits:
             return None
         return {
             "type": "SSTI",
             "payloads": self._get_ssti_payloads()[:6],
+            "params": ssti_params[:5],
             "test": "Template injection in params",
             "risk": "Remote code execution",
         }
@@ -4390,6 +4582,11 @@ class BurpExtender(
         """UI wrapper for fuzzing generation"""
         self.log_to_ui("[*] Generating {} attacks".format(attack_type))
         self.fuzzer_area.setText("[*] Generating {} attacks...\n".format(attack_type))
+        lenient_mode = bool(
+            hasattr(self, "fuzzer_lenient_checkbox")
+            and self.fuzzer_lenient_checkbox is not None
+            and self.fuzzer_lenient_checkbox.isSelected()
+        )
 
         if not self.api_data:
             msg = "[!] No endpoints captured. Import data or capture traffic first."
@@ -4397,7 +4594,7 @@ class BurpExtender(
             self.log_to_ui("[!] No endpoints to fuzz")
             return
 
-        api_endpoints, filter_meta = self._collect_fuzzer_targets()
+        api_endpoints, filter_meta = self._collect_fuzzer_targets(strict=not lenient_mode)
         excluded_count = int(filter_meta.get("excluded_endpoints", 0))
 
         if not api_endpoints:
@@ -4439,6 +4636,9 @@ class BurpExtender(
             summary.append("FUZZING CAMPAIGN: {}".format(attack_type))
             summary.append("="*80)
             summary.append("")
+            summary.append(
+                "[*] Mode: {}".format("Lenient JSON GET" if lenient_mode else "Strict")
+            )
             summary.append(
                 "[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(
                     len(api_endpoints), excluded_count
