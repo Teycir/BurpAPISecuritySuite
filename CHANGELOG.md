@@ -18,6 +18,7 @@ All notable changes to this project are documented in this file.
 ### Changed
 - `Export for LLM` now conditionally writes AI prep artifacts when `AI_PREP_LAYER` is enabled, while preserving all existing export files and schemas unchanged.
 - Refactored heavy AI prep builder logic into `ai_prep_layer.py` and kept lightweight wrappers in `BurpAPISecuritySuite.py` to reduce single-module compile pressure in Jython/Burp environments.
+- Extracted large external scanner runner methods into `heavy_runners.py` and delegated from `BurpAPISecuritySuite.py` wrappers (`GraphQL`, `Nuclei`, `HTTPX`, `Katana`, `FFUF`, `Wayback`) to further reduce Jython compile-size risk (`Module or method too large`).
 
 ### Tests
 - Expanded `tests/test_feature_contracts.py` with additive export-contract checks for:

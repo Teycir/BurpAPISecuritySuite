@@ -9,9 +9,18 @@ import os
 
 def _source_text():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    source_path = os.path.join(base_dir, "BurpAPISecuritySuite.py")
-    with open(source_path, "r") as handle:
-        return handle.read()
+    source_paths = [
+        os.path.join(base_dir, "BurpAPISecuritySuite.py"),
+        os.path.join(base_dir, "heavy_runners.py"),
+        os.path.join(base_dir, "ai_prep_layer.py"),
+    ]
+    chunks = []
+    for source_path in source_paths:
+        if not os.path.exists(source_path):
+            continue
+        with open(source_path, "r") as handle:
+            chunks.append(handle.read())
+    return "\n".join(chunks)
 
 
 def test_fuzzer_dropdown_includes_extended_modes():
@@ -683,3 +692,26 @@ def test_ai_prep_layer_exports_are_additive_and_non_destructive():
     for token in required_tokens:
         assert token in text, "Missing AI prep layer token: {}".format(token)
     print("[PASS] test_ai_prep_layer_exports_are_additive_and_non_destructive")
+
+
+def test_heavy_runner_methods_are_delegated_for_jython_compile_safety():
+    text = _source_text()
+    required_tokens = [
+        "import heavy_runners",
+        "def _run_graphql_analysis(self, event):",
+        "return heavy_runners._run_graphql_analysis(self, event)",
+        "def _run_nuclei(self):",
+        "return heavy_runners._run_nuclei(self)",
+        "def _run_httpx(self, event):",
+        "return heavy_runners._run_httpx(self, event)",
+        "def _run_katana(self, event):",
+        "return heavy_runners._run_katana(self, event)",
+        "def _run_ffuf(self, event):",
+        "return heavy_runners._run_ffuf(self, event)",
+        "def _run_wayback(self):",
+        "return heavy_runners._run_wayback(self)",
+        "Heavy external-tool runner methods extracted to reduce Jython method size pressure.",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing heavy-runner delegation token: {}".format(token)
+    print("[PASS] test_heavy_runner_methods_are_delegated_for_jython_compile_safety")
