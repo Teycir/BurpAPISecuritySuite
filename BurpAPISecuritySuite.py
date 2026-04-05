@@ -632,7 +632,7 @@ class BurpExtender(
         self.tabbed_pane.addTab("Katana", katana_panel)
         self.tabbed_pane.addTab("FFUF", ffuf_panel)
         self.tabbed_pane.addTab("Wayback", wayback_panel)
-        self.tabbed_pane.addTab("sqlmap", sqlmap_verify_panel)
+        self.tabbed_pane.addTab("Sqlmap", sqlmap_verify_panel)
         self.tabbed_pane.addTab("Delfox", dalfox_verify_panel)
         self.tabbed_pane.addTab("Subfinder", asset_discovery_panel)
         self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)
