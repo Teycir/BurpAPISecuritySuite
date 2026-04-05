@@ -633,7 +633,7 @@ class BurpExtender(
         self.tabbed_pane.addTab("FFUF", ffuf_panel)
         self.tabbed_pane.addTab("Wayback", wayback_panel)
         self.tabbed_pane.addTab("Sqlmap", sqlmap_verify_panel)
-        self.tabbed_pane.addTab("Delfox", dalfox_verify_panel)
+        self.tabbed_pane.addTab("Dalfox", dalfox_verify_panel)
         self.tabbed_pane.addTab("Subfinder", asset_discovery_panel)
         self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)
         self.tabbed_pane.addTab("GraphQL", graphql_panel)
@@ -1900,6 +1900,13 @@ class BurpExtender(
         controls.add(JLabel("Max Domains:"))
         self.asset_max_domains_field = JTextField("8", 3)
         controls.add(self.asset_max_domains_field)
+        controls.add(
+            self._create_action_button(
+                "Show Targets",
+                Color(70, 130, 180),
+                lambda e: self._show_asset_targets_popup(e),
+            )
+        )
         controls.add(JLabel("Profile:"))
         self.asset_profile_combo = JComboBox(self._profile_labels())
         self.asset_profile_combo.setSelectedItem("Balanced")
@@ -1961,39 +1968,43 @@ class BurpExtender(
                 ],
             )
         )
-        controls.add(
+
+        actions_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        actions_row.add(
             self._create_action_button(
                 "Run Subfinder",
                 Color(138, 43, 226),
                 lambda e: self._run_api_asset_discovery(e),
             )
         )
-        controls.add(
+        actions_row.add(
             self._create_action_button(
                 "Stop", Color(255, 140, 0), lambda e: self._stop_asset_discovery(e)
             )
         )
-        self._add_force_kill_button(controls, lambda: getattr(self, "asset_area", None))
-        controls.add(
+        self._add_force_kill_button(
+            actions_row, lambda: getattr(self, "asset_area", None)
+        )
+        actions_row.add(
             self._create_action_button(
                 "Send to Recon",
                 Color(76, 175, 80),
                 lambda e: self._send_asset_discovery_to_recon(),
             )
         )
-        controls.add(
+        actions_row.add(
             self._create_action_button(
                 "Export Results",
                 Color(70, 130, 180),
                 lambda e: self._export_asset_discovery_results(),
             )
         )
-        controls.add(
+        actions_row.add(
             self._create_action_button(
                 "Clear", Color(108, 117, 125), lambda e: self.asset_area.setText("")
             )
         )
-        controls.add(
+        actions_row.add(
             self._create_action_button(
                 "Copy",
                 Color(96, 125, 139),
@@ -2004,12 +2015,18 @@ class BurpExtender(
         help_row.add(self.asset_preset_help_label)
 
         top_panel.add(controls)
+        top_panel.add(actions_row)
         top_panel.add(help_row)
         panel.add(top_panel, BorderLayout.NORTH)
         self.asset_area, scroll = self._create_text_area_panel()
         panel.add(scroll, BorderLayout.CENTER)
         self.asset_discovered = []
+        self.asset_target_candidates = []
+        self.asset_selected_domains = []
         self.asset_lock = threading.Lock()
+        self._autopopulate_asset_domains_from_history(
+            overwrite=False, append_output=False
+        )
         return panel
 
     def _create_openapi_drift_tab(self):
@@ -2037,6 +2054,13 @@ class BurpExtender(
                 "Detect",
                 Color(70, 130, 180),
                 lambda e: self._detect_openapi_spec_from_history(e),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Show Targets",
+                Color(70, 130, 180),
+                lambda e: self._show_openapi_spec_targets_popup(e),
             )
         )
         controls.add(
@@ -2092,6 +2116,7 @@ class BurpExtender(
         self.openapi_drift_results = []
         self.openapi_missing_candidates = []
         self.openapi_spec_candidates = []
+        self.openapi_selected_spec_targets = []
         self.openapi_lock = threading.Lock()
         self._autoselect_openapi_spec_from_history(append_output=False)
         return panel
@@ -2860,6 +2885,13 @@ class BurpExtender(
         controls.add(self.graphql_max_targets_field)
         controls.add(
             self._create_action_button(
+                "Show Targets",
+                Color(70, 130, 180),
+                lambda e: self._show_graphql_targets_popup(e),
+            )
+        )
+        controls.add(
+            self._create_action_button(
                 "Run Analysis",
                 Color(138, 43, 226),
                 lambda e: self._run_graphql_analysis(e),
@@ -2912,7 +2944,12 @@ class BurpExtender(
         panel.add(scroll, BorderLayout.CENTER)
         self.graphql_results = []
         self.graphql_recon_candidates = []
+        self.graphql_target_candidates = []
+        self.graphql_selected_targets = []
         self.graphql_lock = threading.Lock()
+        self._autopopulate_graphql_targets_from_history(
+            overwrite=False, append_output=False
+        )
         return panel
 
     # ============================================================================
@@ -5180,46 +5217,230 @@ def handleResponse(req, interesting):
             return self._ascii_safe(candidates[-1]).strip()
         return ""
 
-    def _collect_graphql_targets(self, max_targets):
-        """Collect GraphQL targets from optional input and Recon history."""
-        targets = []
-        seen = set()
+    def _normalize_graphql_target_url(self, value):
+        """Normalize user or history target text into an HTTP URL."""
+        text = self._ascii_safe(value).strip()
+        if not text:
+            return ""
+        if not text.startswith("http://") and not text.startswith("https://"):
+            text = text.strip("/")
+            if "/" not in text:
+                text = "https://{}/graphql".format(text)
+            else:
+                text = "https://{}".format(text)
+        return self._clean_url(text)
+
+    def _graphql_target_candidate_score(self, entry):
+        """Score likely GraphQL endpoint candidates from captured traffic."""
+        path = self._ascii_safe(
+            entry.get("path") or entry.get("normalized_path") or "/", lower=True
+        )
+        query = self._ascii_safe(entry.get("query_string") or "", lower=True)
+        body = self._ascii_safe(entry.get("request_body") or "", lower=True)
+        content_type = self._ascii_safe(entry.get("content_type") or "", lower=True)
+        method = self._ascii_safe(entry.get("method") or "GET", lower=True).strip().upper()
+
+        score = 0
+        if "graphql" in path:
+            score += 12
+        if "graphiql" in path or "playground" in path:
+            score += 8
+        if "graphql" in query:
+            score += 7
+        if any(token in query for token in ["query=", "operationname=", "__schema", "__type"]):
+            score += 6
+        if any(
+            token in body
+            for token in [
+                '"query"',
+                '"operationname"',
+                "mutation",
+                "subscription",
+                "__schema",
+                "__type",
+            ]
+        ):
+            score += 8
+        if "application/graphql" in content_type:
+            score += 6
+        if method in ["GET", "POST"] and score > 0:
+            score += 1
+        return score
+
+    def _collect_graphql_target_candidates(self, max_candidates=30):
+        """Collect ranked GraphQL target candidates from input and proxy history."""
+        try:
+            max_items = int(max_candidates)
+        except Exception as e:
+            self._callbacks.printError(
+                "GraphQL candidate max parsing failed: {}".format(
+                    self._ascii_safe(e)
+                )
+            )
+            max_items = 30
+        if max_items <= 0:
+            max_items = 30
+
+        candidate_scores = {}
 
         raw_input = self._ascii_safe(self.graphql_targets_field.getText()).strip()
         if raw_input:
-            for part in re.split(r"[\n,]+", raw_input):
-                value = self._ascii_safe(part).strip()
-                if not value:
+            for raw in self._parse_comma_newline_values(raw_input):
+                url = self._normalize_graphql_target_url(raw)
+                if not url:
                     continue
-                if not value.startswith("http://") and not value.startswith("https://"):
-                    value = value.strip("/")
-                    if "/" not in value:
-                        value = "https://{}/graphql".format(value)
-                    else:
-                        value = "https://{}".format(value)
-                clean = self._clean_url(value)
-                if clean and clean not in seen:
-                    seen.add(clean)
-                    targets.append(clean)
-                    if len(targets) >= max_targets:
-                        return targets
+                candidate_scores[url] = max(candidate_scores.get(url, 0), 40)
 
         with self.lock:
             snapshot = list(self.api_data.values())
         for entries in snapshot:
             entry = self._get_entry(entries)
-            path = self._ascii_safe(
-                entry.get("path") or entry.get("normalized_path") or "", lower=True
-            )
-            if "graphql" not in path:
+            score = self._graphql_target_candidate_score(entry)
+            if score <= 0:
                 continue
             url = self._clean_url(self._build_url(entry, True))
-            if not url or url in seen:
+            if not url:
                 continue
-            seen.add(url)
-            targets.append(url)
-            if len(targets) >= max_targets:
-                break
+            previous = candidate_scores.get(url, 0)
+            if score > previous:
+                candidate_scores[url] = score
+
+        ordered = sorted(
+            candidate_scores.items(), key=lambda item: (-int(item[1]), item[0])
+        )
+        return [
+            {"url": url, "score": int(score)}
+            for url, score in ordered[:max_items]
+        ]
+
+    def _autopopulate_graphql_targets_from_history(
+        self, overwrite=False, append_output=False
+    ):
+        """Populate GraphQL targets field with selected proxy-history candidates."""
+        if not hasattr(self, "graphql_targets_field") or self.graphql_targets_field is None:
+            return []
+
+        current_values = self._parse_comma_newline_values(
+            self.graphql_targets_field.getText()
+        )
+        if current_values and (not overwrite):
+            self.graphql_selected_targets = list(current_values)
+            return list(current_values)
+
+        candidates = self._collect_graphql_target_candidates(max_candidates=60)
+        self.graphql_target_candidates = list(candidates)
+        candidate_urls = [item.get("url") for item in candidates if item.get("url")]
+        if not candidate_urls:
+            if append_output and hasattr(self, "graphql_area") and self.graphql_area is not None:
+                self.graphql_area.append("[!] No GraphQL targets found in proxy history\n")
+            return []
+
+        selected = []
+        existing = list(getattr(self, "graphql_selected_targets", []) or [])
+        if existing and (not overwrite):
+            selected = [u for u in existing if u in candidate_urls]
+        if not selected:
+            selected = list(candidate_urls)
+
+        max_targets = self._parse_positive_int(
+            self.graphql_max_targets_field.getText(), 12, 1, 50
+        )
+        selected = selected[:max_targets]
+        self.graphql_selected_targets = list(selected)
+        self.graphql_targets_field.setText("\n".join(selected))
+
+        if append_output and hasattr(self, "graphql_area") and self.graphql_area is not None:
+            self.graphql_area.append(
+                "[+] GraphQL targets selected from history: {}\n".format(
+                    len(selected)
+                )
+            )
+        return list(selected)
+
+    def _show_graphql_targets_popup(self, event):
+        """Show selectable GraphQL targets from proxy history."""
+        candidates = self._collect_graphql_target_candidates(max_candidates=80)
+        self.graphql_target_candidates = list(candidates)
+        if not candidates:
+            if hasattr(self, "graphql_area") and self.graphql_area is not None:
+                self.graphql_area.setText(
+                    "[!] No GraphQL targets found in proxy history.\n"
+                    "[*] Enter targets manually in textbox.\n"
+                )
+            return
+
+        options = []
+        for idx, item in enumerate(candidates):
+            url = self._ascii_safe(item.get("url") or "").strip()
+            if not url:
+                continue
+            score = int(item.get("score") or 0)
+            options.append(
+                {
+                    "value": url,
+                    "label": "#{:02d} [score {}] {}".format(idx + 1, score, url),
+                }
+            )
+
+        preselected = list(getattr(self, "graphql_selected_targets", []) or [])
+        if not preselected:
+            preselected = [item.get("value") for item in options]
+
+        selected = self._show_multi_select_targets_popup(
+            "GraphQL Targets",
+            options,
+            preselected_values=preselected,
+            footer_text=(
+                "Default selection is all likely GraphQL targets from proxy history. "
+                "Deselect anything you do not want to include."
+            ),
+        )
+        if selected is None:
+            return
+
+        max_targets = self._parse_positive_int(
+            self.graphql_max_targets_field.getText(), 12, 1, 50
+        )
+        selected = list(selected[:max_targets])
+        self.graphql_selected_targets = list(selected)
+        self.graphql_targets_field.setText("\n".join(selected))
+
+        if hasattr(self, "graphql_area") and self.graphql_area is not None:
+            self.graphql_area.append(
+                "[+] GraphQL target selection updated: {}\n".format(len(selected))
+            )
+
+    def _collect_graphql_targets(self, max_targets):
+        """Collect GraphQL targets from optional input and Recon history."""
+        targets = []
+        seen = set()
+        max_items = self._parse_positive_int(max_targets, 12, 1, 50)
+
+        selected_values = list(getattr(self, "graphql_selected_targets", []) or [])
+        raw_input = self._ascii_safe(self.graphql_targets_field.getText()).strip()
+        if raw_input:
+            selected_values = self._parse_comma_newline_values(raw_input)
+            self.graphql_selected_targets = list(selected_values)
+        elif not selected_values:
+            selected_values = self._autopopulate_graphql_targets_from_history(
+                overwrite=False, append_output=False
+            )
+
+        for value in selected_values:
+            clean = self._normalize_graphql_target_url(value)
+            if clean and clean not in seen:
+                seen.add(clean)
+                targets.append(clean)
+                if len(targets) >= max_items:
+                    return targets
+
+        for item in self._collect_graphql_target_candidates(max_candidates=max_items * 4):
+            clean = self._normalize_graphql_target_url(item.get("url") or "")
+            if clean and clean not in seen:
+                seen.add(clean)
+                targets.append(clean)
+                if len(targets) >= max_items:
+                    return targets
         return targets
 
     def _graphql_base_urls(self, urls):
@@ -10192,6 +10413,153 @@ Generate a complete Burp extension that:
             return None
         return options[option_index]
 
+    def _parse_comma_newline_values(self, text):
+        """Parse comma/newline text into ordered unique values."""
+        values = []
+        seen = set()
+        raw = self._ascii_safe(text or "")
+        for part in re.split(r"[\n,]+", raw):
+            value = self._ascii_safe(part).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            values.append(value)
+        return values
+
+    def _show_multi_select_targets_popup(
+        self, title, options, preselected_values=None, footer_text=""
+    ):
+        """Show searchable multi-select popup and return selected values."""
+        normalized_options = []
+        seen = set()
+        for item in (options or []):
+            value = self._ascii_safe(item.get("value") or "").strip()
+            if (not value) or value in seen:
+                continue
+            seen.add(value)
+            label = self._ascii_safe(item.get("label") or value).strip()
+            normalized_options.append({"value": value, "label": label})
+
+        if not normalized_options:
+            return []
+
+        selected = set()
+        for value in (preselected_values or []):
+            safe_value = self._ascii_safe(value).strip()
+            if safe_value:
+                selected.add(safe_value)
+        if not selected:
+            selected = set([item.get("value") for item in normalized_options])
+
+        chooser_panel = JPanel(BorderLayout(6, 6))
+        top_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        top_row.add(JLabel("Filter:"))
+        search_field = JTextField("", 36)
+        top_row.add(search_field)
+
+        select_all_btn = JButton("Select All")
+        clear_btn = JButton("Clear")
+        top_row.add(select_all_btn)
+        top_row.add(clear_btn)
+        chooser_panel.add(top_row, BorderLayout.NORTH)
+
+        checkbox_panel = JPanel()
+        checkbox_panel.setLayout(BoxLayout(checkbox_panel, BoxLayout.Y_AXIS))
+        scroll = JScrollPane(checkbox_panel)
+        scroll.setPreferredSize(Dimension(1080, 300))
+        chooser_panel.add(scroll, BorderLayout.CENTER)
+
+        chooser_panel.add(
+            JLabel(
+                footer_text
+                or "Selected items are applied when you click OK. Use Filter to narrow the list."
+            ),
+            BorderLayout.SOUTH,
+        )
+
+        visible_boxes = []
+
+        def rebuild():
+            query = self._ascii_safe(search_field.getText(), lower=True).strip()
+            checkbox_panel.removeAll()
+            del visible_boxes[:]
+
+            matched = 0
+            for item in normalized_options:
+                value = item.get("value")
+                label = item.get("label")
+                searchable = self._ascii_safe(
+                    "{} {}".format(label, value), lower=True
+                )
+                if query and query not in searchable:
+                    continue
+
+                checkbox = JCheckBox(label, value in selected)
+                checkbox.setToolTipText(value)
+                checkbox.addActionListener(
+                    lambda e, v=value, cb=checkbox: selected.add(v)
+                    if cb.isSelected()
+                    else selected.discard(v)
+                )
+                checkbox_panel.add(checkbox)
+                visible_boxes.append({"value": value, "box": checkbox})
+                matched += 1
+
+            if matched == 0:
+                checkbox_panel.add(JLabel("No matches."))
+
+            checkbox_panel.revalidate()
+            checkbox_panel.repaint()
+
+        class TargetPopupFilterListener(DocumentListener):
+            def insertUpdate(self, e):
+                rebuild()
+
+            def removeUpdate(self, e):
+                rebuild()
+
+            def changedUpdate(self, e):
+                rebuild()
+
+        def select_visible(event):
+            for item in visible_boxes:
+                value = item.get("value")
+                box = item.get("box")
+                if box is not None:
+                    box.setSelected(True)
+                if value:
+                    selected.add(value)
+
+        def clear_visible(event):
+            for item in visible_boxes:
+                value = item.get("value")
+                box = item.get("box")
+                if box is not None:
+                    box.setSelected(False)
+                if value in selected:
+                    selected.remove(value)
+
+        search_field.getDocument().addDocumentListener(TargetPopupFilterListener())
+        select_all_btn.addActionListener(select_visible)
+        clear_btn.addActionListener(clear_visible)
+        rebuild()
+
+        result = JOptionPane.showConfirmDialog(
+            self._panel,
+            chooser_panel,
+            self._ascii_safe(title) or "Targets",
+            JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.PLAIN_MESSAGE,
+        )
+        if result != JOptionPane.OK_OPTION:
+            return None
+
+        return [
+            item.get("value")
+            for item in normalized_options
+            if item.get("value") in selected
+        ]
+
     def _extract_auth_profile_header(self, profile_key):
         """Extract profile header candidates and let user choose via popup."""
         profile_key = (profile_key or "").strip().lower()
@@ -12925,6 +13293,160 @@ Generate a complete Burp extension that:
             candidates, "dalfox-verified", self.dalfox_area
         )
 
+    def _collect_asset_domain_candidates(self, max_candidates=50):
+        """Collect ranked asset-domain candidates from explicit input and proxy history."""
+        try:
+            max_items = int(max_candidates)
+        except Exception as e:
+            self._callbacks.printError(
+                "Asset candidate max parsing failed: {}".format(self._ascii_safe(e))
+            )
+            max_items = 50
+        if max_items <= 0:
+            max_items = 50
+
+        candidate_scores = {}
+
+        explicit_values = []
+        if hasattr(self, "asset_domains_field") and self.asset_domains_field is not None:
+            explicit_values = self._parse_comma_newline_values(
+                self.asset_domains_field.getText()
+            )
+        for raw in explicit_values:
+            host = self._ascii_safe(raw, lower=True).strip()
+            if "://" in host:
+                host = self._extract_scope_host(host)
+            host = self._ascii_safe(host, lower=True).strip().lstrip("*.").rstrip(".")
+            if not host:
+                continue
+            base = self._infer_base_domain(host)
+            if not base:
+                continue
+            candidate_scores[base] = candidate_scores.get(base, 0) + 30
+
+        with self.lock:
+            snapshot = list(self.api_data.values())
+
+        for entries in snapshot:
+            entry = self._get_entry(entries)
+            host = self._ascii_safe(entry.get("host") or "", lower=True).strip()
+            if not host:
+                continue
+            base = self._infer_base_domain(host)
+            if not base:
+                continue
+            weight = 1
+            if not self._ffuf_is_noise_host(host):
+                weight = 2
+            candidate_scores[base] = candidate_scores.get(base, 0) + weight
+
+        ordered = sorted(
+            candidate_scores.items(), key=lambda item: (-int(item[1]), item[0])
+        )
+        return [
+            {"domain": domain, "score": int(score)}
+            for domain, score in ordered[:max_items]
+        ]
+
+    def _autopopulate_asset_domains_from_history(
+        self, overwrite=False, append_output=False
+    ):
+        """Populate Subfinder domain textbox with selected proxy-history candidates."""
+        if not hasattr(self, "asset_domains_field") or self.asset_domains_field is None:
+            return []
+
+        current_values = self._parse_comma_newline_values(
+            self.asset_domains_field.getText()
+        )
+        if current_values and (not overwrite):
+            self.asset_selected_domains = list(current_values)
+            return list(current_values)
+
+        candidates = self._collect_asset_domain_candidates(max_candidates=50)
+        self.asset_target_candidates = list(candidates)
+        candidate_domains = [item.get("domain") for item in candidates if item.get("domain")]
+        if not candidate_domains:
+            if append_output and hasattr(self, "asset_area") and self.asset_area is not None:
+                self.asset_area.append("[!] No Subfinder targets found in proxy history\n")
+            return []
+
+        selected = []
+        existing = list(getattr(self, "asset_selected_domains", []) or [])
+        if existing and (not overwrite):
+            selected = [d for d in existing if d in candidate_domains]
+        if not selected:
+            selected = list(candidate_domains)
+
+        max_field_value = "8"
+        if hasattr(self, "asset_max_domains_field") and self.asset_max_domains_field is not None:
+            max_field_value = self.asset_max_domains_field.getText()
+        max_domains = self._parse_positive_int(max_field_value, 8, 1, 50)
+        selected = selected[:max_domains]
+        self.asset_selected_domains = list(selected)
+        self.asset_domains_field.setText(", ".join(selected))
+
+        if append_output and hasattr(self, "asset_area") and self.asset_area is not None:
+            self.asset_area.append(
+                "[+] Subfinder targets selected from history: {}\n".format(
+                    len(selected)
+                )
+            )
+        return list(selected)
+
+    def _show_asset_targets_popup(self, event):
+        """Show selectable Subfinder target domains from proxy history."""
+        candidates = self._collect_asset_domain_candidates(max_candidates=80)
+        self.asset_target_candidates = list(candidates)
+        if not candidates:
+            if hasattr(self, "asset_area") and self.asset_area is not None:
+                self.asset_area.setText(
+                    "[!] No Subfinder targets found in proxy history\n[*] Enter domains manually in textbox.\n"
+                )
+            return
+
+        options = []
+        for idx, item in enumerate(candidates):
+            domain = self._ascii_safe(item.get("domain") or "").strip()
+            if not domain:
+                continue
+            score = int(item.get("score") or 0)
+            options.append(
+                {
+                    "value": domain,
+                    "label": "#{:02d} [score {}] {}".format(idx + 1, score, domain),
+                }
+            )
+
+        preselected = list(getattr(self, "asset_selected_domains", []) or [])
+        if not preselected:
+            preselected = [item.get("value") for item in options]
+
+        selected = self._show_multi_select_targets_popup(
+            "Subfinder Targets",
+            options,
+            preselected_values=preselected,
+            footer_text=(
+                "Default selection is all likely domains from proxy history. "
+                "Deselect domains you do not want to scan."
+            ),
+        )
+        if selected is None:
+            return
+
+        max_domains = self._parse_positive_int(
+            self.asset_max_domains_field.getText(), 8, 1, 50
+        )
+        selected = list(selected[:max_domains])
+        self.asset_selected_domains = list(selected)
+        self.asset_domains_field.setText(", ".join(selected))
+
+        if hasattr(self, "asset_area") and self.asset_area is not None:
+            self.asset_area.append(
+                "[+] Subfinder target selection updated: {} domains\n".format(
+                    len(selected)
+                )
+            )
+
     def _extract_domains_for_asset_discovery(self, max_domains):
         """Collect unique root domains from input field or Recon hosts."""
         explicit = self._ascii_safe(self.asset_domains_field.getText()).strip()
@@ -12943,6 +13465,16 @@ Generate a complete Burp extension that:
                     domains.append(domain)
                     if len(domains) >= max_domains:
                         return domains
+
+        selected_domains = list(getattr(self, "asset_selected_domains", []) or [])
+        for domain in selected_domains:
+            safe_domain = self._ascii_safe(domain, lower=True).strip()
+            if not safe_domain or safe_domain in seen:
+                continue
+            seen.add(safe_domain)
+            domains.append(safe_domain)
+            if len(domains) >= max_domains:
+                return domains
 
         with self.lock:
             hosts = [self._get_entry(entries).get("host", "") for entries in self.api_data.values()]
@@ -12999,6 +13531,13 @@ Generate a complete Burp extension that:
         import tempfile
 
         explicit_domains = self._ascii_safe(self.asset_domains_field.getText()).strip()
+        if not explicit_domains:
+            self._autopopulate_asset_domains_from_history(
+                overwrite=False, append_output=False
+            )
+            explicit_domains = self._ascii_safe(
+                self.asset_domains_field.getText()
+            ).strip()
         if (not self.api_data) and (not explicit_domains):
             self.asset_area.setText(
                 "[!] No endpoints captured and no domains provided.\n[*] Capture/import first or enter domains manually.\n"
@@ -13274,14 +13813,15 @@ Generate a complete Burp extension that:
         candidate_map = {}
         for entries in snapshot:
             entry = self._get_entry(entries)
-            normalized = self._normalize_endpoint_data(entry)
-            method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+            method = self._ascii_safe(entry.get("method"), lower=True).strip().upper()
             if method not in ["GET", "HEAD", "OPTIONS"]:
                 continue
 
-            host = self._ascii_safe(normalized.get("host"), lower=True).strip()
-            protocol = self._ascii_safe(normalized.get("protocol"), lower=True).strip()
-            path = self._ascii_safe(normalized.get("path") or "/").strip()
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip()
+            path = self._ascii_safe(
+                entry.get("path") or entry.get("normalized_path") or "/"
+            ).strip()
             if not host or protocol not in ["http", "https"]:
                 continue
             if not path.startswith("/"):
@@ -13312,12 +13852,64 @@ Generate a complete Burp extension that:
         )
         return ordered[:max_items]
 
+    def _show_openapi_spec_targets_popup(self, event):
+        """Show selectable OpenAPI/Swagger targets from proxy history."""
+        candidates = self._collect_openapi_spec_candidates(max_candidates=30)
+        self.openapi_spec_candidates = list(candidates)
+        if not candidates:
+            if hasattr(self, "openapi_area") and self.openapi_area is not None:
+                self.openapi_area.setText(
+                    "[!] No OpenAPI/Swagger candidates found in proxy history\n"
+                )
+            return
+
+        options = []
+        for idx, item in enumerate(candidates):
+            url = self._ascii_safe(item.get("url") or "").strip()
+            if not url:
+                continue
+            score = int(item.get("score") or 0)
+            options.append(
+                {
+                    "value": url,
+                    "label": "#{:02d} [score {}] {}".format(idx + 1, score, url),
+                }
+            )
+
+        preselected = list(getattr(self, "openapi_selected_spec_targets", []) or [])
+        if not preselected:
+            preselected = [item.get("value") for item in options]
+
+        selected = self._show_multi_select_targets_popup(
+            "OpenAPI Targets",
+            options,
+            preselected_values=preselected,
+            footer_text=(
+                "Default selection is all likely OpenAPI/Swagger targets from proxy history. "
+                "Run Drift uses the first selected item in the field."
+            ),
+        )
+        if selected is None:
+            return
+
+        self.openapi_selected_spec_targets = list(selected)
+        if selected:
+            self.openapi_spec_field.setText(self._ascii_safe(selected[0]))
+            if hasattr(self, "openapi_area") and self.openapi_area is not None:
+                self.openapi_area.append(
+                    "[+] OpenAPI targets selected: {} (run target: {})\n".format(
+                        len(selected), self._ascii_safe(selected[0])
+                    )
+                )
+        else:
+            self.openapi_spec_field.setText("")
+            if hasattr(self, "openapi_area") and self.openapi_area is not None:
+                self.openapi_area.append("[!] No OpenAPI targets selected\n")
+
     def _autoselect_openapi_spec_from_history(self, append_output=False, overwrite=False):
         """Preselect best OpenAPI candidate from proxy history."""
         if not hasattr(self, "openapi_spec_field") or self.openapi_spec_field is None:
             return None
-        if (not overwrite) and self.openapi_spec_field.getText().strip():
-            return self._ascii_safe(self.openapi_spec_field.getText()).strip()
 
         candidates = self._collect_openapi_spec_candidates()
         self.openapi_spec_candidates = list(candidates)
@@ -13326,7 +13918,30 @@ Generate a complete Burp extension that:
                 self.openapi_area.append("[!] No OpenAPI/Swagger candidates found in proxy history\n")
             return None
 
-        selected = self._ascii_safe(candidates[0].get("url") or "").strip()
+        candidate_urls = [
+            self._ascii_safe(item.get("url") or "").strip()
+            for item in candidates
+            if self._ascii_safe(item.get("url") or "").strip()
+        ]
+        existing_selected = list(
+            getattr(self, "openapi_selected_spec_targets", []) or []
+        )
+        if existing_selected and (not overwrite):
+            selected_urls = [u for u in existing_selected if u in candidate_urls]
+            if not selected_urls:
+                selected_urls = list(candidate_urls)
+            self.openapi_selected_spec_targets = list(selected_urls)
+        else:
+            self.openapi_selected_spec_targets = list(candidate_urls)
+
+        if (not overwrite) and self.openapi_spec_field.getText().strip():
+            return self._ascii_safe(self.openapi_spec_field.getText()).strip()
+
+        selected = (
+            self._ascii_safe(self.openapi_selected_spec_targets[0]).strip()
+            if self.openapi_selected_spec_targets
+            else self._ascii_safe(candidates[0].get("url") or "").strip()
+        )
         if selected:
             self.openapi_spec_field.setText(selected)
             if append_output and hasattr(self, "openapi_area") and self.openapi_area is not None:

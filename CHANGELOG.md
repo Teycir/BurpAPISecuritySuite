@@ -17,7 +17,7 @@ All notable changes to this project are documented in this file.
 - Version Scanner path generation now preserves or replaces existing version segments more safely via `_build_version_test_path`.
 - API asset discovery flow now runs a Subfinder-first workflow with stronger fallback behavior when command output is limited.
 - External tab labels and ordering updated in UI wiring:
-  - `sqlmap`, `Delfox`, `Subfinder`, `OpenAPI Drift`, `GraphQL`.
+  - `sqlmap`, `Dalfox`, `Subfinder`, `OpenAPI Drift`, `GraphQL`.
 
 ### Removed
 - Removed legacy standalone `tool_profiles.py` helper module.

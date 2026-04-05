@@ -286,8 +286,8 @@ def test_recon_exports_include_postman_and_insomnia():
 def test_new_verification_and_discovery_tabs_are_wired():
     text = _source_text()
     required_tokens = [
-        'self.tabbed_pane.addTab("sqlmap", sqlmap_verify_panel)',
-        'self.tabbed_pane.addTab("Delfox", dalfox_verify_panel)',
+        'self.tabbed_pane.addTab("Sqlmap", sqlmap_verify_panel)',
+        'self.tabbed_pane.addTab("Dalfox", dalfox_verify_panel)',
         'self.tabbed_pane.addTab("Subfinder", asset_discovery_panel)',
         'self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)',
         'self.tabbed_pane.addTab("GraphQL", graphql_panel)',
