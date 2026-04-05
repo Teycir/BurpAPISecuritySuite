@@ -1,181 +1,204 @@
 # Documentation Index
 
-**BurpAPISecuritySuite + RedTeamToolkitForAndroid Integration**
+**BurpAPISecuritySuite Documentation**
 
 ## Quick Access
 
 ### Getting Started
-- **[MOBILE-QUICKSTART.md](MOBILE-QUICKSTART.md)** - 5-minute setup, 30-minute assessment
-- **[README.md](README.md)** - Main extension documentation
+- **[README.md](../README.md)** - Main extension documentation and installation guide
 
-### Complete Guides
-- **[MOBILE-API-INTEGRATION.md](MOBILE-API-INTEGRATION.md)** - Complete integration guide (prerequisites, workflows, attack scenarios)
-- **[WORKFLOW-DIAGRAM.md](WORKFLOW-DIAGRAM.md)** - Visual workflow diagrams and data flow
+### Performance & Optimization
+- **[NUCLEI_OPTIMIZATION.md](NUCLEI_OPTIMIZATION.md)** - Nuclei performance optimization guide
+- **[NUCLEI_OPTIMIZATION_SUMMARY.md](NUCLEI_OPTIMIZATION_SUMMARY.md)** - Technical optimization summary
+- **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - v1.2.1 deployment checklist
 
-### Cross-References
-- **[RedTeamToolkitForAndroid/docs/BURP-API-INTEGRATION.md](../RedTeamToolkitForAndroid/docs/BURP-API-INTEGRATION.md)** - Integration from mobile toolkit perspective
+### Reference
+- **[loggerpp_tags.md](loggerpp_tags.md)** - Logger++ tags reference
 
 ## Documentation Structure
 
 ```
 BurpAPISecuritySuite/
 ├── README.md                          # Main extension documentation
-├── MOBILE-QUICKSTART.md               # Quick start guide (5 min)
-├── MOBILE-API-INTEGRATION.md          # Complete integration guide
-├── WORKFLOW-DIAGRAM.md                # Visual workflows
-└── DOCUMENTATION-INDEX.md             # This file
-
-RedTeamToolkitForAndroid/
+├── CHANGELOG.md                       # Version history
 └── docs/
-    └── BURP-API-INTEGRATION.md        # Mobile toolkit integration
+    ├── DOCUMENTATION-INDEX.md         # This file
+    ├── NUCLEI_OPTIMIZATION.md         # Nuclei performance guide
+    ├── NUCLEI_OPTIMIZATION_SUMMARY.md # Technical optimization summary
+    ├── DEPLOYMENT_CHECKLIST.md        # v1.2.1 deployment checklist
+    └── loggerpp_tags.md               # Logger++ tags reference
 ```
 
 ## By Use Case
 
 ### First-Time Setup
-1. [README.md](README.md) - Install BurpAPISecuritySuite
-2. [RedTeamToolkitForAndroid README](../RedTeamToolkitForAndroid/README.md) - Setup mobile environment
-3. [MOBILE-QUICKSTART.md](MOBILE-QUICKSTART.md) - Quick start guide
+1. [README.md](../README.md) - Install BurpAPISecuritySuite
+2. Configure Jython in Burp Suite
+3. Load extension and start capturing traffic
 
-### Learning the Workflow
-1. [WORKFLOW-DIAGRAM.md](WORKFLOW-DIAGRAM.md) - Visual overview
-2. [MOBILE-API-INTEGRATION.md](MOBILE-API-INTEGRATION.md) - Detailed workflows
-3. [MOBILE-QUICKSTART.md](MOBILE-QUICKSTART.md) - Quick reference
-
-### Specific Attack Types
-1. [MOBILE-API-INTEGRATION.md](MOBILE-API-INTEGRATION.md) - Complete attack scenarios
-   - BOLA Testing
-   - Race Conditions
-   - JWT Exploitation
-   - GraphQL Abuse
-
-### AI Integration
-1. [MOBILE-API-INTEGRATION.md](MOBILE-API-INTEGRATION.md) - AI Orchestration section
-2. [README.md](README.md) - AI Payload Generation
+### Performance Optimization
+1. [NUCLEI_OPTIMIZATION.md](NUCLEI_OPTIMIZATION.md) - Understand Nuclei optimizations
+2. [NUCLEI_OPTIMIZATION_SUMMARY.md](NUCLEI_OPTIMIZATION_SUMMARY.md) - Technical details
+3. [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) - Deployment guide
 
 ### Troubleshooting
-1. [MOBILE-QUICKSTART.md](MOBILE-QUICKSTART.md) - Quick troubleshooting
-2. [MOBILE-API-INTEGRATION.md](MOBILE-API-INTEGRATION.md) - Detailed troubleshooting
+1. [README.md](../README.md) - FAQ section
+2. [NUCLEI_OPTIMIZATION.md](NUCLEI_OPTIMIZATION.md) - Nuclei-specific issues
 
 ## Key Features by Document
 
 ### README.md
 - Extension overview
 - Installation instructions
-- Feature list (14 attack types, 108+ vectors)
-- Export formats
-- Use cases
+- Feature list (15 attack types, 108+ vectors)
+- Tab overview (Recon, Fuzzer, Nuclei, HTTPX, Katana, FFUF, Wayback, etc.)
+- Export formats (JSON, Intruder, Turbo, Nuclei, cURL)
+- Use cases (API pentesting, bug bounty, security research)
+- FAQ and troubleshooting
 
-### MOBILE-QUICKSTART.md
-- 5-minute setup
-- 30-minute complete assessment
-- Quick commands
-- Common attack patterns
-- AI prompt templates
-- Troubleshooting
+### NUCLEI_OPTIMIZATION.md
+- Performance optimization guide
+- Tag optimization rationale (10 → 4 tags)
+- Parameter tuning explanation (timeout, retries, rate limit)
+- Testing results on allocine.fr
+- When to use custom commands
+- Monitoring and troubleshooting
 
-### MOBILE-API-INTEGRATION.md
-- Prerequisites and setup
-- Core integration points
-- Complete workflow (5 phases)
-- Specific attack scenarios:
-  - BOLA on user endpoints
-  - Race conditions on payment
-  - JWT privilege escalation
-  - GraphQL batching abuse
-- AI orchestration
-- Output structure
-- Best practices
-- Performance tips
+### NUCLEI_OPTIMIZATION_SUMMARY.md
+- Technical change summary
+- Before/after comparison (15+ min → 2-5 min)
+- Performance impact metrics (5-10x faster)
+- Code change details (lines modified)
+- Testing verification results
+- Trade-offs analysis
 
-### WORKFLOW-DIAGRAM.md
-- Visual workflow diagrams
-- Attack type breakdowns
-- Data flow diagrams
-- Tool integration matrix
-- Time breakdown
+### DEPLOYMENT_CHECKLIST.md
+- v1.2.1 deployment guide
+- Verification checklist
+- Performance improvements summary
+- User impact analysis
+- Rollback plan
 - Success metrics
 
-### BURP-API-INTEGRATION.md (RedTeamToolkit)
-- Integration from mobile perspective
-- MCP server integration
-- Complete attack scenarios
-- Output integration
-- Quick commands
+### loggerpp_tags.md
+- Logger++ integration tags
+- Custom tag definitions
+- Usage examples
 
 ## Quick Links
 
 ### External Resources
-- [Frida Waydroid Launcher](https://github.com/Teycir/frida-waydroid-launcher)
-- [Burp Waydroid Connector](https://github.com/Teycir/burp-waydroid-connector)
-- [OWASP Mobile Top 10](https://owasp.org/www-project-mobile-top-10/)
+- [Burp Suite](https://portswigger.net/burp)
+- [Jython](https://www.jython.org/download)
+- [Nuclei](https://github.com/projectdiscovery/nuclei)
+- [HTTPX](https://github.com/projectdiscovery/httpx)
+- [Katana](https://github.com/projectdiscovery/katana)
+- [FFUF](https://github.com/ffuf/ffuf)
 - [OWASP API Security Top 10](https://owasp.org/www-project-api-security/)
 
 ### Related Projects
-- [RedTeamToolkitForAndroid](../RedTeamToolkitForAndroid)
-- [MobileAppComplianceToolkit](../MobileAppComplianceToolkit)
-- [BurpCopyIssues](https://github.com/teycir/BurpCopyIssues)
+- [BurpCopyIssues](https://github.com/Teycir/BurpCopyIssues)
+- [BurpWpsScan](https://github.com/Teycir/BurpWpsScan)
+- [TimeSeal](https://github.com/Teycir/Timeseal)
 
 ## Cheat Sheet
 
 ### Quick Commands
-```bash
-# Start environment
-cd ~/Repos/frida-waydroid-launcher && ./start-frida-env.sh
 
-# Launch with SSL bypass
-frida -U -f com.target.app -l scripts/frida-ssl-bypass.js
-
-# Generate report
-cd ~/Repos/RedTeamToolkitForAndroid
-python3 scripts/generate-dashboard.py
-```
-
-### In Burp → BurpAPISecuritySuite
-1. Fuzzer Tab → "All" → "Generate"
-2. "Export for LLM" → api_analysis.json
-3. "Send to Intruder" → BOLA testing
-4. "Turbo Intruder" → Race conditions
-5. "Run Nuclei" → Validation
+#### In Burp → BurpAPISecuritySuite
+1. **Recon Tab** → Enable Auto-Capture → Browse target
+2. **Fuzzer Tab** → "All" → "Generate" → Review attacks
+3. **Export Options:**
+   - "Export for LLM" → api_analysis.json
+   - "Send to Intruder" → BOLA testing
+   - "Turbo Intruder" → Race conditions
+   - "AI Payloads" → Custom payload generation
+4. **Nuclei Tab** → "Run Nuclei" → Automated scanning
+5. **HTTPX Tab** → "Probe Endpoints" → Technology detection
+6. **Katana Tab** → "Crawl Endpoints" → Deep discovery
+7. **FFUF Tab** → "Fuzz Directories" → Directory fuzzing
+8. **Wayback Tab** → "Discover" → Historical endpoints
 
 ### Output Locations
 ```
-~/burp_APISecurity/
+~/burp_APIRecon/
 ├── FullExport_TIMESTAMP/api_analysis.json
+├── HostExport_HOSTNAME_TIMESTAMP/api_analysis.json
 ├── AI_Context_TIMESTAMP/ai_context.json
 ├── Payloads_TIMESTAMP/payloads.json
 ├── TurboIntruder_TIMESTAMP/*.py
-└── NucleiTargets_TIMESTAMP/nuclei-output.jsonl
+├── NucleiTargets_TIMESTAMP/targets.txt
+├── VersionScan_Export_TIMESTAMP/version_scan.txt
+└── ParamMiner_Export_TIMESTAMP/param_mining.txt
+```
 
-~/Repos/RedTeamToolkitForAndroid/Reports/com.target.app/
-├── 1-attack-surface.md
-├── 2-vulnerabilities.md
-├── 3-poc/
-└── 4-conclusion.md
+### Common Workflows
+
+#### 1. API Reconnaissance
+```
+1. Enable Auto-Capture in Recon tab
+2. Browse/scan target application
+3. Review captured endpoints
+4. Export to JSON for analysis
+```
+
+#### 2. Vulnerability Testing
+```
+1. Generate fuzzing attacks (Fuzzer tab)
+2. Send to Burp Intruder for automated testing
+3. Export to Turbo Intruder for race conditions
+4. Run Nuclei for validation
+```
+
+#### 3. AI-Powered Testing
+```
+1. Generate attacks in Fuzzer tab
+2. Click "AI Payloads" button
+3. Feed ai_context.json to ChatGPT/Claude
+4. Get custom payloads for your API
+```
+
+#### 4. External Tool Integration
+```
+1. Nuclei: Automated vulnerability scanning
+2. HTTPX: Fast HTTP probing
+3. Katana: Deep web crawling
+4. FFUF: Directory/file fuzzing
+5. Wayback: Historical endpoint discovery
 ```
 
 ## Document Updates
 
-### v1.0 (Current)
-- Initial documentation suite
-- Complete integration guide
-- Visual workflow diagrams
-- Quick start guide
-- Cross-references
+### v1.2.1 (2026-04-05)
+- Added NUCLEI_OPTIMIZATION.md
+- Added NUCLEI_OPTIMIZATION_SUMMARY.md
+- Added DEPLOYMENT_CHECKLIST.md
+- Updated DOCUMENTATION-INDEX.md
+- Nuclei performance optimization (5-10x faster)
+- Removed mobile-specific documentation
 
-### Planned
-- Video tutorials
-- Example reports
-- Advanced techniques guide
-- CI/CD integration guide
+### v1.2.0 (2026-04-02)
+- Added Auth Replay tab documentation
+- Added header extraction workflow
+- Updated README with new features
+
+### v1.1.0 (2026-04-02)
+- Added custom command override documentation
+- Added external tool UX improvements
+- Updated troubleshooting guides
+
+### v1.0.0 (Initial Release)
+- Initial documentation suite
+- Complete feature documentation
+- FAQ and troubleshooting
 
 ## Contributing
 
 Found an issue or have a suggestion? Please update the relevant documentation:
 - Extension features → README.md
-- Quick reference → MOBILE-QUICKSTART.md
-- Detailed workflows → MOBILE-API-INTEGRATION.md
-- Visual diagrams → WORKFLOW-DIAGRAM.md
+- Performance optimization → NUCLEI_OPTIMIZATION.md
+- Technical details → NUCLEI_OPTIMIZATION_SUMMARY.md
+- Deployment → DEPLOYMENT_CHECKLIST.md
 
 ## License
 
