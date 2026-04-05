@@ -5,6 +5,7 @@ import re
 import shlex
 import threading
 import time
+import tool_profiles
 
 from burp import IBurpExtender, IContextMenuFactory, IHttpListener, IProxyListener, ITab
 from java.awt import BorderLayout, Color, Dimension, FlowLayout, Font, GridLayout
@@ -389,6 +390,10 @@ class BurpExtender(
             "ffuf": threading.Event(),
             "wayback": threading.Event(),
             "authreplay": threading.Event(),
+            "sqlmap": threading.Event(),
+            "dalfox": threading.Event(),
+            "assetdiscovery": threading.Event(),
+            "openapidrift": threading.Event(),
         }
         self.passive_discovery_findings = []
         self.passive_discovery_lock = threading.Lock()
@@ -510,7 +515,7 @@ class BurpExtender(
         bottom_split.setResizeWeight(0.7)
         recon_panel.add(bottom_split, BorderLayout.CENTER)
 
-        btn_panel = JPanel(GridLayout(1, 5, 5, 5))
+        btn_panel = JPanel(GridLayout(1, 7, 5, 5))
 
         export_btn = JButton("Export All")
         export_btn.setBackground(Color(40, 167, 69))
@@ -527,6 +532,21 @@ class BurpExtender(
         import_btn.setForeground(Color.WHITE)
         import_btn.addActionListener(lambda e: self.import_data())
 
+        postman_btn = JButton("Postman")
+        postman_btn.setBackground(Color(255, 140, 0))
+        postman_btn.setForeground(Color.WHITE)
+        postman_btn.addActionListener(lambda e: self._export_postman_collection())
+
+        insomnia_btn = JButton("Insomnia")
+        insomnia_btn.setBackground(Color(111, 66, 193))
+        insomnia_btn.setForeground(Color.WHITE)
+        insomnia_btn.addActionListener(lambda e: self._export_insomnia_collection())
+
+        tool_health_btn = JButton("Tool Health")
+        tool_health_btn.setBackground(Color(32, 201, 151))
+        tool_health_btn.setForeground(Color.WHITE)
+        tool_health_btn.addActionListener(lambda e: self._run_tool_health_check(e))
+
         clear_btn = JButton("Clear Data")
         clear_btn.setBackground(Color(220, 53, 69))
         clear_btn.setForeground(Color.WHITE)
@@ -540,6 +560,9 @@ class BurpExtender(
         btn_panel.add(export_btn)
         btn_panel.add(export_host_btn)
         btn_panel.add(import_btn)
+        btn_panel.add(postman_btn)
+        btn_panel.add(insomnia_btn)
+        btn_panel.add(tool_health_btn)
         btn_panel.add(clear_btn)
         btn_panel.add(refresh_btn)
 
@@ -556,6 +579,18 @@ class BurpExtender(
 
         # Fuzzer tab
         fuzzer_panel = self._create_fuzzer_tab()
+
+        # SQLMap Verify tab
+        sqlmap_verify_panel = self._create_sqlmap_verify_tab()
+
+        # Dalfox Verify tab
+        dalfox_verify_panel = self._create_dalfox_verify_tab()
+
+        # API Asset Discovery tab
+        asset_discovery_panel = self._create_api_asset_discovery_tab()
+
+        # OpenAPI Drift tab
+        openapi_drift_panel = self._create_openapi_drift_tab()
 
         # Auth Replay tab
         auth_replay_panel = self._create_auth_replay_tab()
@@ -579,6 +614,7 @@ class BurpExtender(
         wayback_panel = self._create_wayback_tab()
 
         # Add tabs
+        # Internal workflow tabs first
         self.tabbed_pane.addTab("Recon", recon_panel)
         self.tabbed_pane.addTab("Diff", diff_panel)
         self.tabbed_pane.addTab("Version Scanner", version_panel)
@@ -586,11 +622,17 @@ class BurpExtender(
         self.tabbed_pane.addTab("Fuzzer", fuzzer_panel)
         self.tabbed_pane.addTab("Auth Replay", auth_replay_panel)
         self.tabbed_pane.addTab("Passive Discovery", passive_discovery_panel)
+
+        # External scanner/tool tabs last (requested order)
         self.tabbed_pane.addTab("Nuclei", nuclei_panel)
         self.tabbed_pane.addTab("HTTPX", httpx_panel)
         self.tabbed_pane.addTab("Katana", katana_panel)
         self.tabbed_pane.addTab("FFUF", ffuf_panel)
         self.tabbed_pane.addTab("Wayback", wayback_panel)
+        self.tabbed_pane.addTab("SQLMap Verify", sqlmap_verify_panel)
+        self.tabbed_pane.addTab("Dalfox Verify", dalfox_verify_panel)
+        self.tabbed_pane.addTab("API Assets", asset_discovery_panel)
+        self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)
 
         self._panel.add(self.tabbed_pane, BorderLayout.CENTER)
 
@@ -620,6 +662,34 @@ class BurpExtender(
         btn.setForeground(Color.WHITE)
         btn.addActionListener(action)
         return btn
+
+    def _profile_labels(self):
+        """Return shared profile labels used by scanner tuning controls."""
+        try:
+            labels = tool_profiles.profile_labels()
+            if labels:
+                return labels
+        except Exception as e:
+            self._callbacks.printError(
+                "Profile labels fallback due to error: {}".format(str(e))
+            )
+        return ["Fast", "Balanced", "Deep"]
+
+    def _selected_profile_value(self, combo):
+        """Normalize selected profile label to helper profile key."""
+        raw_value = self._ascii_safe(str(combo.getSelectedItem()) if combo else "")
+        try:
+            return tool_profiles.normalize_profile(raw_value)
+        except Exception as e:
+            self._callbacks.printError(
+                "Profile normalize fallback due to error: {}".format(str(e))
+            )
+            text = raw_value.lower().strip()
+            if text == "fast":
+                return "fast"
+            if text == "deep":
+                return "deep"
+            return "balanced"
 
     def _add_target_scope_controls(self, controls):
         """Attach shared target-base scope controls for external tool tabs."""
@@ -1435,6 +1505,315 @@ class BurpExtender(
         self.fuzzing_attacks = []
         return panel
 
+    def _create_sqlmap_verify_tab(self):
+        """Create SQLMap verification tab for SQLi candidate confirmation."""
+        import os
+
+        panel = JPanel(BorderLayout())
+        controls = JPanel(FlowLayout(FlowLayout.LEFT))
+        controls.add(JLabel("SQLMap Path:"))
+        sqlmap_candidates = [
+            os.path.expanduser("~/.local/bin/sqlmap"),
+            os.path.expanduser("~/go/bin/sqlmap"),
+            "sqlmap",
+        ]
+        default_sqlmap = next(
+            (p for p in sqlmap_candidates if os.path.exists(p)),
+            "sqlmap",
+        )
+        self.sqlmap_path_field = JTextField(default_sqlmap, 28)
+        controls.add(self.sqlmap_path_field)
+        controls.add(JLabel("Max Targets:"))
+        self.sqlmap_max_targets_field = JTextField("12", 4)
+        controls.add(self.sqlmap_max_targets_field)
+        controls.add(JLabel("Per Target Timeout(s):"))
+        self.sqlmap_target_timeout_field = JTextField("45", 4)
+        controls.add(self.sqlmap_target_timeout_field)
+        controls.add(JLabel("Profile:"))
+        self.sqlmap_profile_combo = JComboBox(self._profile_labels())
+        self.sqlmap_profile_combo.setSelectedItem("Balanced")
+        controls.add(self.sqlmap_profile_combo)
+        controls.add(
+            self._create_action_button(
+                "Run Verify", Color(220, 53, 69), lambda e: self._run_sqlmap_verify(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_sqlmap(e)
+            )
+        )
+        self._add_force_kill_button(controls, lambda: getattr(self, "sqlmap_area", None))
+        controls.add(
+            self._create_action_button(
+                "Send to Recon",
+                Color(76, 175, 80),
+                lambda e: self._send_sqlmap_to_recon(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Export Results",
+                Color(70, 130, 180),
+                lambda e: self._export_sqlmap_results(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Clear", Color(108, 117, 125), lambda e: self.sqlmap_area.setText("")
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Copy",
+                Color(96, 125, 139),
+                lambda e: self._copy_to_clipboard(self.sqlmap_area.getText()),
+            )
+        )
+
+        panel.add(controls, BorderLayout.NORTH)
+        self.sqlmap_area, scroll = self._create_text_area_panel()
+        panel.add(scroll, BorderLayout.CENTER)
+        self.sqlmap_findings = []
+        self.sqlmap_verified_candidates = []
+        self.sqlmap_lock = threading.Lock()
+        return panel
+
+    def _create_dalfox_verify_tab(self):
+        """Create Dalfox verification tab for reflected XSS confirmation."""
+        import os
+
+        panel = JPanel(BorderLayout())
+        controls = JPanel(FlowLayout(FlowLayout.LEFT))
+        controls.add(JLabel("Dalfox Path:"))
+        dalfox_candidates = [
+            os.path.expanduser("~/go/bin/dalfox"),
+            os.path.expanduser("~/.local/bin/dalfox"),
+            "dalfox",
+        ]
+        default_dalfox = next(
+            (p for p in dalfox_candidates if os.path.exists(p)),
+            "dalfox",
+        )
+        self.dalfox_path_field = JTextField(default_dalfox, 28)
+        controls.add(self.dalfox_path_field)
+        controls.add(JLabel("Max Targets:"))
+        self.dalfox_max_targets_field = JTextField("12", 4)
+        controls.add(self.dalfox_max_targets_field)
+        controls.add(JLabel("Per Target Timeout(s):"))
+        self.dalfox_target_timeout_field = JTextField("40", 4)
+        controls.add(self.dalfox_target_timeout_field)
+        controls.add(JLabel("Profile:"))
+        self.dalfox_profile_combo = JComboBox(self._profile_labels())
+        self.dalfox_profile_combo.setSelectedItem("Balanced")
+        controls.add(self.dalfox_profile_combo)
+        controls.add(
+            self._create_action_button(
+                "Run Verify", Color(220, 53, 69), lambda e: self._run_dalfox_verify(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_dalfox(e)
+            )
+        )
+        self._add_force_kill_button(controls, lambda: getattr(self, "dalfox_area", None))
+        controls.add(
+            self._create_action_button(
+                "Send to Recon",
+                Color(76, 175, 80),
+                lambda e: self._send_dalfox_to_recon(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Export Results",
+                Color(70, 130, 180),
+                lambda e: self._export_dalfox_results(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Clear", Color(108, 117, 125), lambda e: self.dalfox_area.setText("")
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Copy",
+                Color(96, 125, 139),
+                lambda e: self._copy_to_clipboard(self.dalfox_area.getText()),
+            )
+        )
+
+        panel.add(controls, BorderLayout.NORTH)
+        self.dalfox_area, scroll = self._create_text_area_panel()
+        panel.add(scroll, BorderLayout.CENTER)
+        self.dalfox_findings = []
+        self.dalfox_verified_candidates = []
+        self.dalfox_lock = threading.Lock()
+        return panel
+
+    def _create_api_asset_discovery_tab(self):
+        """Create API asset discovery tab (subfinder + dnsx + httpx)."""
+        import os
+
+        panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+
+        controls = JPanel(FlowLayout(FlowLayout.LEFT))
+        controls.add(JLabel("Domains (comma/newline, optional):"))
+        self.asset_domains_field = JTextField("", 28)
+        self.asset_domains_field.setToolTipText(
+            "Leave empty to auto-derive base domains from Recon hosts"
+        )
+        controls.add(self.asset_domains_field)
+        controls.add(JLabel("Max Domains:"))
+        self.asset_max_domains_field = JTextField("8", 3)
+        controls.add(self.asset_max_domains_field)
+        controls.add(JLabel("Profile:"))
+        self.asset_profile_combo = JComboBox(self._profile_labels())
+        self.asset_profile_combo.setSelectedItem("Balanced")
+        controls.add(self.asset_profile_combo)
+        controls.add(
+            self._create_action_button(
+                "Run Discovery",
+                Color(138, 43, 226),
+                lambda e: self._run_api_asset_discovery(e),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_asset_discovery(e)
+            )
+        )
+        self._add_force_kill_button(controls, lambda: getattr(self, "asset_area", None))
+        controls.add(
+            self._create_action_button(
+                "Send to Recon",
+                Color(76, 175, 80),
+                lambda e: self._send_asset_discovery_to_recon(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Export Results",
+                Color(70, 130, 180),
+                lambda e: self._export_asset_discovery_results(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Clear", Color(108, 117, 125), lambda e: self.asset_area.setText("")
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Copy",
+                Color(96, 125, 139),
+                lambda e: self._copy_to_clipboard(self.asset_area.getText()),
+            )
+        )
+
+        tools_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        tools_row.add(JLabel("subfinder:"))
+        self.asset_subfinder_path_field = JTextField(
+            os.path.expanduser("~/go/bin/subfinder"), 21
+        )
+        tools_row.add(self.asset_subfinder_path_field)
+        tools_row.add(JLabel("dnsx:"))
+        self.asset_dnsx_path_field = JTextField(os.path.expanduser("~/go/bin/dnsx"), 20)
+        tools_row.add(self.asset_dnsx_path_field)
+        tools_row.add(JLabel("httpx:"))
+        self.asset_httpx_path_field = JTextField(
+            os.path.expanduser("~/go/bin/httpx"), 20
+        )
+        tools_row.add(self.asset_httpx_path_field)
+
+        top_panel.add(controls)
+        top_panel.add(tools_row)
+        panel.add(top_panel, BorderLayout.NORTH)
+        self.asset_area, scroll = self._create_text_area_panel()
+        panel.add(scroll, BorderLayout.CENTER)
+        self.asset_discovered = []
+        self.asset_lock = threading.Lock()
+        return panel
+
+    def _create_openapi_drift_tab(self):
+        """Create OpenAPI drift analysis tab (observed traffic vs spec)."""
+        panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+
+        controls = JPanel(FlowLayout(FlowLayout.LEFT))
+        controls.add(JLabel("OpenAPI/Swagger File or URL:"))
+        self.openapi_spec_field = JTextField("", 40)
+        self.openapi_spec_field.setToolTipText(
+            "Local file path (.json/.yaml) or URL to OpenAPI document"
+        )
+        controls.add(self.openapi_spec_field)
+        controls.add(
+            self._create_action_button(
+                "Browse",
+                Color(96, 125, 139),
+                lambda e: self._browse_openapi_spec_file(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Run Drift", Color(138, 43, 226), lambda e: self._run_openapi_drift(e)
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_openapi_drift(e)
+            )
+        )
+        self._add_force_kill_button(controls, lambda: getattr(self, "openapi_area", None))
+        controls.add(
+            self._create_action_button(
+                "Send to Recon",
+                Color(76, 175, 80),
+                lambda e: self._send_openapi_to_recon(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Export Results",
+                Color(70, 130, 180),
+                lambda e: self._export_openapi_drift_results(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Clear", Color(108, 117, 125), lambda e: self.openapi_area.setText("")
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Copy",
+                Color(96, 125, 139),
+                lambda e: self._copy_to_clipboard(self.openapi_area.getText()),
+            )
+        )
+
+        help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        help_row.add(
+            JLabel(
+                "Flags undocumented observed endpoints, missing spec endpoints, and parameter drift."
+            )
+        )
+
+        top_panel.add(controls)
+        top_panel.add(help_row)
+        panel.add(top_panel, BorderLayout.NORTH)
+        self.openapi_area, scroll = self._create_text_area_panel()
+        panel.add(scroll, BorderLayout.CENTER)
+        self.openapi_drift_results = []
+        self.openapi_missing_candidates = []
+        self.openapi_lock = threading.Lock()
+        return panel
+
     def _create_auth_replay_tab(self):
         """Create Auth Replay tab for multi-role authorization checks."""
         panel = JPanel(BorderLayout())
@@ -1691,6 +2070,10 @@ class BurpExtender(
                 ],
             )
         )
+        controls.add(JLabel("Profile:"))
+        self.nuclei_profile_combo = JComboBox(self._profile_labels())
+        self.nuclei_profile_combo.setSelectedItem("Fast")
+        controls.add(self.nuclei_profile_combo)
         self._add_target_scope_controls(controls)
         controls.add(
             self._create_action_button(
@@ -2277,13 +2660,50 @@ class BurpExtender(
 
     def _get_graphql_attacks(self):
         return {
-            "introspection": ["query{__schema{types{name,fields{name}}}}"],
-            "batching": ["[{query:user(id:1)},{query:user(id:2)}]"],
-            "depth": ["query{user{posts{comments{replies{replies{replies}}}}}}"],
-            "aliases": ["query{u1:user(id:1) u2:user(id:2) u3:user(id:3)}"],
+            "introspection": [
+                "query{__schema{types{name,fields{name}}}}",
+                "query{__schema{queryType{name,fields{name,args{name,type{name}}}}}}",
+                "query{__schema{mutationType{name,fields{name}}}}",
+                "query{__type(name:\"Query\"){fields{name}}}",
+                "{__schema{types{name,fields{name,type{name,kind,ofType{name,kind}}}}}}",
+            ],
+            "batching": [
+                "[{query:user(id:1)},{query:user(id:2)}]",
+                "[{\"query\":\"query{user(id:1)}\"},{\"query\":\"query{user(id:2)}\"}]",
+            ],
+            "depth": [
+                "query{user{posts{comments{replies{replies{replies}}}}}}",
+                "query{user{friends{friends{friends{friends{friends{friends}}}}}}}",
+                "query{a{b{c{d{e{f{g{h{i{j{k{l{m{n{o{p{q{r{s{t{u{v{w{x{y{z}}}}}}}}}}}}}}}}}}}}}}}}}}",
+            ],
+            "aliases": [
+                "query{u1:user(id:1) u2:user(id:2) u3:user(id:3)}",
+                "query{a1:__typename a2:__typename a3:__typename a4:__typename a5:__typename a6:__typename}",
+                "query{q1:users q2:users q3:users q4:users q5:users q6:users q7:users q8:users q9:users q10:users}",
+            ],
             "mutations": [
                 "mutation{deleteUser(id:1)}",
                 "mutation{updateRole(id:1,role:admin)}",
+                "mutation{createUser(username:\"admin\",role:\"admin\")}",
+                "mutation{updateUser(id:1,email:\"attacker@evil.com\")}",
+            ],
+            "field_suggestion": [
+                "query{__schema{directive}}",
+                "query{usre{id,name}}",
+                "query{admn{id,role}}",
+                "query{passwrd}",
+            ],
+            "directive_overload": [
+                "query{__typename @a@a@a@a@a@a@a@a@a@a}",
+                "query{user(id:1)@skip(if:true)@skip(if:true)@skip(if:true)}",
+                "query{users @include(if:true)@include(if:true)@include(if:true)}",
+            ],
+            "circular_fragment": [
+                "query{...A} fragment A on User{friends{...A}}}",
+                "query{...F1} fragment F1 on Query{...F2} fragment F2 on Query{...F1}",
+            ],
+            "array_batching": [
+                "[{\"query\":\"query{__typename}\"},{\"query\":\"query{__typename}\"},{\"query\":\"query{__typename}\"}]",
             ],
         }
 
@@ -3340,15 +3760,19 @@ class BurpExtender(
         gql = self._get_graphql_attacks()
         return {
             "type": "GraphQL Abuse",
-            "introspection": gql["introspection"][0],
+            "introspection": gql["introspection"][:2],
             "attacks": [
-                "Batching",
+                "Introspection queries",
+                "Batching (array/alias)",
                 "Depth limit bypass",
-                "Alias abuse",
+                "Directive overloading",
+                "Field suggestion",
+                "Circular fragments",
                 "Mutation injection",
             ],
-            "test": "Query batching, depth attacks, introspection",
-            "risk": "DoS, data exfiltration, unauthorized mutations",
+            "payloads": gql["batching"] + gql["aliases"][:2] + gql["directive_overload"][:2] + gql["field_suggestion"][:2],
+            "test": "DoS via batching/depth, info disclosure via field suggestion, introspection bypass",
+            "risk": "DoS, data exfiltration, unauthorized mutations, schema disclosure",
         }
 
     def _check_jwt(self, normalized, attack_type):
@@ -4368,6 +4792,28 @@ def handleResponse(req, interesting):
                         "Error closing nuclei scan targets file: {}".format(str(e))
                     )
         target_count = len(targets)
+        profile_value = self._selected_profile_value(
+            getattr(self, "nuclei_profile_combo", None)
+        )
+        try:
+            nuclei_profile_cfg = tool_profiles.nuclei_profile_settings(profile_value)
+        except Exception as profile_err:
+            self._callbacks.printError(
+                "Nuclei profile fallback: {}".format(str(profile_err))
+            )
+            nuclei_profile_cfg = {
+                "profile": "fast",
+                "include_tags": "exposure,api,swagger,openapi",
+                "exclude_tags": "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force",
+                "request_timeout": self.NUCLEI_REQUEST_TIMEOUT_SECONDS,
+                "retries": self.NUCLEI_RETRIES,
+                "rate_limit": self.NUCLEI_RATE_LIMIT,
+                "concurrency": self.NUCLEI_CONCURRENCY,
+                "bulk_size": self.NUCLEI_BULK_SIZE,
+                "max_host_error": self.NUCLEI_MAX_HOST_ERROR,
+                "scan_strategy": self.NUCLEI_SCAN_STRATEGY,
+                "max_scan_seconds": self.NUCLEI_MAX_SCAN_SECONDS,
+            }
 
         use_custom_nuclei, custom_nuclei_command = self._resolve_custom_command(
             "Nuclei",
@@ -4400,6 +4846,9 @@ def handleResponse(req, interesting):
         self.log_to_ui("[*] Targets: {}".format(targets_file))
         self.log_to_ui("[*] Output: {}".format(output_file))
         self.nuclei_area.setText("[*] Initializing Nuclei (WAF EVASION MODE)...\n")
+        self.nuclei_area.append(
+            "[*] Profile: {}\n".format(nuclei_profile_cfg.get("profile", profile_value))
+        )
         self.nuclei_area.append(
             "[*] Discovery targets: {} (scoped first-party hosts/paths)\n".format(
                 target_count
@@ -4442,26 +4891,28 @@ def handleResponse(req, interesting):
                 )
             )
         self.nuclei_area.append(
-            "[*] Tags: exposure,api,swagger,openapi (optimized for speed)\n"
+            "[*] Tags: {}\n".format(nuclei_profile_cfg.get("include_tags", ""))
         )
         self.nuclei_area.append(
-            "[*] Excluding: dos,intrusive,headless only\n"
+            "[*] Excluding: {}\n".format(nuclei_profile_cfg.get("exclude_tags", ""))
         )
         self.nuclei_area.append(
             "[*] Timeout: {}s, Retries: {} (resilient mode)\n".format(
-                self.NUCLEI_REQUEST_TIMEOUT_SECONDS, self.NUCLEI_RETRIES
+                nuclei_profile_cfg.get("request_timeout", self.NUCLEI_REQUEST_TIMEOUT_SECONDS),
+                nuclei_profile_cfg.get("retries", self.NUCLEI_RETRIES),
             )
         )
         self.nuclei_area.append(
             "[*] Rate: {} req/s, Concurrency: {} (balanced mode)\n".format(
-                self.NUCLEI_RATE_LIMIT, self.NUCLEI_CONCURRENCY
+                nuclei_profile_cfg.get("rate_limit", self.NUCLEI_RATE_LIMIT),
+                nuclei_profile_cfg.get("concurrency", self.NUCLEI_CONCURRENCY),
             )
         )
         self.nuclei_area.append(
             "[*] Scan strategy: {} | Bulk size: {} | Max host errors: {}\n".format(
-                self.NUCLEI_SCAN_STRATEGY,
-                self.NUCLEI_BULK_SIZE,
-                self.NUCLEI_MAX_HOST_ERROR,
+                nuclei_profile_cfg.get("scan_strategy", self.NUCLEI_SCAN_STRATEGY),
+                nuclei_profile_cfg.get("bulk_size", self.NUCLEI_BULK_SIZE),
+                nuclei_profile_cfg.get("max_host_error", self.NUCLEI_MAX_HOST_ERROR),
             )
         )
         self.nuclei_area.append("[*] Evasion: Header-based spoofing (X-Forwarded-For)\n\n")
@@ -4470,9 +4921,10 @@ def handleResponse(req, interesting):
         def run_scan():
             process = None
             try:
-                # Discovery-focused: FAST API endpoint discovery only
-                include_tags = "exposure,api,swagger,openapi"
-                exclude_tags = "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force"
+                include_tags = nuclei_profile_cfg.get("include_tags", "exposure,api,swagger,openapi")
+                exclude_tags = nuclei_profile_cfg.get(
+                    "exclude_tags", "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force"
+                )
                 parse_file = json_file
 
                 if use_custom_nuclei and custom_nuclei_command:
@@ -4496,24 +4948,63 @@ def handleResponse(req, interesting):
                         exclude_tags,
                         "-no-color",
                         "-timeout",
-                        str(self.NUCLEI_REQUEST_TIMEOUT_SECONDS),
+                        str(
+                            nuclei_profile_cfg.get(
+                                "request_timeout",
+                                self.NUCLEI_REQUEST_TIMEOUT_SECONDS,
+                            )
+                        ),
                         "-retries",
-                        str(self.NUCLEI_RETRIES),
+                        str(nuclei_profile_cfg.get("retries", self.NUCLEI_RETRIES)),
                         "-rate-limit",
-                        str(self.NUCLEI_RATE_LIMIT),
+                        str(
+                            nuclei_profile_cfg.get(
+                                "rate_limit", self.NUCLEI_RATE_LIMIT
+                            )
+                        ),
                         "-c",
-                        str(self.NUCLEI_CONCURRENCY),
+                        str(
+                            nuclei_profile_cfg.get(
+                                "concurrency", self.NUCLEI_CONCURRENCY
+                            )
+                        ),
                         "-disable-update-check",
                         "-silent",
                         "-header",
                         "X-Forwarded-For: 127.0.0.1",
                     ]
                     if supports_bulk_size:
-                        cmd.extend(["-bs", str(self.NUCLEI_BULK_SIZE)])
+                        cmd.extend(
+                            [
+                                "-bs",
+                                str(
+                                    nuclei_profile_cfg.get(
+                                        "bulk_size", self.NUCLEI_BULK_SIZE
+                                    )
+                                ),
+                            ]
+                        )
                     if supports_max_host_error:
-                        cmd.extend(["-mhe", str(self.NUCLEI_MAX_HOST_ERROR)])
+                        cmd.extend(
+                            [
+                                "-mhe",
+                                str(
+                                    nuclei_profile_cfg.get(
+                                        "max_host_error",
+                                        self.NUCLEI_MAX_HOST_ERROR,
+                                    )
+                                ),
+                            ]
+                        )
                     if supports_scan_strategy:
-                        cmd.extend(["-ss", self.NUCLEI_SCAN_STRATEGY])
+                        cmd.extend(
+                            [
+                                "-ss",
+                                nuclei_profile_cfg.get(
+                                    "scan_strategy", self.NUCLEI_SCAN_STRATEGY
+                                ),
+                            ]
+                        )
                     if supports_no_httpx:
                         cmd.append("-no-httpx")
                     if supports_project_mode:
@@ -4562,7 +5053,12 @@ def handleResponse(req, interesting):
                     return
 
                 adaptive_timeout = max(360, target_count * 30)
-                max_timeout = min(self.NUCLEI_MAX_SCAN_SECONDS, adaptive_timeout)
+                max_timeout = min(
+                    nuclei_profile_cfg.get(
+                        "max_scan_seconds", self.NUCLEI_MAX_SCAN_SECONDS
+                    ),
+                    adaptive_timeout,
+                )
 
                 SwingUtilities.invokeLater(
                     lambda t=max_timeout, c=target_count: self.nuclei_area.append(
@@ -6287,6 +6783,348 @@ Generate a complete Burp extension that:
         )
         self._export_data(filtered_data, "_" + host.replace(".", "_"))
 
+    def _select_export_scope_data(self, export_name):
+        """Select export scope and return (scope_label, data dict)."""
+        if not self.api_data:
+            self.log_to_ui("[!] No API data to export")
+            return None, None
+
+        options = ["All Endpoints", "Filtered View", "Current Host"]
+        selected = JOptionPane.showInputDialog(
+            self._panel,
+            "Select scope for {} export:".format(export_name),
+            "{} Export Scope".format(export_name),
+            JOptionPane.QUESTION_MESSAGE,
+            None,
+            options,
+            options[1],
+        )
+        if selected is None:
+            return None, None
+
+        scope = str(selected)
+        if scope == "All Endpoints":
+            with self.lock:
+                return scope, dict(self.api_data)
+
+        if scope == "Filtered View":
+            with self.lock:
+                filtered = dict(self._filter_endpoints())
+            if not filtered:
+                self.log_to_ui("[!] Filtered view is empty")
+                return None, None
+            return scope, filtered
+
+        host = str(self.host_filter.getSelectedItem())
+        if host == "All":
+            with self.lock:
+                hosts = sorted(
+                    set(self._get_entry(e)["host"] for e in self.api_data.values())
+                )
+            if not hosts:
+                self.log_to_ui("[!] No hosts available for export")
+                return None, None
+            host = JOptionPane.showInputDialog(
+                self._panel,
+                "Select host for {} export:".format(export_name),
+                "{} Host".format(export_name),
+                JOptionPane.QUESTION_MESSAGE,
+                None,
+                hosts,
+                hosts[0],
+            )
+            if host is None:
+                return None, None
+            host = str(host)
+
+        with self.lock:
+            host_data = {
+                k: v
+                for k, v in self.api_data.items()
+                if self._get_entry(v)["host"] == host
+            }
+        if not host_data:
+            self.log_to_ui("[!] No endpoints for host: {}".format(host))
+            return None, None
+        return "Host: {}".format(host), host_data
+
+    def _split_path_segments(self, path):
+        """Split path into non-empty segments for export clients."""
+        safe_path = self._ascii_safe(path or "/").strip()
+        if not safe_path.startswith("/"):
+            safe_path = "/" + safe_path
+        return [segment for segment in safe_path.split("/") if segment]
+
+    def _parse_query_pairs(self, query_string):
+        """Parse query string into ordered key/value pairs."""
+        pairs = []
+        safe_query = self._ascii_safe(query_string or "").strip()
+        if not safe_query:
+            return pairs
+        for part in safe_query.split("&"):
+            if not part:
+                continue
+            if "=" in part:
+                key, value = part.split("=", 1)
+            else:
+                key, value = part, ""
+            pairs.append(
+                {
+                    "key": self._ascii_safe(key),
+                    "value": self._ascii_safe(value),
+                }
+            )
+        return pairs
+
+    def _build_entry_url(self, entry):
+        """Build full URL and normalized components from a captured entry."""
+        protocol = self._ascii_safe(entry.get("protocol") or "https", lower=True).strip() or "https"
+        host = self._ascii_safe(entry.get("host") or "").strip()
+        if not host:
+            return "", protocol, host, "", []
+
+        path = self._ascii_safe(
+            entry.get("path") or entry.get("normalized_path") or "/"
+        ).strip()
+        if not path.startswith("/"):
+            path = "/" + path
+        query_string = self._ascii_safe(entry.get("query_string") or "").strip()
+        url = "{}://{}{}".format(protocol, host, path)
+        if query_string:
+            url += "?" + query_string
+        return url, protocol, host, path, self._parse_query_pairs(query_string)
+
+    def _build_postman_collection(self, data_to_export, collection_name):
+        """Build Postman Collection v2.1 payload from endpoint data."""
+        host_groups = {}
+        for endpoint_key, entries in data_to_export.items():
+            entry = self._get_entry(entries)
+            host = self._ascii_safe(entry.get("host") or "unknown-host")
+            if host not in host_groups:
+                host_groups[host] = []
+            host_groups[host].append((endpoint_key, entries))
+
+        postman_items = []
+        for host in sorted(host_groups.keys()):
+            request_items = []
+            for endpoint_key, entries in sorted(host_groups[host], key=lambda item: item[0]):
+                entry = self._get_entry(entries)
+                method = self._ascii_safe(entry.get("method") or "GET").upper()
+                url, protocol, host_value, path, query_pairs = self._build_entry_url(entry)
+                headers = []
+                raw_headers = entry.get("headers", {})
+                if isinstance(raw_headers, dict):
+                    for key, value in raw_headers.items():
+                        name = self._ascii_safe(key).strip()
+                        header_value = self._ascii_safe(value).strip()
+                        if not name:
+                            continue
+                        if name.lower() in ["host", "content-length", "connection"]:
+                            continue
+                        headers.append({"key": name, "value": header_value})
+
+                request_obj = {
+                    "method": method,
+                    "header": headers,
+                    "url": {
+                        "raw": url,
+                        "protocol": protocol,
+                        "host": [part for part in host_value.split(".") if part],
+                        "path": self._split_path_segments(path),
+                        "query": query_pairs,
+                    },
+                }
+
+                raw_body = self._ascii_safe(entry.get("request_body") or "")
+                if raw_body and method in ["POST", "PUT", "PATCH", "DELETE"]:
+                    request_obj["body"] = {"mode": "raw", "raw": raw_body}
+
+                request_items.append(
+                    {
+                        "name": self._ascii_safe(endpoint_key),
+                        "request": request_obj,
+                        "response": [],
+                    }
+                )
+
+            postman_items.append({"name": host, "item": request_items})
+
+        return {
+            "info": {
+                "name": self._ascii_safe(collection_name),
+                "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+                "description": "Generated by BurpAPISecuritySuite",
+            },
+            "item": postman_items,
+        }
+
+    def _build_insomnia_export(self, data_to_export, workspace_name):
+        """Build Insomnia export JSON payload from endpoint data."""
+        workspace_id = "wrk_burpapisecuritysuite"
+        env_id = "env_burpapisecuritysuite"
+        resources = [
+            {
+                "_id": workspace_id,
+                "_type": "workspace",
+                "name": self._ascii_safe(workspace_name),
+            },
+            {
+                "_id": env_id,
+                "_type": "environment",
+                "parentId": workspace_id,
+                "name": "Base Environment",
+                "data": {},
+            },
+        ]
+
+        host_groups = {}
+        for endpoint_key, entries in data_to_export.items():
+            entry = self._get_entry(entries)
+            host = self._ascii_safe(entry.get("host") or "unknown-host")
+            if host not in host_groups:
+                host_groups[host] = []
+            host_groups[host].append((endpoint_key, entries))
+
+        request_counter = 1
+        group_counter = 1
+        for host in sorted(host_groups.keys()):
+            group_id = "fld_{:04d}".format(group_counter)
+            group_counter += 1
+            resources.append(
+                {
+                    "_id": group_id,
+                    "_type": "request_group",
+                    "parentId": workspace_id,
+                    "name": host,
+                }
+            )
+
+            for endpoint_key, entries in sorted(host_groups[host], key=lambda item: item[0]):
+                entry = self._get_entry(entries)
+                method = self._ascii_safe(entry.get("method") or "GET").upper()
+                url, _, _, _, query_pairs = self._build_entry_url(entry)
+                headers = []
+                raw_headers = entry.get("headers", {})
+                if isinstance(raw_headers, dict):
+                    for key, value in raw_headers.items():
+                        name = self._ascii_safe(key).strip()
+                        header_value = self._ascii_safe(value).strip()
+                        if not name:
+                            continue
+                        if name.lower() in ["host", "content-length", "connection"]:
+                            continue
+                        headers.append({"name": name, "value": header_value})
+
+                request_obj = {
+                    "_id": "req_{:05d}".format(request_counter),
+                    "_type": "request",
+                    "parentId": group_id,
+                    "name": self._ascii_safe(endpoint_key),
+                    "method": method,
+                    "url": url,
+                    "parameters": [
+                        {"name": pair["key"], "value": pair["value"]}
+                        for pair in query_pairs
+                    ],
+                    "headers": headers,
+                }
+
+                raw_body = self._ascii_safe(entry.get("request_body") or "")
+                if raw_body and method in ["POST", "PUT", "PATCH", "DELETE"]:
+                    request_obj["body"] = {
+                        "mimeType": "application/json",
+                        "text": raw_body,
+                    }
+
+                resources.append(request_obj)
+                request_counter += 1
+
+        return {
+            "_type": "export",
+            "__export_format": 4,
+            "__export_date": SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'").format(Date()),
+            "__export_source": "burpapisecuritysuite",
+            "resources": resources,
+        }
+
+    def _export_postman_collection(self):
+        """Export Recon data as Postman Collection v2.1 JSON."""
+        scope_label, data_to_export = self._select_export_scope_data("Postman")
+        if not data_to_export:
+            return
+
+        export_dir = self._get_export_dir("Postman_Export")
+        if not export_dir:
+            self.log_to_ui("[!] Cannot create export directory")
+            return
+
+        import os
+
+        collection_name = "Burp API Security Suite ({})".format(scope_label)
+        collection = self._build_postman_collection(data_to_export, collection_name)
+        filepath = os.path.join(export_dir, "postman_collection.json")
+        writer = None
+        try:
+            writer = FileWriter(filepath)
+            writer.write(json.dumps(collection, indent=2))
+            host_count = len(set(self._get_entry(v)["host"] for v in data_to_export.values()))
+            self.log_to_ui(
+                "[+] Postman export: {} endpoints, {} hosts".format(
+                    len(data_to_export), host_count
+                )
+            )
+            self.log_to_ui("[+] Folder: {}".format(export_dir))
+            self.log_to_ui("[+] File: {}".format(filepath))
+        except Exception as e:
+            self.log_to_ui("[!] Postman export failed: {}".format(str(e)))
+        finally:
+            if writer:
+                try:
+                    writer.close()
+                except Exception as e:
+                    self._callbacks.printError(
+                        "Error closing Postman export file: {}".format(str(e))
+                    )
+
+    def _export_insomnia_collection(self):
+        """Export Recon data as Insomnia import JSON."""
+        scope_label, data_to_export = self._select_export_scope_data("Insomnia")
+        if not data_to_export:
+            return
+
+        export_dir = self._get_export_dir("Insomnia_Export")
+        if not export_dir:
+            self.log_to_ui("[!] Cannot create export directory")
+            return
+
+        import os
+
+        workspace_name = "Burp API Security Suite ({})".format(scope_label)
+        export_payload = self._build_insomnia_export(data_to_export, workspace_name)
+        filepath = os.path.join(export_dir, "insomnia_collection.json")
+        writer = None
+        try:
+            writer = FileWriter(filepath)
+            writer.write(json.dumps(export_payload, indent=2))
+            host_count = len(set(self._get_entry(v)["host"] for v in data_to_export.values()))
+            self.log_to_ui(
+                "[+] Insomnia export: {} endpoints, {} hosts".format(
+                    len(data_to_export), host_count
+                )
+            )
+            self.log_to_ui("[+] Folder: {}".format(export_dir))
+            self.log_to_ui("[+] File: {}".format(filepath))
+        except Exception as e:
+            self.log_to_ui("[!] Insomnia export failed: {}".format(str(e)))
+        finally:
+            if writer:
+                try:
+                    writer.close()
+                except Exception as e:
+                    self._callbacks.printError(
+                        "Error closing Insomnia export file: {}".format(str(e))
+                    )
+
     def import_data(self):
         """Import previously exported JSON"""
         chooser = JFileChooser()
@@ -6799,7 +7637,9 @@ Generate a complete Burp extension that:
         Run external tool asynchronously with heartbeat and result processing.
         Fixes hanging UI and missing output issues.
         """
+        import os
         import subprocess
+        import tempfile
         import threading
         import time as time_module
 
@@ -6815,20 +7655,92 @@ Generate a complete Burp extension that:
                 )
                 self.log_to_ui("[*] Running: {}".format(tool_name))
 
-                # Start process
-                process = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
+                capture_fd = None
+                capture_path = None
+                capture_handle = None
+                process = None
+
+                try:
+                    capture_fd, capture_path = tempfile.mkstemp(
+                        prefix="burp_tool_async_", suffix=".log"
+                    )
+                    os.close(capture_fd)
+                    capture_fd = None
+                    capture_handle = open(capture_path, "wb")
+                    # File-backed capture avoids PIPE deadlocks on noisy tools.
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=capture_handle,
+                        stderr=subprocess.STDOUT,
+                        shell=False,
+                    )
+                finally:
+                    if capture_handle:
+                        try:
+                            capture_handle.close()
+                        except Exception as close_err:
+                            self._callbacks.printError(
+                                "{} capture close error: {}".format(
+                                    tool_name, str(close_err)
+                                )
+                            )
 
                 start_time = time_module.time()
                 timeout = 600  # 10 minutes
                 result_count = 0
+                last_read_offset = 0
 
                 SwingUtilities.invokeLater(
                     lambda: output_area.append("[*] Stage: Running...\n")
                 )
 
-                # Read output line by line
+                def pump_capture():
+                    """Read newly-written capture bytes and append to UI."""
+                    if not capture_path or (not os.path.exists(capture_path)):
+                        return 0
+                    try:
+                        with open(capture_path, "rb") as reader:
+                            reader.seek(last_read_offset)
+                            chunk = reader.read()
+                    except Exception as read_err:
+                        self._callbacks.printError(
+                            "{} capture read error: {}".format(
+                                tool_name, str(read_err)
+                            )
+                        )
+                        return 0
+
+                    if not chunk:
+                        return 0
+
+                    decoded = self._decode_process_data(
+                        chunk, "{} stdout chunk".format(tool_name)
+                    )
+                    if not decoded:
+                        return 0
+
+                    clean_text = self.ANSI_ESCAPE_PATTERN.sub("", decoded)
+                    non_empty_lines = [
+                        line for line in clean_text.splitlines() if line.strip()
+                    ]
+                    if non_empty_lines:
+                        SwingUtilities.invokeLater(
+                            lambda t=clean_text: output_area.append(t)
+                        )
+                    return len(chunk), len(non_empty_lines)
+
+                def cleanup_capture_file():
+                    if capture_path and os.path.exists(capture_path):
+                        try:
+                            os.remove(capture_path)
+                        except Exception as cleanup_err:
+                            self._callbacks.printError(
+                                "{} capture cleanup error: {}".format(
+                                    tool_name, str(cleanup_err)
+                                )
+                            )
+
+                # Non-blocking monitor loop (no readline on pipes).
                 while process.poll() is None:
                     elapsed = int(time_module.time() - start_time)
                     if elapsed > timeout:
@@ -6836,59 +7748,32 @@ Generate a complete Burp extension that:
                             process.kill()
                             process.wait()
                         except Exception as e:
-                            self._callbacks.printError("Process kill failed: {}".format(str(e)))
+                            self._callbacks.printError(
+                                "Process kill failed: {}".format(str(e))
+                            )
                         SwingUtilities.invokeLater(
                             lambda: output_area.append(
                                 "\n[!] Timeout after {}s\n".format(timeout)
                             )
                         )
+                        cleanup_capture_file()
                         return
 
-                    line = process.stdout.readline()
-                    if line:
-                        line = self._decode_process_data(line, "{} stdout line".format(tool_name))
-                        if line.strip():
-                            # Strip ANSI escape codes using pre-compiled pattern
-                            clean_line = self.ANSI_ESCAPE_PATTERN.sub("", line)
-                            result_count += 1
-                            SwingUtilities.invokeLater(
-                                lambda l=clean_line: output_area.append(l)
-                            )
-                    else:
-                        time_module.sleep(0.1)
+                    pumped = pump_capture()
+                    if pumped:
+                        bytes_read, lines_read = pumped
+                        last_read_offset += bytes_read
+                        result_count += lines_read
+                    time_module.sleep(0.2)
 
-                # Read remaining and wait for process
-                remaining = process.stdout.read()
                 process.wait()
-                if remaining:
-                    remaining = self._decode_process_data(
-                        remaining, "{} stdout tail".format(tool_name)
-                    )
-                    if remaining.strip():
-                        SwingUtilities.invokeLater(
-                            lambda r=remaining: output_area.append(r)
-                        )
-
-                stderr = process.stderr.read()
-                if stderr:
-                    stderr = self._decode_process_data(
-                        stderr, "{} stderr".format(tool_name)
-                    )
+                pumped = pump_capture()
+                if pumped:
+                    bytes_read, lines_read = pumped
+                    last_read_offset += bytes_read
+                    result_count += lines_read
 
                 total_time = int(time_module.time() - start_time)
-
-                # Append STDERR to UI
-                if stderr and stderr.strip():
-                    final_err = (
-                        stderr[:5000] + "...(truncated)"
-                        if len(stderr) > 5000
-                        else stderr
-                    )
-                    SwingUtilities.invokeLater(
-                        lambda e=final_err: output_area.append(
-                            "\n[STDERR]\n" + e + "\n"
-                        )
-                    )
 
                 if result_count == 0:
                     SwingUtilities.invokeLater(
@@ -6919,6 +7804,8 @@ Generate a complete Burp extension that:
                 if result_processor:
                     SwingUtilities.invokeLater(result_processor)
 
+                cleanup_capture_file()
+
             except Exception as e:
                 err_msg = str(e)
                 SwingUtilities.invokeLater(
@@ -6928,6 +7815,15 @@ Generate a complete Burp extension that:
                 )
                 self.log_to_ui("[!] {} error: {}".format(tool_name, err_msg))
                 print(err_msg)  # Print to Burp console for debugging
+                try:
+                    if capture_path and os.path.exists(capture_path):
+                        os.remove(capture_path)
+                except Exception as cleanup_err:
+                    self._callbacks.printError(
+                        "{} capture cleanup error: {}".format(
+                            tool_name, str(cleanup_err)
+                        )
+                    )
 
         # Start the thread
         t = threading.Thread(target=run_thread)
@@ -7325,6 +8221,201 @@ Generate a complete Burp extension that:
 
         return True
 
+    def _tool_health_specs(self):
+        """Return tool-health probe specifications for one-click diagnostics."""
+        import os
+
+        return [
+            {
+                "name": "Nuclei",
+                "field": "nuclei_path_field",
+                "fallback": [
+                    os.path.expanduser("~/go/bin/nuclei"),
+                    "nuclei",
+                ],
+                "required": ["-list", "-tags", "-etags", "-jsonl"],
+                "forbidden": [],
+            },
+            {
+                "name": "HTTPX",
+                "field": "httpx_path_field",
+                "fallback": [
+                    os.path.expanduser("~/go/bin/httpx"),
+                    "httpx",
+                ],
+                "required": ["-status-code", "-title"],
+                "forbidden": [
+                    "a next generation http client",
+                    "usage: httpx <url> [options]",
+                ],
+            },
+            {
+                "name": "Katana",
+                "field": "katana_path_field",
+                "fallback": [
+                    os.path.expanduser("~/go/bin/katana"),
+                    "katana",
+                ],
+                "required": ["-list", "-d"],
+                "forbidden": [],
+            },
+            {
+                "name": "FFUF",
+                "field": "ffuf_path_field",
+                "fallback": [
+                    os.path.expanduser("~/go/bin/ffuf"),
+                    "ffuf",
+                ],
+                "required": ["-u", "-w"],
+                "forbidden": [],
+            },
+            {
+                "name": "SQLMap",
+                "field": "sqlmap_path_field",
+                "fallback": [
+                    os.path.expanduser("~/.local/bin/sqlmap"),
+                    "sqlmap",
+                ],
+                "required": ["-u", "--batch", "--level"],
+                "forbidden": [],
+            },
+            {
+                "name": "Dalfox",
+                "field": "dalfox_path_field",
+                "fallback": [
+                    os.path.expanduser("~/go/bin/dalfox"),
+                    "dalfox",
+                ],
+                "required": ["url", "--format", "-o"],
+                "forbidden": [],
+            },
+            {
+                "name": "Subfinder",
+                "field": "asset_subfinder_path_field",
+                "fallback": [
+                    os.path.expanduser("~/go/bin/subfinder"),
+                    "subfinder",
+                ],
+                "required": ["-d", "-silent"],
+                "forbidden": [],
+            },
+            {
+                "name": "DNSX",
+                "field": "asset_dnsx_path_field",
+                "fallback": [
+                    os.path.expanduser("~/go/bin/dnsx"),
+                    "dnsx",
+                ],
+                "required": ["-l", "-silent"],
+                "forbidden": [],
+            },
+        ]
+
+    def _resolve_tool_health_path(self, spec):
+        """Resolve probe path from UI field first, then fallback candidates."""
+        field_name = spec.get("field")
+        if field_name and hasattr(self, field_name):
+            try:
+                field_obj = getattr(self, field_name)
+                value = self._ascii_safe(field_obj.getText()).strip()
+                if value:
+                    return value
+            except Exception as e:
+                self._callbacks.printError(
+                    "Tool health field read error ({}): {}".format(
+                        spec.get("name", "unknown"), str(e)
+                    )
+                )
+
+        for candidate in (spec.get("fallback") or []):
+            safe_candidate = self._ascii_safe(candidate).strip()
+            if safe_candidate:
+                return safe_candidate
+        return ""
+
+    def _run_tool_health_check(self, event):
+        """Run one-click health diagnostics for external tools."""
+        self.log_to_ui("[*] Running Tool Health diagnostics...")
+
+        def run_health():
+            lines = []
+            lines.append("=" * 80)
+            lines.append("TOOL HEALTH CHECK")
+            lines.append("=" * 80)
+            lines.append(
+                "[*] Timestamp: {}".format(
+                    SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(Date())
+                )
+            )
+            lines.append("")
+
+            total = 0
+            healthy = 0
+            for spec in self._tool_health_specs():
+                total += 1
+                name = self._ascii_safe(spec.get("name") or "Unknown")
+                path = self._resolve_tool_health_path(spec)
+                lines.append("[*] {} | path={}".format(name, path or "<empty>"))
+                if not path:
+                    lines.append("  [FAIL] missing path")
+                    continue
+
+                try:
+                    probe = tool_profiles.probe_binary_help(path, timeout_seconds=6)
+                except Exception as e:
+                    lines.append("  [FAIL] probe error: {}".format(self._ascii_safe(e)))
+                    continue
+
+                if not probe.get("ok"):
+                    error_msg = self._ascii_safe(probe.get("error") or "probe failed")
+                    lines.append("  [FAIL] {}".format(error_msg))
+                    continue
+
+                check = tool_profiles.evaluate_help_text(
+                    probe.get("help_text") or "",
+                    required_tokens=spec.get("required"),
+                    forbidden_tokens=spec.get("forbidden"),
+                )
+                if check.get("healthy"):
+                    healthy += 1
+                    lines.append("  [PASS] compatible (flag={})".format(probe.get("help_flag")))
+                else:
+                    missing = check.get("missing") or []
+                    forbidden = check.get("forbidden_found") or []
+                    if missing:
+                        lines.append("  [FAIL] missing options: {}".format(", ".join(missing)))
+                    if forbidden:
+                        lines.append(
+                            "  [FAIL] incompatible signature: {}".format(
+                                ", ".join(forbidden)
+                            )
+                        )
+
+            lines.append("")
+            lines.append("[*] Healthy: {}/{}".format(healthy, total))
+            lines.append("=" * 80)
+            report = "\n".join(lines)
+
+            SwingUtilities.invokeLater(lambda r=report: self.log_to_ui(r))
+
+            def show_popup():
+                text = JTextArea(report, 28, 120)
+                text.setEditable(False)
+                text.setLineWrap(False)
+                text.setFont(Font("Monospaced", Font.PLAIN, 12))
+                JOptionPane.showMessageDialog(
+                    self._panel,
+                    JScrollPane(text),
+                    "Tool Health",
+                    JOptionPane.INFORMATION_MESSAGE,
+                )
+
+            SwingUtilities.invokeLater(show_popup)
+
+        worker = threading.Thread(target=run_health)
+        worker.daemon = True
+        worker.start()
+
     def _extract_command_executables(self, command_text):
         """Extract executable tokens from simple shell command chains."""
         import os
@@ -7528,6 +8619,9 @@ Generate a complete Burp extension that:
             ("katana", "Katana"),
             ("ffuf", "FFUF"),
             ("wayback", "Wayback"),
+            ("sqlmap", "SQLMap"),
+            ("dalfox", "Dalfox"),
+            ("assetdiscovery", "API Asset Discovery"),
         ]
 
         lines = [
@@ -7557,6 +8651,10 @@ Generate a complete Burp extension that:
                 "ffuf.exe",
                 "waybackurls.exe",
                 "gau.exe",
+                "sqlmap.exe",
+                "dalfox.exe",
+                "subfinder.exe",
+                "dnsx.exe",
             ]
             for name in kill_names:
                 try:
@@ -7570,7 +8668,18 @@ Generate a complete Burp extension that:
                 except Exception as e:
                     lines.append("[!] taskkill {} failed: {}".format(name, str(e)))
         else:
-            kill_patterns = ["nuclei", "httpx", "katana", "ffuf", "waybackurls", "gau"]
+            kill_patterns = [
+                "nuclei",
+                "httpx",
+                "katana",
+                "ffuf",
+                "waybackurls",
+                "gau",
+                "sqlmap",
+                "dalfox",
+                "subfinder",
+                "dnsx",
+            ]
             for pattern in kill_patterns:
                 try:
                     process = subprocess.Popen(
@@ -7603,7 +8712,9 @@ Generate a complete Burp extension that:
         summary = "\n".join(lines) + "\n"
         if output_area is not None:
             output_area.append(summary)
-        self.log_to_ui("[!] Emergency kill executed for nuclei/httpx/katana/ffuf/wayback")
+        self.log_to_ui(
+            "[!] Emergency kill executed for nuclei/httpx/katana/ffuf/wayback/sqlmap/dalfox/subfinder/dnsx"
+        )
 
     def _stop_nuclei(self, event):
         self._stop_tool_run("nuclei", "Nuclei", self.nuclei_area)
@@ -7619,6 +8730,20 @@ Generate a complete Burp extension that:
 
     def _stop_wayback(self, event):
         self._stop_tool_run("wayback", "Wayback", self.wayback_area)
+
+    def _stop_sqlmap(self, event):
+        self._stop_tool_run("sqlmap", "SQLMap", self.sqlmap_area)
+
+    def _stop_dalfox(self, event):
+        self._stop_tool_run("dalfox", "Dalfox", self.dalfox_area)
+
+    def _stop_asset_discovery(self, event):
+        self._stop_tool_run("assetdiscovery", "API Asset Discovery", self.asset_area)
+
+    def _stop_openapi_drift(self, event):
+        self._set_tool_cancel("openapidrift")
+        self.openapi_area.append("[!] OpenAPI drift stop requested by user\n")
+        self.log_to_ui("[!] OpenAPI drift stop requested by user")
 
     def _stop_auth_replay(self, event):
         """Request cancellation for auth replay run."""
@@ -9987,6 +11112,1185 @@ Generate a complete Burp extension that:
                     self._callbacks.printError(
                         "Error closing file {}: {}".format(filepath, str(e))
                     )
+
+    def _parse_positive_int(self, text, default_value, min_value, max_value):
+        """Parse bounded positive integer from UI text fields."""
+        try:
+            value = int((text or "").strip())
+        except (TypeError, ValueError):
+            value = int(default_value)
+        if value < min_value:
+            value = min_value
+        if value > max_value:
+            value = max_value
+        return value
+
+    def _collect_verify_targets(self, attack_types, max_targets):
+        """Collect verification targets from fuzzer attacks, fallback to API-like endpoints."""
+        targets = []
+        seen_urls = set()
+        wanted = set([self._ascii_safe(x, lower=True) for x in (attack_types or [])])
+        with self.lock:
+            data_snapshot = dict(self.api_data)
+        attacks_snapshot = list(getattr(self, "fuzzing_attacks", []) or [])
+
+        for endpoint_key, attack in attacks_snapshot:
+            attack_type = self._ascii_safe((attack or {}).get("type"), lower=True)
+            if wanted and attack_type not in wanted:
+                continue
+            entries = data_snapshot.get(endpoint_key)
+            if not entries:
+                continue
+            entry = self._get_entry(entries)
+            url, _, _, _, _ = self._build_entry_url(entry)
+            if not url or url in seen_urls:
+                continue
+            params = []
+            for param_name in (attack.get("params", []) or []):
+                safe_param = self._ascii_safe(param_name).strip()
+                if safe_param:
+                    params.append(safe_param)
+            body_data = self._ascii_safe(entry.get("request_body") or "")
+            candidate = {
+                "endpoint_key": endpoint_key,
+                "url": url,
+                "method": self._ascii_safe(entry.get("method") or "GET").upper(),
+                "params": params,
+                "data": body_data,
+            }
+            targets.append(candidate)
+            seen_urls.add(url)
+            if len(targets) >= max_targets:
+                return targets
+
+        # Fallback: no fuzzing context yet, pick likely API endpoints.
+        api_endpoints, _ = self._collect_fuzzer_targets()
+        for endpoint_key, entries in sorted(api_endpoints.items(), key=lambda item: item[0]):
+            entry = self._get_entry(entries)
+            url, _, _, _, _ = self._build_entry_url(entry)
+            if not url or url in seen_urls:
+                continue
+            method = self._ascii_safe(entry.get("method") or "GET").upper()
+            if method not in ["GET", "POST", "PUT", "PATCH", "DELETE"]:
+                continue
+            params_block = entry.get("parameters", {}) or {}
+            param_names = []
+            for ptype in ["url", "body", "json"]:
+                values = params_block.get(ptype, {})
+                if isinstance(values, dict):
+                    param_names.extend([self._ascii_safe(k) for k in values.keys()])
+                elif isinstance(values, list):
+                    param_names.extend([self._ascii_safe(v) for v in values])
+            if method == "GET" and not param_names:
+                continue
+            candidate = {
+                "endpoint_key": endpoint_key,
+                "url": url,
+                "method": method,
+                "params": [p for p in param_names if p][:8],
+                "data": self._ascii_safe(entry.get("request_body") or ""),
+            }
+            targets.append(candidate)
+            seen_urls.add(url)
+            if len(targets) >= max_targets:
+                break
+        return targets
+
+    def _extract_sqlmap_evidence(self, output_text):
+        """Extract SQLMap positive evidence line from command output."""
+        safe = self._ascii_safe(output_text or "", lower=True)
+        for line in safe.splitlines():
+            compact = line.strip()
+            if not compact:
+                continue
+            if (
+                "is vulnerable" in compact
+                or "injectable" in compact
+                or "sql injection vulnerability" in compact
+            ):
+                return self._ascii_safe(line).strip()
+        return ""
+
+    def _extract_dalfox_evidence(self, output_text):
+        """Extract Dalfox positive evidence line from output."""
+        safe = self._ascii_safe(output_text or "", lower=True)
+        for line in safe.splitlines():
+            compact = line.strip()
+            if not compact:
+                continue
+            if (
+                "verified" in compact
+                or "poc" in compact
+                or "xss" in compact and "found" in compact
+            ):
+                return self._ascii_safe(line).strip()
+        return ""
+
+    def _import_endpoint_candidates_to_recon(self, candidates, source_tag, output_area):
+        """Import URL/method candidates to Recon tab and tag them by source."""
+        if not candidates:
+            output_area.append("\n[!] No candidates available to send\n")
+            return
+
+        imported = 0
+        skipped = 0
+        for candidate in candidates:
+            try:
+                method = self._ascii_safe(candidate.get("method") or "GET").upper()
+                url = self._ascii_safe(candidate.get("url") or "").strip()
+                if not url:
+                    skipped += 1
+                    continue
+                if not url.startswith("http://") and not url.startswith("https://"):
+                    url = "https://" + url
+                parsed = URL(url)
+                path = parsed.getPath() or "/"
+                normalized = self._normalize_path(path)
+                key = "{}:{}".format(method, normalized)
+
+                with self.lock:
+                    if key in self.api_data:
+                        skipped += 1
+                        continue
+                    protocol = parsed.getProtocol() or "https"
+                    port = parsed.getPort()
+                    if port == -1:
+                        port = 443 if protocol == "https" else 80
+                    entry = {
+                        "method": method,
+                        "path": path,
+                        "normalized_path": normalized,
+                        "host": parsed.getHost(),
+                        "protocol": protocol,
+                        "port": port,
+                        "query_string": parsed.getQuery() or "",
+                        "parameters": {"url": {}, "body": {}, "cookie": {}, "json": {}},
+                        "headers": {},
+                        "request_body": "",
+                        "response_status": 200,
+                        "response_headers": {},
+                        "response_body": "",
+                        "response_length": 0,
+                        "response_time_ms": 0,
+                        "content_type": "unknown",
+                        "auth_detected": ["None"],
+                        "api_patterns": [self._ascii_safe(source_tag)],
+                        "jwt_detected": None,
+                        "encryption_indicators": {"likely_encrypted": False, "types": []},
+                        "param_patterns": {"reflected": [], "param_types": {}},
+                    }
+                    self.api_data[key] = [entry]
+                    self.endpoint_tags[key] = [self._ascii_safe(source_tag, lower=True)]
+                    self.endpoint_times[key] = [0]
+                    imported += 1
+            except Exception as e:
+                skipped += 1
+                self._callbacks.printError(
+                    "Import candidate failed ({}): {}".format(source_tag, str(e))
+                )
+
+        output_area.append(
+            "\n[+] Imported {} new endpoints from {}\n".format(
+                imported, self._ascii_safe(source_tag)
+            )
+        )
+        output_area.append("[*] Skipped: {}\n".format(skipped))
+        self.log_to_ui(
+            "[+] Imported {} endpoints from {}".format(
+                imported, self._ascii_safe(source_tag)
+            )
+        )
+        SwingUtilities.invokeLater(
+            lambda: self.endpoint_list.getCellRenderer().invalidate_cache()
+        )
+        SwingUtilities.invokeLater(lambda: self._update_host_filter())
+        SwingUtilities.invokeLater(lambda: self._update_stats())
+        SwingUtilities.invokeLater(lambda: self.refresh_view())
+
+    def _run_sqlmap_verify(self, event):
+        """Run SQLMap verification over SQLi candidates."""
+        import subprocess
+        import time as time_module
+
+        sqlmap_path = self.sqlmap_path_field.getText().strip()
+        if not sqlmap_path:
+            self.sqlmap_area.setText("[!] Configure SQLMap path first\n")
+            return
+        if not self.api_data:
+            self.sqlmap_area.setText("[!] No endpoints captured. Capture/import first.\n")
+            return
+        if not self._validate_binary_signature(
+            "SQLMap",
+            sqlmap_path,
+            self.sqlmap_area,
+            required_tokens=["-u", "--batch", "--level"],
+            forbidden_tokens=[],
+            fix_hint="Set SQLMap path to your local sqlmap binary (for example: ~/.local/bin/sqlmap).",
+        ):
+            return
+
+        max_targets = self._parse_positive_int(
+            self.sqlmap_max_targets_field.getText(), 12, 1, 100
+        )
+        per_target_timeout = self._parse_positive_int(
+            self.sqlmap_target_timeout_field.getText(), 45, 10, 300
+        )
+        profile_value = self._selected_profile_value(
+            getattr(self, "sqlmap_profile_combo", None)
+        )
+        targets = self._collect_verify_targets(["sql injection"], max_targets)
+        if not targets:
+            self.sqlmap_area.setText(
+                "[!] No SQLi verification targets.\n[*] Generate fuzzing attacks first.\n"
+            )
+            return
+
+        self.sqlmap_area.setText("[*] SQLMap verification starting...\n")
+        self.sqlmap_area.append("[*] Targets: {}\n".format(len(targets)))
+        self.sqlmap_area.append("[*] Profile: {}\n".format(profile_value))
+        self.sqlmap_area.append("[*] Timeout per target: {}s\n\n".format(per_target_timeout))
+        self._clear_tool_cancel("sqlmap")
+
+        def run_verify():
+            findings = []
+            verified_candidates = []
+            checked = 0
+            cancelled = False
+
+            for idx, target in enumerate(targets):
+                if self._is_tool_cancelled("sqlmap"):
+                    cancelled = True
+                    break
+
+                checked += 1
+                url = target["url"]
+                endpoint_key = target["endpoint_key"]
+                method = target.get("method", "GET")
+                cmd = []
+                profile_cfg = {"profile": profile_value}
+                try:
+                    cmd, profile_cfg = tool_profiles.build_sqlmap_command(
+                        sqlmap_path, target, profile_value
+                    )
+                except Exception as build_err:
+                    self._callbacks.printError(
+                        "SQLMap profile builder fallback: {}".format(str(build_err))
+                    )
+                    cmd = [
+                        sqlmap_path,
+                        "-u",
+                        url,
+                        "--batch",
+                        "--level",
+                        "2",
+                        "--risk",
+                        "1",
+                        "--threads",
+                        "1",
+                        "--timeout",
+                        "8",
+                        "--retries",
+                        "1",
+                        "--flush-session",
+                    ]
+                    if target.get("params"):
+                        cmd.extend(["-p", ",".join(target.get("params", [])[:6])])
+                    data = target.get("data", "")
+                    if method in ["POST", "PUT", "PATCH", "DELETE"] and data:
+                        cmd.extend(["--method", method, "--data", data[:1200]])
+                if not profile_cfg:
+                    profile_cfg = {"profile": profile_value}
+                display_cmd = " ".join(cmd)
+                SwingUtilities.invokeLater(
+                    lambda i=idx + 1, t=len(targets), c=display_cmd, p=profile_cfg.get("profile", profile_value): self.sqlmap_area.append(
+                        "[*] ({}/{}) [{}] {}\n".format(i, t, p, c)
+                    )
+                )
+
+                process = None
+                timed_out = False
+                try:
+                    process = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
+                    )
+                    self._set_active_tool_process("sqlmap", process)
+                    start_wait = time_module.time()
+                    while process.poll() is None:
+                        if self._is_tool_cancelled("sqlmap"):
+                            cancelled = True
+                            self._terminate_process_cross_platform(process, "SQLMap")
+                            break
+                        if (time_module.time() - start_wait) > per_target_timeout:
+                            timed_out = True
+                            self._terminate_process_cross_platform(process, "SQLMap")
+                            break
+                        time_module.sleep(0.2)
+                    if process.poll() is None:
+                        process.wait()
+                    stdout_data = self._safe_pipe_read(process.stdout, "SQLMap stdout")
+                    stderr_data = self._safe_pipe_read(process.stderr, "SQLMap stderr")
+                    combined = "{}\n{}".format(stdout_data or "", stderr_data or "")
+                    evidence = self._extract_sqlmap_evidence(combined)
+
+                    if evidence:
+                        findings.append(
+                            "[HIGH] {} | {} | {}".format(endpoint_key, url, evidence)
+                        )
+                        verified_candidates.append(
+                            {"method": method, "url": url, "endpoint_key": endpoint_key}
+                        )
+                    elif timed_out:
+                        findings.append("[MEDIUM] {} | {} | timed out".format(endpoint_key, url))
+                except Exception as e:
+                    findings.append(
+                        "[MEDIUM] {} | {} | error: {}".format(
+                            endpoint_key, url, self._ascii_safe(e)
+                        )
+                    )
+                finally:
+                    self._clear_active_tool_process("sqlmap", process)
+
+                if cancelled:
+                    break
+
+            with self.sqlmap_lock:
+                self.sqlmap_findings = list(findings)
+                self.sqlmap_verified_candidates = list(verified_candidates)
+
+            summary = []
+            summary.append("\n" + "=" * 80)
+            summary.append("SQLMAP VERIFY RESULTS")
+            summary.append("=" * 80)
+            summary.append("[*] Checked: {}".format(checked))
+            summary.append("[*] Verified: {}".format(len(verified_candidates)))
+            summary.append("[*] Findings lines: {}".format(len(findings)))
+            if cancelled:
+                summary.append("[!] Run cancelled by user")
+            summary.append("")
+            summary.extend(findings[:60] if findings else ["[+] No SQLi confirmations"])
+            if len(findings) > 60:
+                summary.append("[*] {} more lines not shown".format(len(findings) - 60))
+
+            SwingUtilities.invokeLater(
+                lambda t="\n".join(summary) + "\n": self.sqlmap_area.append(t)
+            )
+            SwingUtilities.invokeLater(
+                lambda: self.log_to_ui(
+                    "[+] SQLMap verify complete: {} checked, {} verified".format(
+                        checked, len(verified_candidates)
+                    )
+                )
+            )
+            self._clear_tool_cancel("sqlmap")
+
+        worker = threading.Thread(target=run_verify)
+        worker.daemon = True
+        worker.start()
+
+    def _export_sqlmap_results(self):
+        """Export SQLMap verification findings."""
+        with self.sqlmap_lock:
+            data = list(self.sqlmap_findings)
+        self._export_list_to_file(
+            data, "SQLMapVerify_Export", self.sqlmap_area, "sqlmap findings"
+        )
+
+    def _send_sqlmap_to_recon(self):
+        """Send SQLMap-verified candidates to Recon."""
+        with self.sqlmap_lock:
+            candidates = list(self.sqlmap_verified_candidates)
+        if not candidates:
+            self.sqlmap_area.append("\n[!] No SQLMap-verified endpoints to send\n")
+            return
+        self._import_endpoint_candidates_to_recon(
+            candidates, "sqlmap-verified", self.sqlmap_area
+        )
+
+    def _run_dalfox_verify(self, event):
+        """Run Dalfox verification over reflected-XSS candidates."""
+        import os
+        import subprocess
+        import tempfile
+        import time as time_module
+
+        dalfox_path = self.dalfox_path_field.getText().strip()
+        if not dalfox_path:
+            self.dalfox_area.setText("[!] Configure Dalfox path first\n")
+            return
+        if not self.api_data:
+            self.dalfox_area.setText("[!] No endpoints captured. Capture/import first.\n")
+            return
+        if not self._validate_binary_signature(
+            "Dalfox",
+            dalfox_path,
+            self.dalfox_area,
+            required_tokens=["url", "--format", "--output"],
+            forbidden_tokens=[],
+            fix_hint="Set Dalfox path to your local dalfox binary (for example: ~/go/bin/dalfox).",
+        ):
+            return
+
+        max_targets = self._parse_positive_int(
+            self.dalfox_max_targets_field.getText(), 12, 1, 100
+        )
+        per_target_timeout = self._parse_positive_int(
+            self.dalfox_target_timeout_field.getText(), 40, 10, 300
+        )
+        profile_value = self._selected_profile_value(
+            getattr(self, "dalfox_profile_combo", None)
+        )
+        targets = self._collect_verify_targets(["xss"], max_targets)
+        if not targets:
+            self.dalfox_area.setText(
+                "[!] No XSS verification targets.\n[*] Generate fuzzing attacks first.\n"
+            )
+            return
+
+        self.dalfox_area.setText("[*] Dalfox verification starting...\n")
+        self.dalfox_area.append("[*] Targets: {}\n".format(len(targets)))
+        self.dalfox_area.append("[*] Profile: {}\n".format(profile_value))
+        self.dalfox_area.append("[*] Timeout per target: {}s\n\n".format(per_target_timeout))
+        self._clear_tool_cancel("dalfox")
+
+        def run_verify():
+            findings = []
+            verified_candidates = []
+            checked = 0
+            cancelled = False
+            temp_dir = tempfile.mkdtemp(prefix="burp_dalfox_")
+
+            try:
+                for idx, target in enumerate(targets):
+                    if self._is_tool_cancelled("dalfox"):
+                        cancelled = True
+                        break
+                    checked += 1
+                    url = target["url"]
+                    endpoint_key = target["endpoint_key"]
+                    out_file = os.path.join(temp_dir, "dalfox_{}.jsonl".format(idx))
+                    method = target.get("method", "GET")
+                    cmd = []
+                    profile_cfg = {"profile": profile_value}
+                    try:
+                        cmd, profile_cfg = tool_profiles.build_dalfox_command(
+                            dalfox_path, target, out_file, profile_value
+                        )
+                    except Exception as build_err:
+                        self._callbacks.printError(
+                            "Dalfox profile builder fallback: {}".format(str(build_err))
+                        )
+                        cmd = [
+                            dalfox_path,
+                            "url",
+                            url,
+                            "--format",
+                            "jsonl",
+                            "-o",
+                            out_file,
+                            "--no-color",
+                            "--timeout",
+                            "8",
+                            "--worker",
+                            "30",
+                        ]
+                        for param in target.get("params", [])[:4]:
+                            cmd.extend(["-p", param])
+                        data = target.get("data", "")
+                        if method in ["POST", "PUT", "PATCH", "DELETE"] and data:
+                            cmd.extend(["-X", method, "-d", data[:1200]])
+                    if not profile_cfg:
+                        profile_cfg = {"profile": profile_value}
+
+                    SwingUtilities.invokeLater(
+                        lambda i=idx + 1, t=len(targets), c=" ".join(cmd), p=profile_cfg.get("profile", profile_value): self.dalfox_area.append(
+                            "[*] ({}/{}) [{}] {}\n".format(i, t, p, c)
+                        )
+                    )
+
+                    process = None
+                    timed_out = False
+                    try:
+                        process = subprocess.Popen(
+                            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
+                        )
+                        self._set_active_tool_process("dalfox", process)
+                        start_wait = time_module.time()
+                        while process.poll() is None:
+                            if self._is_tool_cancelled("dalfox"):
+                                cancelled = True
+                                self._terminate_process_cross_platform(process, "Dalfox")
+                                break
+                            if (time_module.time() - start_wait) > per_target_timeout:
+                                timed_out = True
+                                self._terminate_process_cross_platform(process, "Dalfox")
+                                break
+                            time_module.sleep(0.2)
+
+                        if process.poll() is None:
+                            process.wait()
+                        stdout_data = self._safe_pipe_read(process.stdout, "Dalfox stdout")
+                        stderr_data = self._safe_pipe_read(process.stderr, "Dalfox stderr")
+                        combined = "{}\n{}".format(stdout_data or "", stderr_data or "")
+                        evidence = ""
+
+                        if os.path.exists(out_file) and os.path.getsize(out_file) > 0:
+                            with open(out_file, "r") as reader:
+                                first_line = reader.readline().strip()
+                            evidence = self._ascii_safe(first_line)[:240]
+                        if not evidence:
+                            evidence = self._extract_dalfox_evidence(combined)
+
+                        if evidence:
+                            findings.append(
+                                "[HIGH] {} | {} | {}".format(endpoint_key, url, evidence)
+                            )
+                            verified_candidates.append(
+                                {"method": method, "url": url, "endpoint_key": endpoint_key}
+                            )
+                        elif timed_out:
+                            findings.append("[MEDIUM] {} | {} | timed out".format(endpoint_key, url))
+                    except Exception as e:
+                        findings.append(
+                            "[MEDIUM] {} | {} | error: {}".format(
+                                endpoint_key, url, self._ascii_safe(e)
+                            )
+                        )
+                    finally:
+                        self._clear_active_tool_process("dalfox", process)
+
+                    if cancelled:
+                        break
+            finally:
+                self._cleanup_temp_dir(temp_dir, "dalfox verify")
+
+            with self.dalfox_lock:
+                self.dalfox_findings = list(findings)
+                self.dalfox_verified_candidates = list(verified_candidates)
+
+            summary = []
+            summary.append("\n" + "=" * 80)
+            summary.append("DALFOX VERIFY RESULTS")
+            summary.append("=" * 80)
+            summary.append("[*] Checked: {}".format(checked))
+            summary.append("[*] Verified: {}".format(len(verified_candidates)))
+            summary.append("[*] Findings lines: {}".format(len(findings)))
+            if cancelled:
+                summary.append("[!] Run cancelled by user")
+            summary.append("")
+            summary.extend(findings[:60] if findings else ["[+] No XSS confirmations"])
+            if len(findings) > 60:
+                summary.append("[*] {} more lines not shown".format(len(findings) - 60))
+
+            SwingUtilities.invokeLater(
+                lambda t="\n".join(summary) + "\n": self.dalfox_area.append(t)
+            )
+            SwingUtilities.invokeLater(
+                lambda: self.log_to_ui(
+                    "[+] Dalfox verify complete: {} checked, {} verified".format(
+                        checked, len(verified_candidates)
+                    )
+                )
+            )
+            self._clear_tool_cancel("dalfox")
+
+        worker = threading.Thread(target=run_verify)
+        worker.daemon = True
+        worker.start()
+
+    def _export_dalfox_results(self):
+        """Export Dalfox verification findings."""
+        with self.dalfox_lock:
+            data = list(self.dalfox_findings)
+        self._export_list_to_file(
+            data, "DalfoxVerify_Export", self.dalfox_area, "dalfox findings"
+        )
+
+    def _send_dalfox_to_recon(self):
+        """Send Dalfox-verified candidates to Recon."""
+        with self.dalfox_lock:
+            candidates = list(self.dalfox_verified_candidates)
+        if not candidates:
+            self.dalfox_area.append("\n[!] No Dalfox-verified endpoints to send\n")
+            return
+        self._import_endpoint_candidates_to_recon(
+            candidates, "dalfox-verified", self.dalfox_area
+        )
+
+    def _extract_domains_for_asset_discovery(self, max_domains):
+        """Collect unique root domains from input field or Recon hosts."""
+        explicit = self._ascii_safe(self.asset_domains_field.getText()).strip()
+        domains = []
+        seen = set()
+        if explicit:
+            normalized = explicit.replace(",", "\n")
+            for raw in normalized.splitlines():
+                domain = self._ascii_safe(raw, lower=True).strip()
+                if not domain:
+                    continue
+                if "://" in domain:
+                    domain = self._extract_scope_host(domain)
+                if domain and domain not in seen:
+                    seen.add(domain)
+                    domains.append(domain)
+                    if len(domains) >= max_domains:
+                        return domains
+
+        with self.lock:
+            hosts = [self._get_entry(entries).get("host", "") for entries in self.api_data.values()]
+        host_counter = {}
+        for host in hosts:
+            host_text = self._ascii_safe(host, lower=True).strip()
+            if not host_text:
+                continue
+            base = self._infer_base_domain(host_text) or host_text
+            host_counter[base] = host_counter.get(base, 0) + 1
+        ranked = sorted(host_counter.items(), key=lambda item: (-item[1], item[0]))
+        for domain, _ in ranked:
+            if domain not in seen:
+                seen.add(domain)
+                domains.append(domain)
+                if len(domains) >= max_domains:
+                    break
+        return domains
+
+    def _run_command_stage(self, tool_key, tool_name, cmd, output_area, timeout_seconds):
+        """Run one subprocess stage with cancellation and timeout."""
+        import subprocess
+        import time as time_module
+
+        process = None
+        try:
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
+            )
+            self._set_active_tool_process(tool_key, process)
+            start_wait = time_module.time()
+            while process.poll() is None:
+                if self._is_tool_cancelled(tool_key):
+                    self._terminate_process_cross_platform(process, tool_name)
+                    return False, True, "", "cancelled"
+                if (time_module.time() - start_wait) > timeout_seconds:
+                    self._terminate_process_cross_platform(process, tool_name)
+                    return False, False, "", "timeout"
+                time_module.sleep(0.2)
+
+            stdout_data = self._safe_pipe_read(process.stdout, "{} stdout".format(tool_name))
+            stderr_data = self._safe_pipe_read(process.stderr, "{} stderr".format(tool_name))
+            ok = process.returncode == 0
+            err = stderr_data if stderr_data else stdout_data
+            return ok, False, stdout_data, self._ascii_safe(err)[:1000]
+        except Exception as e:
+            return False, False, "", self._ascii_safe(e)
+        finally:
+            self._clear_active_tool_process(tool_key, process)
+
+    def _run_api_asset_discovery(self, event):
+        """Run subfinder + dnsx + httpx to discover alive API-related assets."""
+        import os
+        import tempfile
+
+        if not self.api_data:
+            self.asset_area.setText("[!] No endpoints captured. Capture/import first.\n")
+            return
+
+        subfinder_path = self.asset_subfinder_path_field.getText().strip()
+        dnsx_path = self.asset_dnsx_path_field.getText().strip()
+        httpx_path = self.asset_httpx_path_field.getText().strip()
+        if not (subfinder_path and dnsx_path and httpx_path):
+            self.asset_area.setText("[!] Configure subfinder/dnsx/httpx paths first\n")
+            return
+
+        max_domains = self._parse_positive_int(
+            self.asset_max_domains_field.getText(), 8, 1, 50
+        )
+        profile_value = self._selected_profile_value(
+            getattr(self, "asset_profile_combo", None)
+        )
+        domains = self._extract_domains_for_asset_discovery(max_domains)
+        if not domains:
+            self.asset_area.setText("[!] No candidate domains found for discovery\n")
+            return
+
+        self.asset_area.setText("[*] API Asset Discovery starting...\n")
+        self.asset_area.append("[*] Profile: {}\n".format(profile_value))
+        self.asset_area.append("[*] Domains: {}\n\n".format(", ".join(domains)))
+        self._clear_tool_cancel("assetdiscovery")
+
+        def run_discovery():
+            temp_dir = tempfile.mkdtemp(prefix="burp_assets_")
+            domains_file = os.path.join(temp_dir, "domains.txt")
+            subfinder_file = os.path.join(temp_dir, "subfinder.txt")
+            dnsx_file = os.path.join(temp_dir, "dnsx.txt")
+            httpx_file = os.path.join(temp_dir, "httpx.txt")
+            discovered_urls = []
+
+            try:
+                with open(domains_file, "w") as writer:
+                    for domain in domains:
+                        writer.write(domain + "\n")
+
+                profile_cfg = {"profile": profile_value}
+                try:
+                    stages, profile_cfg = tool_profiles.build_asset_stage_commands(
+                        subfinder_path,
+                        dnsx_path,
+                        httpx_path,
+                        domains_file,
+                        subfinder_file,
+                        dnsx_file,
+                        httpx_file,
+                        profile_value,
+                    )
+                except Exception as build_err:
+                    self._callbacks.printError(
+                        "Asset profile builder fallback: {}".format(str(build_err))
+                    )
+                    stages = [
+                        ("Subfinder", [subfinder_path, "-dL", domains_file, "-silent", "-o", subfinder_file], 240),
+                        ("DNSX", [dnsx_path, "-l", subfinder_file, "-silent", "-o", dnsx_file], 180),
+                        ("HTTPX", [httpx_path, "-l", dnsx_file, "-silent", "-sc", "-title", "-o", httpx_file], 240),
+                    ]
+                stage_ok = True
+                cancelled = False
+
+                for stage_name, stage_cmd, timeout_seconds in stages:
+                    SwingUtilities.invokeLater(
+                        lambda s=stage_name, c=" ".join(stage_cmd), p=profile_cfg.get("profile", profile_value): self.asset_area.append(
+                            "[*] [{}] {}: {}\n".format(p, s, c)
+                        )
+                    )
+                    ok, was_cancelled, _, err = self._run_command_stage(
+                        "assetdiscovery", stage_name, stage_cmd, self.asset_area, timeout_seconds
+                    )
+                    if was_cancelled:
+                        cancelled = True
+                        break
+                    if not ok:
+                        stage_ok = False
+                        SwingUtilities.invokeLater(
+                            lambda s=stage_name, e=err: self.asset_area.append(
+                                "[!] {} failed: {}\n".format(s, e)
+                            )
+                        )
+                        break
+
+                if cancelled:
+                    SwingUtilities.invokeLater(
+                        lambda: self.asset_area.append("[!] Asset discovery cancelled by user\n")
+                    )
+                    return
+
+                if stage_ok and os.path.exists(httpx_file):
+                    with open(httpx_file, "r") as reader:
+                        for line in reader:
+                            text = self._ascii_safe(line).strip()
+                            if not text:
+                                continue
+                            first_token = text.split(" ")[0].strip()
+                            if first_token.startswith("http://") or first_token.startswith("https://"):
+                                discovered_urls.append(first_token)
+
+                if not discovered_urls and os.path.exists(dnsx_file):
+                    with open(dnsx_file, "r") as reader:
+                        for line in reader:
+                            host = self._ascii_safe(line).strip().split(" ")[0].strip()
+                            if host:
+                                discovered_urls.append("https://" + host)
+
+                discovered_urls = sorted(set(discovered_urls))
+                with self.asset_lock:
+                    self.asset_discovered = list(discovered_urls)
+
+                out_lines = []
+                out_lines.append("\n" + "=" * 80)
+                out_lines.append("API ASSET DISCOVERY RESULTS")
+                out_lines.append("=" * 80)
+                out_lines.append("[*] Domains input: {}".format(len(domains)))
+                out_lines.append("[*] Alive URLs discovered: {}".format(len(discovered_urls)))
+                out_lines.append("")
+                out_lines.extend(discovered_urls[:120] if discovered_urls else ["[+] No alive URLs discovered"])
+                if len(discovered_urls) > 120:
+                    out_lines.append("[*] {} more URLs not shown".format(len(discovered_urls) - 120))
+                SwingUtilities.invokeLater(
+                    lambda t="\n".join(out_lines) + "\n": self.asset_area.append(t)
+                )
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui(
+                        "[+] API Asset Discovery complete: {} URLs".format(len(discovered_urls))
+                    )
+                )
+            finally:
+                self._clear_tool_cancel("assetdiscovery")
+                self._cleanup_temp_dir(temp_dir, "api asset discovery")
+
+        worker = threading.Thread(target=run_discovery)
+        worker.daemon = True
+        worker.start()
+
+    def _export_asset_discovery_results(self):
+        """Export API asset discovery URLs."""
+        with self.asset_lock:
+            data = list(self.asset_discovered)
+        self._export_list_to_file(
+            data, "APIAssets_Export", self.asset_area, "asset URLs"
+        )
+
+    def _send_asset_discovery_to_recon(self):
+        """Send discovered API asset URLs to Recon."""
+        with self.asset_lock:
+            urls = list(self.asset_discovered)
+        if not urls:
+            self.asset_area.append("\n[!] No discovered asset URLs to send\n")
+            return
+        candidates = [{"method": "GET", "url": url} for url in urls]
+        self._import_endpoint_candidates_to_recon(
+            candidates, "asset-discovery", self.asset_area
+        )
+
+    def _browse_openapi_spec_file(self):
+        """Open file chooser for local OpenAPI spec path."""
+        chooser = JFileChooser()
+        chooser.setDialogTitle("Select OpenAPI/Swagger file")
+        if chooser.showOpenDialog(self._panel) == JFileChooser.APPROVE_OPTION:
+            path = chooser.getSelectedFile().getAbsolutePath()
+            self.openapi_spec_field.setText(path)
+
+    def _normalize_spec_path(self, path):
+        """Normalize spec path placeholders to match Recon normalization."""
+        raw = self._ascii_safe(path or "/").strip()
+        if not raw.startswith("/"):
+            raw = "/" + raw
+        raw = re.sub(r"\{[^}]+\}", "{id}", raw)
+        return self._normalize_path(raw)
+
+    def _load_openapi_spec_text(self, source):
+        """Load OpenAPI text from local file or URL."""
+        src = self._ascii_safe(source).strip()
+        if src.startswith("http://") or src.startswith("https://"):
+            fetch_error = None
+            try:
+                import urllib2
+
+                response = urllib2.urlopen(src, timeout=20)
+                return self._ascii_safe(response.read())
+            except ImportError as import_err:
+                fetch_error = import_err
+            except Exception as url_err:
+                fetch_error = url_err
+
+            try:
+                import urllib.request as urllib_request
+
+                response = urllib_request.urlopen(src, timeout=20)
+                return self._ascii_safe(response.read())
+            except Exception as url_err:
+                message = "OpenAPI URL fetch failed: {}".format(self._ascii_safe(url_err))
+                if fetch_error:
+                    message = "{} (fallback after: {})".format(
+                        message, self._ascii_safe(fetch_error)
+                    )
+                raise RuntimeError(message)
+        with open(src, "r") as reader:
+            return self._ascii_safe(reader.read())
+
+    def _parse_openapi_json_doc(self, doc):
+        """Parse OpenAPI JSON structure into endpoint/params metadata."""
+        endpoints = set()
+        params_map = {}
+        server_urls = []
+        methods = set(["get", "post", "put", "patch", "delete", "options", "head"])
+
+        for server in (doc.get("servers", []) or []):
+            url = self._ascii_safe((server or {}).get("url") or "").strip()
+            if url:
+                server_urls.append(url)
+
+        paths = doc.get("paths", {}) or {}
+        for raw_path, path_item in paths.items():
+            normalized_path = self._normalize_spec_path(raw_path)
+            if not isinstance(path_item, dict):
+                continue
+            common_params = []
+            for p in (path_item.get("parameters", []) or []):
+                if isinstance(p, dict):
+                    name = self._ascii_safe(p.get("name") or "").strip()
+                    if name:
+                        common_params.append(name)
+            for method, operation in path_item.items():
+                method_l = self._ascii_safe(method, lower=True).strip()
+                if method_l not in methods:
+                    continue
+                endpoint_key = "{}:{}".format(method_l.upper(), normalized_path)
+                endpoints.add(endpoint_key)
+                op_params = list(common_params)
+                if isinstance(operation, dict):
+                    for p in (operation.get("parameters", []) or []):
+                        if isinstance(p, dict):
+                            name = self._ascii_safe(p.get("name") or "").strip()
+                            if name:
+                                op_params.append(name)
+                    request_body = operation.get("requestBody", {}) or {}
+                    content = request_body.get("content", {}) if isinstance(request_body, dict) else {}
+                    app_json = content.get("application/json", {}) if isinstance(content, dict) else {}
+                    schema = app_json.get("schema", {}) if isinstance(app_json, dict) else {}
+                    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+                    if isinstance(properties, dict):
+                        for name in properties.keys():
+                            safe_name = self._ascii_safe(name).strip()
+                            if safe_name:
+                                op_params.append(safe_name)
+                params_map[endpoint_key] = sorted(set(op_params))
+        return endpoints, params_map, server_urls
+
+    def _parse_openapi_yaml_text(self, text):
+        """Parse basic OpenAPI YAML path/method entries (lightweight fallback)."""
+        endpoints = set()
+        params_map = {}
+        server_urls = []
+        methods = set(["get", "post", "put", "patch", "delete", "options", "head"])
+        current_path = ""
+        in_paths = False
+
+        for raw_line in self._ascii_safe(text).splitlines():
+            line = raw_line.rstrip("\n")
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped == "paths:":
+                in_paths = True
+                continue
+            if stripped.startswith("servers:"):
+                in_paths = False
+                continue
+            if stripped.startswith("- url:"):
+                server_url = self._ascii_safe(stripped.split(":", 1)[1]).strip()
+                if server_url:
+                    server_urls.append(server_url)
+                continue
+            if not in_paths:
+                continue
+
+            indent = len(line) - len(line.lstrip(" "))
+            if indent <= 2 and stripped.endswith(":") and stripped.startswith("/"):
+                current_path = stripped[:-1]
+                continue
+            if current_path and indent >= 4 and stripped.endswith(":"):
+                method_name = self._ascii_safe(stripped[:-1], lower=True).strip()
+                if method_name in methods:
+                    endpoint_key = "{}:{}".format(
+                        method_name.upper(), self._normalize_spec_path(current_path)
+                    )
+                    endpoints.add(endpoint_key)
+                    params_map[endpoint_key] = []
+
+        return endpoints, params_map, server_urls
+
+    def _choose_openapi_base_url(self, server_urls):
+        """Pick base URL for generating missing-endpoint candidates."""
+        if server_urls:
+            first = self._ascii_safe(server_urls[0]).strip()
+            if first.startswith("http://") or first.startswith("https://"):
+                return first.rstrip("/")
+
+        preferred_host = ""
+        try:
+            if hasattr(self, "host_filter") and self.host_filter is not None:
+                host_selected = self._ascii_safe(
+                    str(self.host_filter.getSelectedItem()), lower=True
+                ).strip()
+                if host_selected and host_selected != "all":
+                    preferred_host = host_selected
+        except Exception as e:
+            self._callbacks.printError(
+                "OpenAPI base host selection error: {}".format(self._ascii_safe(e))
+            )
+            preferred_host = ""
+
+        if not preferred_host:
+            with self.lock:
+                host_counts = {}
+                for entries in self.api_data.values():
+                    host = self._ascii_safe(self._get_entry(entries).get("host") or "", lower=True).strip()
+                    if host:
+                        host_counts[host] = host_counts.get(host, 0) + 1
+            if host_counts:
+                preferred_host = sorted(host_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+        if preferred_host:
+            return "https://{}".format(preferred_host)
+        return "https://example.com"
+
+    def _run_openapi_drift(self, event):
+        """Compare observed traffic with OpenAPI spec and report drift."""
+        spec_source = self.openapi_spec_field.getText().strip()
+        if not spec_source:
+            self.openapi_area.setText("[!] Select OpenAPI/Swagger file or URL first\n")
+            return
+        if not self.api_data:
+            self.openapi_area.setText("[!] No endpoints captured. Capture/import first.\n")
+            return
+
+        self.openapi_area.setText("[*] OpenAPI drift analysis starting...\n")
+        self.openapi_area.append("[*] Source: {}\n\n".format(spec_source))
+        self._clear_tool_cancel("openapidrift")
+
+        def run_drift():
+            try:
+                text = self._load_openapi_spec_text(spec_source)
+                if self._is_tool_cancelled("openapidrift"):
+                    return
+
+                parsed = None
+                parse_error = None
+                try:
+                    doc = json.loads(text)
+                    parsed = self._parse_openapi_json_doc(doc)
+                except Exception as json_err:
+                    parse_error = self._ascii_safe(json_err)
+
+                if parsed is None:
+                    parsed = self._parse_openapi_yaml_text(text)
+                spec_endpoints, spec_params_map, server_urls = parsed
+
+                with self.lock:
+                    observed_snapshot = dict(self.api_data)
+                observed_endpoints = set(observed_snapshot.keys())
+                observed_params_map = {}
+                for endpoint_key, entries in observed_snapshot.items():
+                    entry = self._get_entry(entries)
+                    param_names = set()
+                    params = entry.get("parameters", {}) or {}
+                    for ptype in ["url", "body", "json", "cookie"]:
+                        values = params.get(ptype, {})
+                        if isinstance(values, dict):
+                            for name in values.keys():
+                                safe_name = self._ascii_safe(name).strip()
+                                if safe_name:
+                                    param_names.add(safe_name)
+                        elif isinstance(values, list):
+                            for name in values:
+                                safe_name = self._ascii_safe(name).strip()
+                                if safe_name:
+                                    param_names.add(safe_name)
+                    observed_params_map[endpoint_key] = sorted(param_names)
+
+                undocumented_observed = sorted(observed_endpoints - spec_endpoints)
+                missing_observed = sorted(spec_endpoints - observed_endpoints)
+                shared = sorted(observed_endpoints & spec_endpoints)
+                param_drift = []
+                for endpoint_key in shared:
+                    spec_params = set(spec_params_map.get(endpoint_key, []) or [])
+                    if not spec_params:
+                        continue
+                    observed_params = set(observed_params_map.get(endpoint_key, []) or [])
+                    unexpected = sorted(observed_params - spec_params)
+                    missing_params = sorted(spec_params - observed_params)
+                    if unexpected or missing_params:
+                        detail = "{} | unexpected={} | missing={}".format(
+                            endpoint_key,
+                            ",".join(unexpected[:6]) if unexpected else "-",
+                            ",".join(missing_params[:6]) if missing_params else "-",
+                        )
+                        param_drift.append(detail)
+
+                base_url = self._choose_openapi_base_url(server_urls)
+                missing_candidates = []
+                for endpoint_key in missing_observed:
+                    if ":" not in endpoint_key:
+                        continue
+                    method, normalized_path = endpoint_key.split(":", 1)
+                    path = self._ascii_safe(normalized_path).replace("{id}", "1")
+                    if not path.startswith("/"):
+                        path = "/" + path
+                    missing_candidates.append(
+                        {"method": method, "url": base_url + path, "endpoint_key": endpoint_key}
+                    )
+
+                lines = []
+                lines.append("=" * 80)
+                lines.append("OPENAPI DRIFT RESULTS")
+                lines.append("=" * 80)
+                lines.append("[*] Spec Endpoints: {}".format(len(spec_endpoints)))
+                lines.append("[*] Observed Endpoints: {}".format(len(observed_endpoints)))
+                lines.append("[*] Observed not in spec: {}".format(len(undocumented_observed)))
+                lines.append("[*] Spec missing in observed: {}".format(len(missing_observed)))
+                lines.append("[*] Shared Endpoints: {}".format(len(shared)))
+                lines.append("[*] Param Drift Findings: {}".format(len(param_drift)))
+                if parse_error:
+                    lines.append("[*] JSON parse fallback used (YAML mode): {}".format(parse_error))
+                lines.append("")
+                lines.append("UNDOCUMENTED OBSERVED ENDPOINTS")
+                lines.append("-" * 80)
+                lines.extend(undocumented_observed[:80] if undocumented_observed else ["[+] None"])
+                if len(undocumented_observed) > 80:
+                    lines.append("[*] {} more not shown".format(len(undocumented_observed) - 80))
+                lines.append("")
+                lines.append("SPEC ENDPOINTS MISSING IN OBSERVED TRAFFIC")
+                lines.append("-" * 80)
+                lines.extend(missing_observed[:80] if missing_observed else ["[+] None"])
+                if len(missing_observed) > 80:
+                    lines.append("[*] {} more not shown".format(len(missing_observed) - 80))
+                lines.append("")
+                lines.append("PARAMETER DRIFT")
+                lines.append("-" * 80)
+                lines.extend(param_drift[:80] if param_drift else ["[+] None"])
+                if len(param_drift) > 80:
+                    lines.append("[*] {} more not shown".format(len(param_drift) - 80))
+
+                with self.openapi_lock:
+                    self.openapi_drift_results = list(lines)
+                    self.openapi_missing_candidates = list(missing_candidates)
+
+                if self._is_tool_cancelled("openapidrift"):
+                    return
+                SwingUtilities.invokeLater(
+                    lambda t="\n".join(lines) + "\n": self.openapi_area.setText(t)
+                )
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui(
+                        "[+] OpenAPI drift complete: undocumented={} missing={} param-drift={}".format(
+                            len(undocumented_observed),
+                            len(missing_observed),
+                            len(param_drift),
+                        )
+                    )
+                )
+            except Exception as e:
+                SwingUtilities.invokeLater(
+                    lambda m=self._ascii_safe(e): self.openapi_area.append(
+                        "[!] OpenAPI drift failed: {}\n".format(m)
+                    )
+                )
+                SwingUtilities.invokeLater(
+                    lambda m=self._ascii_safe(e): self.log_to_ui(
+                        "[!] OpenAPI drift error: {}".format(m)
+                    )
+                )
+            finally:
+                self._clear_tool_cancel("openapidrift")
+
+        worker = threading.Thread(target=run_drift)
+        worker.daemon = True
+        worker.start()
+
+    def _export_openapi_drift_results(self):
+        """Export OpenAPI drift analysis output."""
+        with self.openapi_lock:
+            data = list(self.openapi_drift_results)
+        self._export_list_to_file(
+            data, "OpenAPI_Drift_Export", self.openapi_area, "openapi drift lines"
+        )
+
+    def _send_openapi_to_recon(self):
+        """Send missing spec endpoints to Recon for active probing."""
+        with self.openapi_lock:
+            candidates = list(self.openapi_missing_candidates)
+        if not candidates:
+            self.openapi_area.append("\n[!] No missing spec endpoints to send\n")
+            return
+        self._import_endpoint_candidates_to_recon(
+            candidates, "openapi-drift", self.openapi_area
+        )
 
     def _export_katana_results(self):
         """Export Katana discovered endpoints - only saves when user clicks Export"""
