@@ -5,7 +5,6 @@ import re
 import shlex
 import threading
 import time
-import tool_profiles
 
 from burp import IBurpExtender, IContextMenuFactory, IHttpListener, IProxyListener, ITab
 from java.awt import BorderLayout, Color, Dimension, FlowLayout, Font, GridLayout
@@ -394,6 +393,7 @@ class BurpExtender(
             "dalfox": threading.Event(),
             "assetdiscovery": threading.Event(),
             "openapidrift": threading.Event(),
+            "graphqlanalysis": threading.Event(),
         }
         self.passive_discovery_findings = []
         self.passive_discovery_lock = threading.Lock()
@@ -580,13 +580,13 @@ class BurpExtender(
         # Fuzzer tab
         fuzzer_panel = self._create_fuzzer_tab()
 
-        # SQLMap Verify tab
+        # SQLMap tab
         sqlmap_verify_panel = self._create_sqlmap_verify_tab()
 
-        # Dalfox Verify tab
+        # Dalfox tab
         dalfox_verify_panel = self._create_dalfox_verify_tab()
 
-        # API Asset Discovery tab
+        # Subfinder tab
         asset_discovery_panel = self._create_api_asset_discovery_tab()
 
         # OpenAPI Drift tab
@@ -613,6 +613,9 @@ class BurpExtender(
         # Wayback tab
         wayback_panel = self._create_wayback_tab()
 
+        # GraphQL tab
+        graphql_panel = self._create_graphql_tab()
+
         # Add tabs
         # Internal workflow tabs first
         self.tabbed_pane.addTab("Recon", recon_panel)
@@ -629,10 +632,11 @@ class BurpExtender(
         self.tabbed_pane.addTab("Katana", katana_panel)
         self.tabbed_pane.addTab("FFUF", ffuf_panel)
         self.tabbed_pane.addTab("Wayback", wayback_panel)
-        self.tabbed_pane.addTab("SQLMap Verify", sqlmap_verify_panel)
-        self.tabbed_pane.addTab("Dalfox Verify", dalfox_verify_panel)
-        self.tabbed_pane.addTab("API Assets", asset_discovery_panel)
+        self.tabbed_pane.addTab("sqlmap", sqlmap_verify_panel)
+        self.tabbed_pane.addTab("Delfox", dalfox_verify_panel)
+        self.tabbed_pane.addTab("Subfinder", asset_discovery_panel)
         self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)
+        self.tabbed_pane.addTab("GraphQL", graphql_panel)
 
         self._panel.add(self.tabbed_pane, BorderLayout.CENTER)
 
@@ -663,33 +667,220 @@ class BurpExtender(
         btn.addActionListener(action)
         return btn
 
+    def _normalize_profile(self, profile_value):
+        """Normalize profile name to fast/balanced/deep."""
+        raw = self._ascii_safe(profile_value, lower=True).strip()
+        if raw in ["fast", "quick", "speed"]:
+            return "fast"
+        if raw in ["deep", "thorough", "max", "maximum"]:
+            return "deep"
+        return "balanced"
+
     def _profile_labels(self):
         """Return shared profile labels used by scanner tuning controls."""
-        try:
-            labels = tool_profiles.profile_labels()
-            if labels:
-                return labels
-        except Exception as e:
-            self._callbacks.printError(
-                "Profile labels fallback due to error: {}".format(str(e))
-            )
         return ["Fast", "Balanced", "Deep"]
 
     def _selected_profile_value(self, combo):
         """Normalize selected profile label to helper profile key."""
         raw_value = self._ascii_safe(str(combo.getSelectedItem()) if combo else "")
-        try:
-            return tool_profiles.normalize_profile(raw_value)
-        except Exception as e:
-            self._callbacks.printError(
-                "Profile normalize fallback due to error: {}".format(str(e))
+        return self._normalize_profile(raw_value)
+
+    def _sqlmap_profile_settings(self, profile_value):
+        """Return SQLMap tuning values for selected profile."""
+        profile = self._normalize_profile(profile_value)
+        if profile == "fast":
+            return {
+                "profile": profile,
+                "level": "1",
+                "risk": "1",
+                "threads": "1",
+                "sql_timeout": "6",
+                "retries": "0",
+            }
+        if profile == "deep":
+            return {
+                "profile": profile,
+                "level": "3",
+                "risk": "2",
+                "threads": "2",
+                "sql_timeout": "12",
+                "retries": "2",
+            }
+        return {
+            "profile": "balanced",
+            "level": "2",
+            "risk": "1",
+            "threads": "1",
+            "sql_timeout": "8",
+            "retries": "1",
+        }
+
+    def _build_sqlmap_command(self, sqlmap_path, target, profile_value):
+        """Build SQLMap command for one verification target."""
+        cfg = self._sqlmap_profile_settings(profile_value)
+        cmd = [
+            sqlmap_path,
+            "-u",
+            target.get("url", ""),
+            "--batch",
+            "--level",
+            cfg["level"],
+            "--risk",
+            cfg["risk"],
+            "--threads",
+            cfg["threads"],
+            "--timeout",
+            cfg["sql_timeout"],
+            "--retries",
+            cfg["retries"],
+            "--flush-session",
+        ]
+
+        params = target.get("params", []) or []
+        if params:
+            cmd.extend(["-p", ",".join(params[:6])])
+
+        method = (target.get("method") or "GET").upper()
+        data = target.get("data") or ""
+        if method in ["POST", "PUT", "PATCH", "DELETE"] and data:
+            cmd.extend(["--method", method, "--data", data[:1200]])
+        return cmd, cfg
+
+    def _dalfox_profile_settings(self, profile_value):
+        """Return Dalfox tuning values for selected profile."""
+        profile = self._normalize_profile(profile_value)
+        if profile == "fast":
+            return {
+                "profile": profile,
+                "timeout": "6",
+                "worker": "20",
+                "skip_mining": True,
+            }
+        if profile == "deep":
+            return {
+                "profile": profile,
+                "timeout": "12",
+                "worker": "50",
+                "skip_mining": False,
+            }
+        return {
+            "profile": "balanced",
+            "timeout": "8",
+            "worker": "30",
+            "skip_mining": True,
+        }
+
+    def _build_dalfox_command(self, dalfox_path, target, out_file, profile_value):
+        """Build Dalfox command for one verification target."""
+        cfg = self._dalfox_profile_settings(profile_value)
+        cmd = [
+            dalfox_path,
+            "url",
+            target.get("url", ""),
+            "--format",
+            "jsonl",
+            "-o",
+            out_file,
+            "-S",
+            "--no-color",
+            "--timeout",
+            cfg["timeout"],
+            "--worker",
+            cfg["worker"],
+        ]
+        if cfg["skip_mining"]:
+            cmd.extend(
+                ["--skip-bav", "--skip-mining-all", "--skip-mining-dom", "--skip-headless"]
             )
-            text = raw_value.lower().strip()
-            if text == "fast":
-                return "fast"
-            if text == "deep":
-                return "deep"
-            return "balanced"
+
+        for param in (target.get("params", []) or [])[:4]:
+            cmd.extend(["-p", param])
+
+        method = (target.get("method") or "GET").upper()
+        data = target.get("data") or ""
+        if method in ["POST", "PUT", "PATCH", "DELETE"] and data:
+            cmd.extend(["-X", method, "-d", data[:1200]])
+        return cmd, cfg
+
+    def _asset_profile_settings(self, profile_value):
+        """Return API asset discovery stage tuning."""
+        profile = self._normalize_profile(profile_value)
+        if profile == "fast":
+            return {
+                "profile": profile,
+                "subfinder_timeout": 150,
+            }
+        if profile == "deep":
+            return {
+                "profile": profile,
+                "subfinder_timeout": 360,
+            }
+        return {
+            "profile": "balanced",
+            "subfinder_timeout": 240,
+        }
+
+    def _nuclei_profile_settings(self, profile_value):
+        """Return Nuclei tuning values for selected profile."""
+        profile = self._normalize_profile(profile_value)
+        if profile == "fast":
+            return {
+                "profile": profile,
+                # Keep fast profile tightly focused on API surface discovery.
+                "include_tags": "swagger,openapi,graphql",
+                "exclude_tags": "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force",
+                "request_timeout": 6,
+                "retries": 0,
+                "rate_limit": 50,
+                "concurrency": 10,
+                "bulk_size": 6,
+                "max_host_error": 10,
+                "scan_strategy": "host-spray",
+                "max_scan_seconds": 300,
+            }
+        if profile == "deep":
+            return {
+                "profile": profile,
+                # Deep profile adds config checks while staying API-centric.
+                "include_tags": "swagger,openapi,graphql,auth,jwt,config",
+                "exclude_tags": "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force",
+                "request_timeout": 12,
+                "retries": 2,
+                "rate_limit": 40,
+                "concurrency": 8,
+                "bulk_size": 4,
+                "max_host_error": 6,
+                "scan_strategy": "host-spray",
+                "max_scan_seconds": 1200,
+            }
+        return {
+            "profile": "balanced",
+            "include_tags": "swagger,openapi,graphql,auth,jwt",
+            "exclude_tags": "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force",
+            "request_timeout": 10,
+            "retries": 1,
+            "rate_limit": 70,
+            "concurrency": 12,
+            "bulk_size": 6,
+            "max_host_error": 8,
+            "scan_strategy": "host-spray",
+            "max_scan_seconds": 900,
+        }
+
+    def _evaluate_help_text(
+        self, help_text, required_tokens=None, forbidden_tokens=None
+    ):
+        """Evaluate required/forbidden token health on help output."""
+        lower_text = self._ascii_safe(help_text, lower=True)
+        required = list(required_tokens or [])
+        forbidden = list(forbidden_tokens or [])
+        missing = [token for token in required if token.lower() not in lower_text]
+        forbidden_found = [token for token in forbidden if token.lower() in lower_text]
+        return {
+            "missing": missing,
+            "forbidden_found": forbidden_found,
+            "healthy": (len(missing) == 0 and len(forbidden_found) == 0),
+        }
 
     def _add_target_scope_controls(self, controls):
         """Attach shared target-base scope controls for external tool tabs."""
@@ -1091,7 +1282,9 @@ class BurpExtender(
         return "\n".join([title, "=" * 80, ""] + formatted_lines)
 
     def _scan_versions(self):
-        versions = [v.strip() for v in self.version_input.getText().split(",")]
+        versions = [
+            v.strip() for v in self.version_input.getText().split(",") if v.strip()
+        ]
         self.version_results = []
         lines = []
 
@@ -1105,12 +1298,13 @@ class BurpExtender(
 
         for key, entries in api_endpoints.items():
             entry = self._get_entry(entries)
-            path = entry["normalized_path"]
-            host = entry["host"]
-            protocol = entry["protocol"]
+            normalized = self._normalize_endpoint_data(entry)
+            path = normalized.get("path") or "/"
+            host = self._ascii_safe(normalized.get("host"), lower=True)
+            protocol = self._ascii_safe(normalized.get("protocol"), lower=True)
 
             for ver in versions:
-                test_path = "/" + ver + path
+                test_path = self._build_version_test_path(path, ver)
                 result = "Test: {} -> {}://{}{}".format(key, protocol, host, test_path)
                 lines.append(result)
                 self.version_results.append(result)
@@ -1134,6 +1328,41 @@ class BurpExtender(
                 len(api_endpoints), len(self.version_results)
             )
         )
+
+    def _build_version_test_path(self, path, version_value):
+        """Build version probe path while preserving existing versioned routes when possible."""
+        normalized_path = self._ascii_safe(path or "/")
+        if not normalized_path.startswith("/"):
+            normalized_path = "/" + normalized_path
+        token = self._ascii_safe(version_value or "").strip().strip("/")
+        if not token:
+            return normalized_path
+
+        existing_version = self._extract_version_segment(normalized_path)
+
+        if existing_version and "/" not in token:
+            replaced = re.sub(
+                r"/" + re.escape(existing_version) + r"(?=/|$)",
+                "/" + token,
+                normalized_path,
+                count=1,
+            )
+            if replaced:
+                return replaced
+
+        if existing_version and token.startswith("api/"):
+            replaced = re.sub(
+                r"/api/" + re.escape(existing_version) + r"(?=/|$)",
+                "/" + token,
+                normalized_path,
+                count=1,
+            )
+            if replaced:
+                return replaced
+
+        if normalized_path == "/":
+            return "/" + token
+        return "/" + token + normalized_path
 
     def _export_version_results(self):
         """Export version scan results - only saves when user clicks Export"""
@@ -1654,7 +1883,7 @@ class BurpExtender(
         return panel
 
     def _create_api_asset_discovery_tab(self):
-        """Create API asset discovery tab (subfinder + dnsx + httpx)."""
+        """Create Subfinder tab for API asset domain discovery."""
         import os
 
         panel = JPanel(BorderLayout())
@@ -1675,9 +1904,66 @@ class BurpExtender(
         self.asset_profile_combo = JComboBox(self._profile_labels())
         self.asset_profile_combo.setSelectedItem("Balanced")
         controls.add(self.asset_profile_combo)
+        controls.add(JLabel("Subfinder Path:"))
+        self.asset_subfinder_path_field = JTextField(
+            os.path.expanduser("~/go/bin/subfinder"), 22
+        )
+        controls.add(self.asset_subfinder_path_field)
+        self.asset_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
+        controls.add(self.asset_custom_cmd_checkbox)
+        controls.add(JLabel("Command:"))
+        self.asset_custom_cmd_field = JTextField("", 35)
+        self.asset_custom_cmd_field.setToolTipText(
+            "Example: {subfinder_path} -dL {domains_file} -silent -o {output_file}"
+        )
+        controls.add(self.asset_custom_cmd_field)
+        controls.add(JLabel("Preset:"))
+        self.asset_preset_help_label = JLabel(
+            "Preset Help: Choose a Subfinder command template."
+        )
+        asset_presets = [
+            (
+                "Silent Domain List",
+                "{subfinder_path} -dL {domains_file} -silent -o {output_file}",
+                "Recommended baseline using domain list input and silent output.",
+            ),
+            (
+                "Recursive",
+                "{subfinder_path} -dL {domains_file} -silent -recursive -o {output_file}",
+                "Adds recursive enumeration for deeper subdomain coverage.",
+            ),
+            (
+                "All Sources",
+                "{subfinder_path} -dL {domains_file} -silent -all -o {output_file}",
+                "Queries all supported passive sources for max coverage.",
+            ),
+        ]
+        controls.add(
+            self._create_command_preset_combo(
+                self.asset_custom_cmd_field,
+                self.asset_custom_cmd_checkbox,
+                asset_presets,
+                self.asset_preset_help_label,
+            )
+        )
+        controls.add(
+            self._create_preset_help_button(
+                "Subfinder",
+                ["{subfinder_path}", "{domains_file}", "{output_file}"],
+                asset_presets,
+                usage_notes=[
+                    "Use local ProjectDiscovery subfinder binary in Subfinder Path.",
+                    "Leave domains empty to auto-derive base domains from Recon hosts.",
+                ],
+                override_notes=[
+                    "Include {output_file} so this tab can parse discovered assets.",
+                    "Include {domains_file} if you want Recon-derived domains as input.",
+                ],
+            )
+        )
         controls.add(
             self._create_action_button(
-                "Run Discovery",
+                "Run Subfinder",
                 Color(138, 43, 226),
                 lambda e: self._run_api_asset_discovery(e),
             )
@@ -1714,24 +2000,11 @@ class BurpExtender(
                 lambda e: self._copy_to_clipboard(self.asset_area.getText()),
             )
         )
-
-        tools_row = JPanel(FlowLayout(FlowLayout.LEFT))
-        tools_row.add(JLabel("subfinder:"))
-        self.asset_subfinder_path_field = JTextField(
-            os.path.expanduser("~/go/bin/subfinder"), 21
-        )
-        tools_row.add(self.asset_subfinder_path_field)
-        tools_row.add(JLabel("dnsx:"))
-        self.asset_dnsx_path_field = JTextField(os.path.expanduser("~/go/bin/dnsx"), 20)
-        tools_row.add(self.asset_dnsx_path_field)
-        tools_row.add(JLabel("httpx:"))
-        self.asset_httpx_path_field = JTextField(
-            os.path.expanduser("~/go/bin/httpx"), 20
-        )
-        tools_row.add(self.asset_httpx_path_field)
+        help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        help_row.add(self.asset_preset_help_label)
 
         top_panel.add(controls)
-        top_panel.add(tools_row)
+        top_panel.add(help_row)
         panel.add(top_panel, BorderLayout.NORTH)
         self.asset_area, scroll = self._create_text_area_panel()
         panel.add(scroll, BorderLayout.CENTER)
@@ -1757,6 +2030,13 @@ class BurpExtender(
                 "Browse",
                 Color(96, 125, 139),
                 lambda e: self._browse_openapi_spec_file(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Detect",
+                Color(70, 130, 180),
+                lambda e: self._detect_openapi_spec_from_history(e),
             )
         )
         controls.add(
@@ -1811,7 +2091,9 @@ class BurpExtender(
         panel.add(scroll, BorderLayout.CENTER)
         self.openapi_drift_results = []
         self.openapi_missing_candidates = []
+        self.openapi_spec_candidates = []
         self.openapi_lock = threading.Lock()
+        self._autoselect_openapi_spec_from_history(append_output=False)
         return panel
 
     def _create_auth_replay_tab(self):
@@ -2030,8 +2312,8 @@ class BurpExtender(
         nuclei_presets = [
             (
                 "Recon Fast",
-                '{nuclei_path} -list {targets_file} -tags exposure,api,swagger,openapi -etags dos,intrusive,headless,cve,fuzz,fuzzing,brute-force -timeout 8 -retries 1 -rate-limit 100 -c 20 -bs 8 -mhe 8 -ss host-spray -no-httpx -project -silent -header "X-Forwarded-For: 127.0.0.1" -jsonl-export {json_file}',
-                "Optimized for speed: minimal tags, faster timeout, higher rate limit for quick API discovery.",
+                '{nuclei_path} -list {targets_file} -tags swagger,openapi,graphql -etags dos,intrusive,headless,cve,fuzz,fuzzing,brute-force -timeout 8 -retries 1 -rate-limit 100 -c 20 -bs 8 -mhe 8 -ss host-spray -no-httpx -project -silent -header "X-Forwarded-For: 127.0.0.1" -jsonl-export {json_file}',
+                "Optimized for speed: only core API discovery tags.",
             ),
             (
                 "High/Critical",
@@ -2040,8 +2322,8 @@ class BurpExtender(
             ),
             (
                 "API/Auth Focus",
-                "{nuclei_path} -list {targets_file} -tags api,swagger,openapi,graphql,auth,jwt,config,exposure -timeout 10 -retries 2 -rate-limit 45 -c 8 -silent -jsonl-export {json_file}",
-                "Targets API/authentication and configuration exposure checks.",
+                "{nuclei_path} -list {targets_file} -tags swagger,openapi,graphql,auth,jwt,config -timeout 10 -retries 2 -rate-limit 45 -c 8 -silent -jsonl-export {json_file}",
+                "Targets API/authentication and configuration checks with focused templates.",
             ),
         ]
         controls.add(
@@ -2558,6 +2840,79 @@ class BurpExtender(
         panel.add(scroll, BorderLayout.CENTER)
         self.wayback_discovered = []
         self.wayback_lock = threading.Lock()
+        return panel
+
+    def _create_graphql_tab(self):
+        """Create GraphQL analysis tab orchestrating external tool checks."""
+        panel = JPanel(BorderLayout())
+        top_panel = JPanel()
+        top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+
+        controls = JPanel(FlowLayout(FlowLayout.LEFT))
+        controls.add(JLabel("Targets (comma/newline, optional):"))
+        self.graphql_targets_field = JTextField("", 45)
+        self.graphql_targets_field.setToolTipText(
+            "Optional. Leave empty to auto-pick GraphQL endpoints from Recon history."
+        )
+        controls.add(self.graphql_targets_field)
+        controls.add(JLabel("Max:"))
+        self.graphql_max_targets_field = JTextField("12", 3)
+        controls.add(self.graphql_max_targets_field)
+        controls.add(
+            self._create_action_button(
+                "Run Analysis",
+                Color(138, 43, 226),
+                lambda e: self._run_graphql_analysis(e),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Stop", Color(255, 140, 0), lambda e: self._stop_graphql(e)
+            )
+        )
+        self._add_force_kill_button(controls, lambda: getattr(self, "graphql_area", None))
+        controls.add(
+            self._create_action_button(
+                "Send to Recon",
+                Color(76, 175, 80),
+                lambda e: self._send_graphql_to_recon(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Export Results",
+                Color(70, 130, 180),
+                lambda e: self._export_graphql_results(),
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Clear", Color(220, 53, 69), lambda e: self.graphql_area.setText("")
+            )
+        )
+        controls.add(
+            self._create_action_button(
+                "Copy",
+                Color(108, 117, 125),
+                lambda e: self._copy_to_clipboard(self.graphql_area.getText()),
+            )
+        )
+
+        info_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        info_row.add(
+            JLabel(
+                "Runs: Subfinder, HTTPX, Katana, FFUF, Wayback, Nuclei, Dalfox, SQLMap (if available)."
+            )
+        )
+        top_panel.add(controls)
+        top_panel.add(info_row)
+        panel.add(top_panel, BorderLayout.NORTH)
+
+        self.graphql_area, scroll = self._create_text_area_panel()
+        panel.add(scroll, BorderLayout.CENTER)
+        self.graphql_results = []
+        self.graphql_recon_candidates = []
+        self.graphql_lock = threading.Lock()
         return panel
 
     # ============================================================================
@@ -3658,33 +4013,36 @@ class BurpExtender(
         """Collect Version Scanner targets from Param Miner scoped target set."""
         param_targets, param_meta = self._collect_param_targets()
         filtered = {}
-        excluded_versioned = 0
         excluded_non_api = 0
+        retained_versioned = 0
 
         for key, entries in param_targets.items():
             entry = self._get_entry(entries)
-            path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True)
-            method = self._ascii_safe(entry.get("method"), lower=True).strip().upper()
-
-            # Skip already-versioned paths
-            if any(v in path for v in ["/v1/", "/v2/", "/v3/", "/v4/", "/v5/", "/api/v"]):
-                excluded_versioned += 1
-                continue
+            normalized = self._normalize_endpoint_data(entry)
+            path = self._ascii_safe(normalized.get("path") or "/", lower=True)
+            method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+            already_versioned = bool(self._extract_version_segment(path))
 
             api_marker = any(x in path for x in ["/api/", "/svc/", "/rest/", "/graphql"])
-            if (not api_marker) and method not in ["POST", "PUT", "PATCH", "DELETE"]:
+            if (not already_versioned) and (not api_marker) and method not in [
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+            ]:
                 excluded_non_api += 1
                 continue
 
             filtered[key] = entries
+            if already_versioned:
+                retained_versioned += 1
 
         return filtered, {
             "raw_endpoints": param_meta.get("raw_endpoints", 0),
             "filtered_endpoints": len(filtered),
             "excluded_endpoints": param_meta.get("excluded_endpoints", 0)
-            + excluded_versioned
             + excluded_non_api,
-            "excluded_versioned": excluded_versioned,
+            "retained_versioned": retained_versioned,
             "excluded_non_api": excluded_non_api,
         }
 
@@ -4737,6 +5095,836 @@ def handleResponse(req, interesting):
         }
         return ordered, meta
 
+    def _infer_nuclei_output_severity(self, line_text):
+        """Infer severity token from plain nuclei output line."""
+        safe_line = self._ascii_safe(line_text, lower=True)
+        match = re.search(r"\[(critical|high|medium|low|info)\]", safe_line)
+        if match:
+            return match.group(1)
+        return "info"
+
+    def _extract_nuclei_plain_findings(self, output_text, max_lines=300):
+        """Extract finding-like lines from plain nuclei process output."""
+        lines = []
+        seen = set()
+        text = self._ascii_safe(output_text)
+        for raw in text.splitlines():
+            clean = self.ANSI_ESCAPE_PATTERN.sub("", self._ascii_safe(raw)).strip()
+            if not clean:
+                continue
+            lower = clean.lower()
+            if lower.startswith("[*]") or lower.startswith("[inf]") or lower.startswith("[wrn]"):
+                continue
+            if "templates loaded" in lower or "targets loaded" in lower:
+                continue
+            if "http://" not in lower and "https://" not in lower:
+                continue
+            if clean in seen:
+                continue
+            seen.add(clean)
+            lines.append(clean)
+            if len(lines) >= max_lines:
+                break
+        return lines
+
+    def _write_nuclei_partial_results_jsonl(self, output_text, output_path):
+        """Create JSONL fallback results from plain nuclei output lines."""
+        findings = self._extract_nuclei_plain_findings(output_text)
+        writer = None
+        try:
+            writer = open(output_path, "w")
+            for line in findings:
+                severity = self._infer_nuclei_output_severity(line)
+                row = {
+                    "template-id": "partial-output",
+                    "matched-at": line,
+                    "info": {"severity": severity},
+                }
+                writer.write(json.dumps(row) + "\n")
+        except Exception as e:
+            self._callbacks.printError(
+                "Nuclei partial JSONL synthesis failed: {}".format(str(e))
+            )
+            return 0
+        finally:
+            if writer:
+                try:
+                    writer.close()
+                except Exception as e:
+                    self._callbacks.printError(
+                        "Nuclei partial JSONL close failed: {}".format(str(e))
+                    )
+        return len(findings)
+
+    def _resolve_graphql_tool_path(self, field_name, candidates):
+        """Resolve GraphQL stage tool path from existing tab field or fallback list."""
+        import os
+
+        if field_name and hasattr(self, field_name):
+            try:
+                field_obj = getattr(self, field_name)
+                value = self._ascii_safe(field_obj.getText()).strip()
+                if value:
+                    return value
+            except Exception as e:
+                self._callbacks.printError(
+                    "GraphQL tool path read error ({}): {}".format(field_name, str(e))
+                )
+        for candidate in (candidates or []):
+            path = self._ascii_safe(candidate).strip()
+            if not path:
+                continue
+            if os.path.exists(path):
+                return path
+        if candidates:
+            return self._ascii_safe(candidates[-1]).strip()
+        return ""
+
+    def _collect_graphql_targets(self, max_targets):
+        """Collect GraphQL targets from optional input and Recon history."""
+        targets = []
+        seen = set()
+
+        raw_input = self._ascii_safe(self.graphql_targets_field.getText()).strip()
+        if raw_input:
+            for part in re.split(r"[\n,]+", raw_input):
+                value = self._ascii_safe(part).strip()
+                if not value:
+                    continue
+                if not value.startswith("http://") and not value.startswith("https://"):
+                    value = value.strip("/")
+                    if "/" not in value:
+                        value = "https://{}/graphql".format(value)
+                    else:
+                        value = "https://{}".format(value)
+                clean = self._clean_url(value)
+                if clean and clean not in seen:
+                    seen.add(clean)
+                    targets.append(clean)
+                    if len(targets) >= max_targets:
+                        return targets
+
+        with self.lock:
+            snapshot = list(self.api_data.values())
+        for entries in snapshot:
+            entry = self._get_entry(entries)
+            path = self._ascii_safe(
+                entry.get("path") or entry.get("normalized_path") or "", lower=True
+            )
+            if "graphql" not in path:
+                continue
+            url = self._clean_url(self._build_url(entry, True))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            targets.append(url)
+            if len(targets) >= max_targets:
+                break
+        return targets
+
+    def _graphql_base_urls(self, urls):
+        """Build base URLs (scheme://host[:port]) from full URLs."""
+        bases = []
+        seen = set()
+        for url in (urls or []):
+            safe = self._ascii_safe(url).strip()
+            if not safe:
+                continue
+            try:
+                parsed = URL(safe)
+                protocol = self._ascii_safe(parsed.getProtocol() or "https", lower=True)
+                host = self._ascii_safe(parsed.getHost() or "", lower=True).strip()
+                if not host:
+                    continue
+                port = parsed.getPort()
+                if port == -1:
+                    base = "{}://{}".format(protocol, host)
+                else:
+                    base = "{}://{}:{}".format(protocol, host, int(port))
+                if base not in seen:
+                    seen.add(base)
+                    bases.append(base)
+            except Exception as parse_err:
+                self._callbacks.printError(
+                    "GraphQL base parse error: {}".format(str(parse_err))
+                )
+                continue
+        return bases
+
+    def _run_graphql_analysis(self, event):
+        """Run GraphQL-focused analysis using available external tools."""
+        import os
+        import tempfile
+        import subprocess
+
+        max_targets = self._parse_positive_int(
+            self.graphql_max_targets_field.getText(), 12, 1, 50
+        )
+        targets = self._collect_graphql_targets(max_targets)
+        if not targets:
+            self.graphql_area.setText(
+                "[!] No GraphQL targets found.\n[*] Enter targets manually or capture GraphQL traffic in Recon first.\n"
+            )
+            return
+
+        self.graphql_area.setText("[*] GraphQL analysis starting...\n")
+        self.graphql_area.append("[*] Targets: {}\n".format(len(targets)))
+        for target in targets:
+            self.graphql_area.append("  - {}\n".format(target))
+        self.graphql_area.append("\n")
+        self._clear_tool_cancel("graphqlanalysis")
+
+        def run_analysis():
+            temp_dir = tempfile.mkdtemp(prefix="burp_graphql_")
+            discovered_urls = set(targets)
+            findings = []
+            recon_candidates = []
+            tool_available = {}
+            available_tools = []
+            missing_tools = []
+
+            def append_line(text):
+                SwingUtilities.invokeLater(
+                    lambda t=self._ascii_safe(text): self.graphql_area.append(t)
+                )
+
+            def check_tool(name, path, required_tokens, forbidden_tokens=None):
+                forbidden_tokens = forbidden_tokens or []
+                if not path:
+                    append_line("[MISSING] {} path not configured\n".format(name))
+                    missing_tools.append(name)
+                    return False
+                probe_ok, help_text, probe_error = self._probe_binary_help(path)
+                if not probe_ok:
+                    append_line(
+                        "[MISSING] {} -> {} ({})\n".format(
+                            name,
+                            path,
+                            self._ascii_safe(probe_error or "binary probe failed"),
+                        )
+                    )
+                    missing_tools.append(name)
+                    return False
+                sig = self._evaluate_help_text(
+                    help_text,
+                    required_tokens=required_tokens,
+                    forbidden_tokens=forbidden_tokens,
+                )
+                if not sig.get("healthy"):
+                    append_line(
+                        "[MISSING] {} incompatible: missing={} forbidden={}\n".format(
+                            name,
+                            ",".join(sig.get("missing") or []),
+                            ",".join(sig.get("forbidden_found") or []),
+                        )
+                    )
+                    missing_tools.append(name)
+                    return False
+                append_line("[USED] {} -> {}\n".format(name, path))
+                available_tools.append(name)
+                return True
+
+            try:
+                append_line("=" * 80 + "\n")
+                append_line("GRAPHQL ANALYSIS - TOOL STATUS\n")
+                append_line("=" * 80 + "\n")
+
+                subfinder_path = self._resolve_graphql_tool_path(
+                    "asset_subfinder_path_field",
+                    [
+                        os.path.expanduser("~/go/bin/subfinder"),
+                        "subfinder",
+                    ],
+                )
+                httpx_path = self._resolve_graphql_tool_path(
+                    "httpx_path_field",
+                    [
+                        os.path.expanduser("~/go/bin/httpx"),
+                        "httpx",
+                    ],
+                )
+                katana_path = self._resolve_graphql_tool_path(
+                    "katana_path_field",
+                    [
+                        os.path.expanduser("~/go/bin/katana"),
+                        "katana",
+                    ],
+                )
+                ffuf_path = self._resolve_graphql_tool_path(
+                    "ffuf_path_field",
+                    [
+                        os.path.expanduser("~/go/bin/ffuf"),
+                        "ffuf",
+                    ],
+                )
+                wayback_path = self._resolve_graphql_tool_path(
+                    "",
+                    [
+                        os.path.expanduser("~/go/bin/waybackurls"),
+                        "waybackurls",
+                    ],
+                )
+                nuclei_path = self._resolve_graphql_tool_path(
+                    "nuclei_path_field",
+                    [
+                        os.path.expanduser("~/go/bin/nuclei"),
+                        "nuclei",
+                    ],
+                )
+                dalfox_path = self._resolve_graphql_tool_path(
+                    "dalfox_path_field",
+                    [
+                        os.path.expanduser("~/go/bin/dalfox"),
+                        "dalfox",
+                    ],
+                )
+                sqlmap_path = self._resolve_graphql_tool_path(
+                    "sqlmap_path_field",
+                    [
+                        os.path.expanduser("~/.local/bin/sqlmap"),
+                        "sqlmap",
+                    ],
+                )
+
+                tool_available["Subfinder"] = check_tool(
+                    "Subfinder", subfinder_path, ["-d", "-silent"]
+                )
+                tool_available["HTTPX"] = check_tool(
+                    "HTTPX",
+                    httpx_path,
+                    ["-l", "-status-code", "-silent"],
+                    [
+                        "a next generation http client",
+                        "usage: httpx <url> [options]",
+                    ],
+                )
+                tool_available["Katana"] = check_tool(
+                    "Katana", katana_path, ["-u", "-d"]
+                )
+                tool_available["FFUF"] = check_tool("FFUF", ffuf_path, ["-u", "-w"])
+                tool_available["Wayback"] = check_tool(
+                    "Wayback", wayback_path, ["-dates", "-no-subs"]
+                )
+                tool_available["Nuclei"] = check_tool(
+                    "Nuclei", nuclei_path, ["-list", "-tags", "-etags", "-jsonl"]
+                )
+                tool_available["Dalfox"] = check_tool(
+                    "Dalfox", dalfox_path, ["url", "--format", "-o"]
+                )
+                tool_available["SQLMap"] = check_tool(
+                    "SQLMap", sqlmap_path, ["-u", "--batch", "--level"]
+                )
+                append_line(
+                    "[*] Available: {}\n".format(
+                        ", ".join(available_tools) if available_tools else "none"
+                    )
+                )
+                append_line(
+                    "[*] Missing: {}\n\n".format(
+                        ", ".join(missing_tools) if missing_tools else "none"
+                    )
+                )
+
+                # Stage 1: Subfinder domain expansion
+                base_domains = []
+                for base in self._graphql_base_urls(targets):
+                    try:
+                        parsed = URL(base)
+                        host = self._ascii_safe(parsed.getHost(), lower=True).strip()
+                        root = self._infer_base_domain(host) or host
+                        if root and root not in base_domains:
+                            base_domains.append(root)
+                    except Exception as parse_err:
+                        self._callbacks.printError(
+                            "GraphQL domain parse error: {}".format(str(parse_err))
+                        )
+                        continue
+                if tool_available.get("Subfinder") and base_domains:
+                    domains_file = os.path.join(temp_dir, "domains.txt")
+                    subfinder_file = os.path.join(temp_dir, "subfinder.txt")
+                    with open(domains_file, "w") as writer:
+                        for domain in base_domains[:10]:
+                            writer.write(domain + "\n")
+                    cmd = [
+                        subfinder_path,
+                        "-dL",
+                        domains_file,
+                        "-silent",
+                        "-o",
+                        subfinder_file,
+                    ]
+                    append_line("[*] Tool: Subfinder\n")
+                    append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                    ok, cancelled, _, err = self._run_command_stage(
+                        "graphqlanalysis", "Subfinder", cmd, self.graphql_area, 150
+                    )
+                    if cancelled:
+                        append_line("[!] GraphQL analysis cancelled by user\n")
+                        return
+                    if not ok:
+                        append_line("[!] Subfinder error: {}\n".format(self._ascii_safe(err)))
+                    if os.path.exists(subfinder_file):
+                        with open(subfinder_file, "r") as reader:
+                            for line in reader:
+                                host = self._ascii_safe(line, lower=True).strip().strip(".")
+                                if host and "." in host:
+                                    discovered_urls.add("https://{}/graphql".format(host))
+
+                # Stage 2: HTTPX validation
+                alive_urls = []
+                if tool_available.get("HTTPX"):
+                    httpx_targets_file = os.path.join(temp_dir, "httpx_targets.txt")
+                    httpx_json = os.path.join(temp_dir, "httpx.jsonl")
+                    with open(httpx_targets_file, "w") as writer:
+                        for url in sorted(discovered_urls):
+                            writer.write(url + "\n")
+                    cmd = [
+                        httpx_path,
+                        "-l",
+                        httpx_targets_file,
+                        "-silent",
+                        "-sc",
+                        "-title",
+                        "-json",
+                        "-timeout",
+                        "12",
+                        "-o",
+                        httpx_json,
+                    ]
+                    append_line("[*] Tool: HTTPX\n")
+                    append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                    ok, cancelled, _, err = self._run_command_stage(
+                        "graphqlanalysis", "HTTPX", cmd, self.graphql_area, 180
+                    )
+                    if cancelled:
+                        append_line("[!] GraphQL analysis cancelled by user\n")
+                        return
+                    if not ok:
+                        append_line("[!] HTTPX error: {}\n".format(self._ascii_safe(err)))
+                    if os.path.exists(httpx_json):
+                        with open(httpx_json, "r") as reader:
+                            for line in reader:
+                                safe_line = self._ascii_safe(line).strip()
+                                if not safe_line:
+                                    continue
+                                try:
+                                    row = json.loads(safe_line)
+                                except Exception as parse_err:
+                                    self._callbacks.printError(
+                                        "GraphQL HTTPX JSON parse error: {}".format(
+                                            str(parse_err)
+                                        )
+                                    )
+                                    continue
+                                url_value = self._ascii_safe(row.get("url") or "").strip()
+                                status_code = int(row.get("status_code") or 0)
+                                if url_value and status_code >= 200 and status_code < 500:
+                                    alive_urls.append(url_value)
+                                    discovered_urls.add(url_value)
+                                    recon_candidates.append(
+                                        {"method": "GET", "url": url_value}
+                                    )
+
+                # Stage 3: Katana crawl
+                katana_found = []
+                if tool_available.get("Katana"):
+                    for idx, base in enumerate(self._graphql_base_urls(alive_urls or targets)[:5]):
+                        katana_out = os.path.join(temp_dir, "katana_{}.txt".format(idx))
+                        cmd = [
+                            katana_path,
+                            "-u",
+                            base,
+                            "-silent",
+                            "-d",
+                            "1",
+                            "-c",
+                            "5",
+                            "-p",
+                            "5",
+                            "-rl",
+                            "5",
+                            "-o",
+                            katana_out,
+                        ]
+                        append_line("[*] Tool: Katana\n")
+                        append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                        ok, cancelled, _, err = self._run_command_stage(
+                            "graphqlanalysis", "Katana", cmd, self.graphql_area, 120
+                        )
+                        if cancelled:
+                            append_line("[!] GraphQL analysis cancelled by user\n")
+                            return
+                        if not ok:
+                            append_line("[!] Katana error: {}\n".format(self._ascii_safe(err)))
+                        if os.path.exists(katana_out):
+                            with open(katana_out, "r") as reader:
+                                for line in reader:
+                                    url_value = self._clean_url(line)
+                                    low = self._ascii_safe(url_value, lower=True)
+                                    if not url_value:
+                                        continue
+                                    if any(
+                                        marker in low
+                                        for marker in [
+                                            "graphql",
+                                            "graphiql",
+                                            "playground",
+                                            "swagger",
+                                            "openapi",
+                                            "api-docs",
+                                        ]
+                                    ):
+                                        katana_found.append(url_value)
+                                        discovered_urls.add(url_value)
+                                        recon_candidates.append(
+                                            {"method": "GET", "url": url_value}
+                                        )
+
+                # Stage 4: FFUF GraphQL path probing
+                ffuf_found = []
+                if tool_available.get("FFUF"):
+                    words_file = os.path.join(temp_dir, "graphql_words.txt")
+                    with open(words_file, "w") as writer:
+                        writer.write(
+                            "\n".join(
+                                [
+                                    "graphql",
+                                    "api/graphql",
+                                    "v1/graphql",
+                                    "v2/graphql",
+                                    "graphiql",
+                                    "playground",
+                                    "api-docs",
+                                    "swagger.json",
+                                    "openapi.json",
+                                ]
+                            )
+                        )
+                    for idx, base in enumerate(self._graphql_base_urls(alive_urls or targets)[:5]):
+                        ffuf_json = os.path.join(temp_dir, "ffuf_{}.json".format(idx))
+                        cmd = [
+                            ffuf_path,
+                            "-u",
+                            base.rstrip("/") + "/FUZZ",
+                            "-w",
+                            words_file,
+                            "-mc",
+                            "200,204,301,302,307,401,403",
+                            "-s",
+                            "-timeout",
+                            "5",
+                            "-rate",
+                            "20",
+                            "-of",
+                            "json",
+                            "-o",
+                            ffuf_json,
+                        ]
+                        append_line("[*] Tool: FFUF\n")
+                        append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                        ok, cancelled, _, err = self._run_command_stage(
+                            "graphqlanalysis", "FFUF", cmd, self.graphql_area, 80
+                        )
+                        if cancelled:
+                            append_line("[!] GraphQL analysis cancelled by user\n")
+                            return
+                        if not ok:
+                            append_line("[!] FFUF error: {}\n".format(self._ascii_safe(err)))
+                        if os.path.exists(ffuf_json):
+                            try:
+                                with open(ffuf_json, "r") as reader:
+                                    data = json.loads(self._ascii_safe(reader.read()))
+                                for item in data.get("results", []):
+                                    url_value = self._clean_url(item.get("url") or "")
+                                    if url_value:
+                                        ffuf_found.append(url_value)
+                                        discovered_urls.add(url_value)
+                                        recon_candidates.append(
+                                            {"method": "GET", "url": url_value}
+                                        )
+                            except Exception as parse_err:
+                                append_line(
+                                    "[!] FFUF parse error: {}\n".format(
+                                        self._ascii_safe(parse_err)
+                                    )
+                                )
+
+                # Stage 5: Wayback archived GraphQL URLs
+                wayback_found = []
+                if tool_available.get("Wayback"):
+                    domains = []
+                    for base in self._graphql_base_urls(alive_urls or targets):
+                        try:
+                            host = self._ascii_safe(URL(base).getHost(), lower=True).strip()
+                            domain = self._infer_base_domain(host) or host
+                            if domain and domain not in domains:
+                                domains.append(domain)
+                        except Exception as parse_err:
+                            self._callbacks.printError(
+                                "GraphQL wayback domain parse error: {}".format(
+                                    str(parse_err)
+                                )
+                            )
+                            continue
+                    for domain in domains[:5]:
+                        cmd = [
+                            "bash",
+                            "-lc",
+                            "echo '{}' | {} | head -n 200".format(
+                                domain.replace("'", ""),
+                                wayback_path,
+                            ),
+                        ]
+                        append_line("[*] Tool: Wayback\n")
+                        append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                        ok, cancelled, stdout_data, err = self._run_command_stage(
+                            "graphqlanalysis", "Wayback", cmd, self.graphql_area, 60
+                        )
+                        if cancelled:
+                            append_line("[!] GraphQL analysis cancelled by user\n")
+                            return
+                        if not ok:
+                            append_line("[!] Wayback error: {}\n".format(self._ascii_safe(err)))
+                        for line in self._ascii_safe(stdout_data).splitlines():
+                            url_value = self._clean_url(line)
+                            if url_value and "graphql" in self._ascii_safe(
+                                url_value, lower=True
+                            ):
+                                wayback_found.append(url_value)
+                                discovered_urls.add(url_value)
+                                recon_candidates.append({"method": "GET", "url": url_value})
+
+                # Stage 6: Focused Nuclei
+                nuclei_lines = []
+                if tool_available.get("Nuclei"):
+                    nuclei_targets = sorted(
+                        [
+                            url
+                            for url in discovered_urls
+                            if any(
+                                token in self._ascii_safe(url, lower=True)
+                                for token in ["graphql", "graphiql", "playground"]
+                            )
+                        ]
+                    )
+                    if not nuclei_targets:
+                        nuclei_targets = list(sorted(set(alive_urls or targets)))
+                    nuclei_targets_file = os.path.join(temp_dir, "nuclei_targets.txt")
+                    nuclei_txt = os.path.join(temp_dir, "nuclei.txt")
+                    nuclei_json = os.path.join(temp_dir, "nuclei.jsonl")
+                    with open(nuclei_targets_file, "w") as writer:
+                        for url in nuclei_targets[:40]:
+                            writer.write(url + "\n")
+                    cmd = [
+                        nuclei_path,
+                        "-list",
+                        nuclei_targets_file,
+                        "-tags",
+                        "swagger,openapi,graphql,auth,jwt",
+                        "-etags",
+                        "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force",
+                        "-timeout",
+                        "10",
+                        "-retries",
+                        "1",
+                        "-rate-limit",
+                        "40",
+                        "-c",
+                        "8",
+                        "-silent",
+                        "-disable-update-check",
+                        "-no-httpx",
+                        "-jsonl-export",
+                        nuclei_json,
+                        "-o",
+                        nuclei_txt,
+                    ]
+                    append_line("[*] Tool: Nuclei\n")
+                    append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                    ok, cancelled, _, err = self._run_command_stage(
+                        "graphqlanalysis", "Nuclei", cmd, self.graphql_area, 240
+                    )
+                    if cancelled:
+                        append_line("[!] GraphQL analysis cancelled by user\n")
+                        return
+                    if not ok:
+                        append_line("[!] Nuclei error: {}\n".format(self._ascii_safe(err)))
+                    if os.path.exists(nuclei_txt):
+                        with open(nuclei_txt, "r") as reader:
+                            for line in reader:
+                                clean_line = self._ascii_safe(line).strip()
+                                if clean_line:
+                                    nuclei_lines.append(clean_line)
+                                    findings.append("[NUCLEI] {}".format(clean_line))
+
+                # Stage 7: Dalfox/SQLMap on query targets
+                query_targets = [
+                    url for url in sorted(discovered_urls) if "?" in self._ascii_safe(url)
+                ][:3]
+                if tool_available.get("Dalfox"):
+                    if not query_targets:
+                        append_line("[SKIP] Dalfox: no query-string targets available\n")
+                    else:
+                        for idx, url_value in enumerate(query_targets):
+                            dalfox_out = os.path.join(temp_dir, "dalfox_{}.jsonl".format(idx))
+                            cmd = [
+                                dalfox_path,
+                                "url",
+                                url_value,
+                                "--format",
+                                "jsonl",
+                                "-o",
+                                dalfox_out,
+                                "-S",
+                                "--no-color",
+                                "--timeout",
+                                "8",
+                                "--worker",
+                                "20",
+                                "--skip-bav",
+                                "--skip-mining-all",
+                                "--skip-mining-dom",
+                                "--skip-headless",
+                            ]
+                            append_line("[*] Tool: Dalfox\n")
+                            append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                            ok, cancelled, _, err = self._run_command_stage(
+                                "graphqlanalysis", "Dalfox", cmd, self.graphql_area, 120
+                            )
+                            if cancelled:
+                                append_line("[!] GraphQL analysis cancelled by user\n")
+                                return
+                            if not ok:
+                                append_line("[!] Dalfox error: {}\n".format(self._ascii_safe(err)))
+                            if os.path.exists(dalfox_out) and os.path.getsize(dalfox_out) > 0:
+                                with open(dalfox_out, "r") as reader:
+                                    for line in reader:
+                                        clean_line = self._ascii_safe(line).strip()
+                                        if clean_line:
+                                            findings.append("[DALFOX] {}".format(clean_line[:300]))
+
+                if tool_available.get("SQLMap"):
+                    if not query_targets:
+                        append_line("[SKIP] SQLMap: no query-string targets available\n")
+                    else:
+                        for url_value in query_targets[:2]:
+                            cmd = [
+                                sqlmap_path,
+                                "-u",
+                                url_value,
+                                "--batch",
+                                "--level",
+                                "1",
+                                "--risk",
+                                "1",
+                                "--threads",
+                                "1",
+                                "--timeout",
+                                "6",
+                                "--retries",
+                                "0",
+                                "--flush-session",
+                            ]
+                            append_line("[*] Tool: SQLMap\n")
+                            append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                            ok, cancelled, stdout_data, err = self._run_command_stage(
+                                "graphqlanalysis", "SQLMap", cmd, self.graphql_area, 120
+                            )
+                            if cancelled:
+                                append_line("[!] GraphQL analysis cancelled by user\n")
+                                return
+                            evidence = self._extract_sqlmap_evidence(
+                                "{}\n{}".format(stdout_data or "", err or "")
+                            )
+                            if evidence:
+                                findings.append(
+                                    "[SQLMAP] {} | {}".format(url_value, evidence)
+                                )
+
+                # Final summary
+                cleaned_candidates = []
+                candidate_seen = set()
+                for candidate in recon_candidates:
+                    url_value = self._clean_url(candidate.get("url") or "")
+                    if not url_value or url_value in candidate_seen:
+                        continue
+                    candidate_seen.add(url_value)
+                    cleaned_candidates.append({"method": "GET", "url": url_value})
+
+                summary_lines = []
+                summary_lines.append("\n" + "=" * 80)
+                summary_lines.append("GRAPHQL ANALYSIS RESULTS")
+                summary_lines.append("=" * 80)
+                summary_lines.append("[*] Targets input: {}".format(len(targets)))
+                summary_lines.append("[*] Tools available: {}".format(len(available_tools)))
+                summary_lines.append("[*] Tools missing: {}".format(len(missing_tools)))
+                summary_lines.append("[*] HTTPX alive URLs: {}".format(len(alive_urls)))
+                summary_lines.append("[*] Katana GraphQL-like URLs: {}".format(len(katana_found)))
+                summary_lines.append("[*] FFUF hits: {}".format(len(ffuf_found)))
+                summary_lines.append("[*] Wayback GraphQL URLs: {}".format(len(wayback_found)))
+                summary_lines.append("[*] Nuclei findings: {}".format(len(nuclei_lines)))
+                summary_lines.append("[*] Total findings lines: {}".format(len(findings)))
+                summary_lines.append(
+                    "[*] Recon candidates prepared: {}".format(len(cleaned_candidates))
+                )
+                summary_lines.append("")
+                if missing_tools:
+                    summary_lines.append("[!] Missing tools: {}".format(", ".join(missing_tools)))
+                    summary_lines.append("")
+                summary_lines.extend(
+                    findings[:80] if findings else ["[+] No findings from focused checks"]
+                )
+                if len(findings) > 80:
+                    summary_lines.append(
+                        "[*] {} more findings lines not shown".format(len(findings) - 80)
+                    )
+
+                with self.graphql_lock:
+                    self.graphql_results = list(summary_lines)
+                    self.graphql_recon_candidates = list(cleaned_candidates)
+
+                append_line("\n".join(summary_lines) + "\n")
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui(
+                        "[+] GraphQL analysis complete: {} findings, {} recon candidates".format(
+                            len(findings), len(cleaned_candidates)
+                        )
+                    )
+                )
+            except Exception as e:
+                append_line("[!] GraphQL analysis error: {}\n".format(self._ascii_safe(e)))
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui(
+                        "[!] GraphQL analysis error: {}".format(self._ascii_safe(e))
+                    )
+                )
+            finally:
+                self._clear_tool_cancel("graphqlanalysis")
+                self._cleanup_temp_dir(temp_dir, "graphql analysis")
+
+        worker = threading.Thread(target=run_analysis)
+        worker.daemon = True
+        worker.start()
+
+    def _export_graphql_results(self):
+        """Export GraphQL analysis summary lines."""
+        with self.graphql_lock:
+            data = list(self.graphql_results)
+        self._export_list_to_file(
+            data, "GraphQL_Export", self.graphql_area, "graphql analysis lines"
+        )
+
+    def _send_graphql_to_recon(self):
+        """Send GraphQL discovered candidates to Recon tab."""
+        with self.graphql_lock:
+            candidates = list(self.graphql_recon_candidates)
+        if not candidates:
+            self.graphql_area.append("\n[!] No GraphQL candidates to send\n")
+            return
+        self._import_endpoint_candidates_to_recon(
+            candidates, "graphql-analysis", self.graphql_area
+        )
+
     def _run_nuclei(self):
         """Run Nuclei scanner on endpoints from Recon tab"""
         import os
@@ -4795,25 +5983,7 @@ def handleResponse(req, interesting):
         profile_value = self._selected_profile_value(
             getattr(self, "nuclei_profile_combo", None)
         )
-        try:
-            nuclei_profile_cfg = tool_profiles.nuclei_profile_settings(profile_value)
-        except Exception as profile_err:
-            self._callbacks.printError(
-                "Nuclei profile fallback: {}".format(str(profile_err))
-            )
-            nuclei_profile_cfg = {
-                "profile": "fast",
-                "include_tags": "exposure,api,swagger,openapi",
-                "exclude_tags": "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force",
-                "request_timeout": self.NUCLEI_REQUEST_TIMEOUT_SECONDS,
-                "retries": self.NUCLEI_RETRIES,
-                "rate_limit": self.NUCLEI_RATE_LIMIT,
-                "concurrency": self.NUCLEI_CONCURRENCY,
-                "bulk_size": self.NUCLEI_BULK_SIZE,
-                "max_host_error": self.NUCLEI_MAX_HOST_ERROR,
-                "scan_strategy": self.NUCLEI_SCAN_STRATEGY,
-                "max_scan_seconds": self.NUCLEI_MAX_SCAN_SECONDS,
-            }
+        nuclei_profile_cfg = self._nuclei_profile_settings(profile_value)
 
         use_custom_nuclei, custom_nuclei_command = self._resolve_custom_command(
             "Nuclei",
@@ -4921,7 +6091,9 @@ def handleResponse(req, interesting):
         def run_scan():
             process = None
             try:
-                include_tags = nuclei_profile_cfg.get("include_tags", "exposure,api,swagger,openapi")
+                include_tags = nuclei_profile_cfg.get(
+                    "include_tags", "swagger,openapi,graphql,auth,jwt"
+                )
                 exclude_tags = nuclei_profile_cfg.get(
                     "exclude_tags", "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force"
                 )
@@ -5106,6 +6278,7 @@ def handleResponse(req, interesting):
                 elapsed = int(time_module.time() - start_time)
                 stdout_data = self._safe_pipe_read(process.stdout, "Nuclei stdout")
                 stderr_data = self._safe_pipe_read(process.stderr, "Nuclei stderr")
+                combined_output = "{}\n{}".format(stdout_data or "", stderr_data or "")
 
                 if cancelled_by_user:
                     SwingUtilities.invokeLater(
@@ -5139,8 +6312,11 @@ def handleResponse(req, interesting):
                             "Nuclei partial-results check failed: {}".format(str(partial_err))
                         )
 
+                    can_timeout_recover = bool(
+                        timed_out or process.returncode in [137, 143]
+                    )
                     can_parse_partial = bool(
-                        partial_parse_file and (timed_out or process.returncode in [137, 143])
+                        partial_parse_file and can_timeout_recover
                     )
                     if can_parse_partial:
                         partial_results_mode = True
@@ -5164,6 +6340,52 @@ def handleResponse(req, interesting):
                                 )
                             )
                         )
+                    elif can_timeout_recover:
+                        synthesized_partial_file = os.path.join(
+                            temp_dir, "partial_results.jsonl"
+                        )
+                        recovered_count = self._write_nuclei_partial_results_jsonl(
+                            combined_output, synthesized_partial_file
+                        )
+                        if os.path.exists(synthesized_partial_file):
+                            partial_results_mode = True
+                            parse_file = synthesized_partial_file
+                            partial_notice = [
+                                "",
+                                "[!] Nuclei did not exit cleanly (code: {})".format(
+                                    process.returncode
+                                ),
+                                "[*] Recovered {} plain-output findings into partial JSONL".format(
+                                    recovered_count
+                                ),
+                                "[*] Continuing with synthesized partial results: {}".format(
+                                    parse_file
+                                ),
+                            ]
+                            SwingUtilities.invokeLater(
+                                lambda t="\n".join(partial_notice)
+                                + "\n": self.nuclei_area.append(t)
+                            )
+                            SwingUtilities.invokeLater(
+                                lambda: self.log_to_ui(
+                                    "[*] Nuclei synthesized partial mode enabled (exit {})".format(
+                                        process.returncode
+                                    )
+                                )
+                            )
+                        else:
+                            fail_lines = [
+                                "",
+                                "[!] Nuclei command failed",
+                                "[!] Exit code: {}".format(process.returncode),
+                                "[!] Command: {}".format(display_cmd),
+                                "[*] Timeout recovery was attempted but no parseable output was produced.",
+                            ]
+                            fail_text = "\n".join(fail_lines) + "\n"
+                            SwingUtilities.invokeLater(
+                                lambda t=fail_text: self.nuclei_area.append(t)
+                            )
+                            return
                     else:
                         fail_lines = [
                             "",
@@ -5177,7 +6399,6 @@ def handleResponse(req, interesting):
                         elif stdout_data and stdout_data.strip():
                             fail_lines.append("[!] Output:")
                             fail_lines.append(stdout_data.strip()[:3000])
-                        combined_output = "{}\n{}".format(stdout_data or "", stderr_data or "")
                         if "flag provided but not defined" in combined_output:
                             fail_lines.append(
                                 "[*] Tip: your Nuclei version does not support one of these flags."
@@ -5202,40 +6423,41 @@ def handleResponse(req, interesting):
                         )
                         return
 
-                if os.path.exists(json_file):
-                    parse_file = json_file
-                elif os.path.exists(output_file):
-                    parse_file = output_file
-                    SwingUtilities.invokeLater(
-                        lambda: self.nuclei_area.append(
-                            "[*] Using output fallback parser: {}\n".format(output_file)
+                if not partial_results_mode:
+                    if os.path.exists(json_file):
+                        parse_file = json_file
+                    elif os.path.exists(output_file):
+                        parse_file = output_file
+                        SwingUtilities.invokeLater(
+                            lambda: self.nuclei_area.append(
+                                "[*] Using output fallback parser: {}\n".format(output_file)
+                            )
                         )
-                    )
-                else:
-                    warn_lines = [
-                        "",
-                        "[!] Nuclei completed but expected results file was not created",
-                        "[!] Expected JSON file: {}".format(json_file),
-                        "[!] Fallback output file: {}".format(output_file),
-                        "[!] Command: {}".format(display_cmd),
-                    ]
-                    if stderr_data and stderr_data.strip():
-                        warn_lines.append("[!] STDERR:")
-                        warn_lines.append(stderr_data.strip()[:3000])
-                    if use_custom_nuclei:
-                        warn_lines.append(
-                            "[*] Tip: include {json_file} in Custom Cmd and make nuclei write json output there"
+                    else:
+                        warn_lines = [
+                            "",
+                            "[!] Nuclei completed but expected results file was not created",
+                            "[!] Expected JSON file: {}".format(json_file),
+                            "[!] Fallback output file: {}".format(output_file),
+                            "[!] Command: {}".format(display_cmd),
+                        ]
+                        if stderr_data and stderr_data.strip():
+                            warn_lines.append("[!] STDERR:")
+                            warn_lines.append(stderr_data.strip()[:3000])
+                        if use_custom_nuclei:
+                            warn_lines.append(
+                                "[*] Tip: include {json_file} in Custom Cmd and make nuclei write json output there"
+                            )
+                        warn_text = "\n".join(warn_lines) + "\n"
+                        SwingUtilities.invokeLater(
+                            lambda t=warn_text: self.nuclei_area.append(t)
                         )
-                    warn_text = "\n".join(warn_lines) + "\n"
-                    SwingUtilities.invokeLater(
-                        lambda t=warn_text: self.nuclei_area.append(t)
-                    )
-                    SwingUtilities.invokeLater(
-                        lambda: self.log_to_ui(
-                            "[!] Nuclei produced no parseable results file"
+                        SwingUtilities.invokeLater(
+                            lambda: self.log_to_ui(
+                                "[!] Nuclei produced no parseable results file"
+                            )
                         )
-                    )
-                    return
+                        return
 
                 # Parse JSON results and group by severity
                 findings_by_severity = {'critical': [], 'high': [], 'medium': [], 'low': [], 'info': []}
@@ -8299,16 +9521,6 @@ Generate a complete Burp extension that:
                 "required": ["-d", "-silent"],
                 "forbidden": [],
             },
-            {
-                "name": "DNSX",
-                "field": "asset_dnsx_path_field",
-                "fallback": [
-                    os.path.expanduser("~/go/bin/dnsx"),
-                    "dnsx",
-                ],
-                "required": ["-l", "-silent"],
-                "forbidden": [],
-            },
         ]
 
     def _resolve_tool_health_path(self, spec):
@@ -8360,25 +9572,20 @@ Generate a complete Burp extension that:
                     lines.append("  [FAIL] missing path")
                     continue
 
-                try:
-                    probe = tool_profiles.probe_binary_help(path, timeout_seconds=6)
-                except Exception as e:
-                    lines.append("  [FAIL] probe error: {}".format(self._ascii_safe(e)))
-                    continue
-
-                if not probe.get("ok"):
-                    error_msg = self._ascii_safe(probe.get("error") or "probe failed")
+                probe_ok, help_text, probe_error = self._probe_binary_help(path)
+                if not probe_ok:
+                    error_msg = self._ascii_safe(probe_error or "probe failed")
                     lines.append("  [FAIL] {}".format(error_msg))
                     continue
 
-                check = tool_profiles.evaluate_help_text(
-                    probe.get("help_text") or "",
+                check = self._evaluate_help_text(
+                    help_text or "",
                     required_tokens=spec.get("required"),
                     forbidden_tokens=spec.get("forbidden"),
                 )
                 if check.get("healthy"):
                     healthy += 1
-                    lines.append("  [PASS] compatible (flag={})".format(probe.get("help_flag")))
+                    lines.append("  [PASS] compatible")
                 else:
                     missing = check.get("missing") or []
                     forbidden = check.get("forbidden_found") or []
@@ -8621,7 +9828,8 @@ Generate a complete Burp extension that:
             ("wayback", "Wayback"),
             ("sqlmap", "SQLMap"),
             ("dalfox", "Dalfox"),
-            ("assetdiscovery", "API Asset Discovery"),
+            ("assetdiscovery", "Subfinder"),
+            ("graphqlanalysis", "GraphQL"),
         ]
 
         lines = [
@@ -8654,7 +9862,6 @@ Generate a complete Burp extension that:
                 "sqlmap.exe",
                 "dalfox.exe",
                 "subfinder.exe",
-                "dnsx.exe",
             ]
             for name in kill_names:
                 try:
@@ -8678,7 +9885,6 @@ Generate a complete Burp extension that:
                 "sqlmap",
                 "dalfox",
                 "subfinder",
-                "dnsx",
             ]
             for pattern in kill_patterns:
                 try:
@@ -8713,7 +9919,7 @@ Generate a complete Burp extension that:
         if output_area is not None:
             output_area.append(summary)
         self.log_to_ui(
-            "[!] Emergency kill executed for nuclei/httpx/katana/ffuf/wayback/sqlmap/dalfox/subfinder/dnsx"
+            "[!] Emergency kill executed for nuclei/httpx/katana/ffuf/wayback/sqlmap/dalfox/subfinder/graphql"
         )
 
     def _stop_nuclei(self, event):
@@ -8738,12 +9944,15 @@ Generate a complete Burp extension that:
         self._stop_tool_run("dalfox", "Dalfox", self.dalfox_area)
 
     def _stop_asset_discovery(self, event):
-        self._stop_tool_run("assetdiscovery", "API Asset Discovery", self.asset_area)
+        self._stop_tool_run("assetdiscovery", "Subfinder", self.asset_area)
 
     def _stop_openapi_drift(self, event):
         self._set_tool_cancel("openapidrift")
         self.openapi_area.append("[!] OpenAPI drift stop requested by user\n")
         self.log_to_ui("[!] OpenAPI drift stop requested by user")
+
+    def _stop_graphql(self, event):
+        self._stop_tool_run("graphqlanalysis", "GraphQL Analysis", self.graphql_area)
 
     def _stop_auth_replay(self, event):
         """Request cancellation for auth replay run."""
@@ -11369,7 +12578,7 @@ Generate a complete Burp extension that:
                 cmd = []
                 profile_cfg = {"profile": profile_value}
                 try:
-                    cmd, profile_cfg = tool_profiles.build_sqlmap_command(
+                    cmd, profile_cfg = self._build_sqlmap_command(
                         sqlmap_path, target, profile_value
                     )
                 except Exception as build_err:
@@ -11572,7 +12781,7 @@ Generate a complete Burp extension that:
                     cmd = []
                     profile_cfg = {"profile": profile_value}
                     try:
-                        cmd, profile_cfg = tool_profiles.build_dalfox_command(
+                        cmd, profile_cfg = self._build_dalfox_command(
                             dalfox_path, target, out_file, profile_value
                         )
                     except Exception as build_err:
@@ -11785,19 +12994,29 @@ Generate a complete Burp extension that:
             self._clear_active_tool_process(tool_key, process)
 
     def _run_api_asset_discovery(self, event):
-        """Run subfinder + dnsx + httpx to discover alive API-related assets."""
+        """Run Subfinder to discover API-related asset domains."""
         import os
         import tempfile
 
-        if not self.api_data:
-            self.asset_area.setText("[!] No endpoints captured. Capture/import first.\n")
+        explicit_domains = self._ascii_safe(self.asset_domains_field.getText()).strip()
+        if (not self.api_data) and (not explicit_domains):
+            self.asset_area.setText(
+                "[!] No endpoints captured and no domains provided.\n[*] Capture/import first or enter domains manually.\n"
+            )
             return
 
         subfinder_path = self.asset_subfinder_path_field.getText().strip()
-        dnsx_path = self.asset_dnsx_path_field.getText().strip()
-        httpx_path = self.asset_httpx_path_field.getText().strip()
-        if not (subfinder_path and dnsx_path and httpx_path):
-            self.asset_area.setText("[!] Configure subfinder/dnsx/httpx paths first\n")
+        if not subfinder_path:
+            self.asset_area.setText("[!] Configure Subfinder path first\n")
+            return
+        if not self._validate_binary_signature(
+            "Subfinder",
+            subfinder_path,
+            self.asset_area,
+            required_tokens=["-d", "-silent"],
+            forbidden_tokens=[],
+            fix_hint="Set Subfinder Path to your local subfinder binary (for example: /home/teycir/go/bin/subfinder).",
+        ):
             return
 
         max_domains = self._parse_positive_int(
@@ -11811,7 +13030,7 @@ Generate a complete Burp extension that:
             self.asset_area.setText("[!] No candidate domains found for discovery\n")
             return
 
-        self.asset_area.setText("[*] API Asset Discovery starting...\n")
+        self.asset_area.setText("[*] Subfinder discovery starting...\n")
         self.asset_area.append("[*] Profile: {}\n".format(profile_value))
         self.asset_area.append("[*] Domains: {}\n\n".format(", ".join(domains)))
         self._clear_tool_cancel("assetdiscovery")
@@ -11819,10 +13038,8 @@ Generate a complete Burp extension that:
         def run_discovery():
             temp_dir = tempfile.mkdtemp(prefix="burp_assets_")
             domains_file = os.path.join(temp_dir, "domains.txt")
-            subfinder_file = os.path.join(temp_dir, "subfinder.txt")
-            dnsx_file = os.path.join(temp_dir, "dnsx.txt")
-            httpx_file = os.path.join(temp_dir, "httpx.txt")
-            discovered_urls = []
+            output_file = os.path.join(temp_dir, "subfinder.txt")
+            discovered_domains = []
 
             try:
                 with open(domains_file, "w") as writer:
@@ -11830,74 +13047,108 @@ Generate a complete Burp extension that:
                         writer.write(domain + "\n")
 
                 profile_cfg = {"profile": profile_value}
+                timeout_seconds = 240
                 try:
-                    stages, profile_cfg = tool_profiles.build_asset_stage_commands(
-                        subfinder_path,
-                        dnsx_path,
-                        httpx_path,
-                        domains_file,
-                        subfinder_file,
-                        dnsx_file,
-                        httpx_file,
-                        profile_value,
-                    )
+                    profile_cfg = self._asset_profile_settings(profile_value)
+                    timeout_seconds = int(profile_cfg.get("subfinder_timeout", 240))
                 except Exception as build_err:
                     self._callbacks.printError(
                         "Asset profile builder fallback: {}".format(str(build_err))
                     )
-                    stages = [
-                        ("Subfinder", [subfinder_path, "-dL", domains_file, "-silent", "-o", subfinder_file], 240),
-                        ("DNSX", [dnsx_path, "-l", subfinder_file, "-silent", "-o", dnsx_file], 180),
-                        ("HTTPX", [httpx_path, "-l", dnsx_file, "-silent", "-sc", "-title", "-o", httpx_file], 240),
-                    ]
-                stage_ok = True
-                cancelled = False
+                    timeout_seconds = 240
 
-                for stage_name, stage_cmd, timeout_seconds in stages:
+                use_custom_subfinder, custom_subfinder_command = self._resolve_custom_command(
+                    "Subfinder",
+                    self.asset_custom_cmd_checkbox,
+                    self.asset_custom_cmd_field,
+                    {
+                        "subfinder_path": subfinder_path,
+                        "domains_file": domains_file,
+                        "output_file": output_file,
+                    },
+                    self.asset_area,
+                )
+                if use_custom_subfinder and not custom_subfinder_command:
+                    return
+
+                if use_custom_subfinder and custom_subfinder_command:
+                    cmd = self._build_shell_command(custom_subfinder_command)
+                    display_cmd = custom_subfinder_command
+                    uses_output_file = output_file in custom_subfinder_command
                     SwingUtilities.invokeLater(
-                        lambda s=stage_name, c=" ".join(stage_cmd), p=profile_cfg.get("profile", profile_value): self.asset_area.append(
-                            "[*] [{}] {}: {}\n".format(p, s, c)
+                        lambda: self.asset_area.append(
+                            "[*] Custom command override enabled\n"
                         )
                     )
-                    ok, was_cancelled, _, err = self._run_command_stage(
-                        "assetdiscovery", stage_name, stage_cmd, self.asset_area, timeout_seconds
-                    )
-                    if was_cancelled:
-                        cancelled = True
-                        break
-                    if not ok:
-                        stage_ok = False
-                        SwingUtilities.invokeLater(
-                            lambda s=stage_name, e=err: self.asset_area.append(
-                                "[!] {} failed: {}\n".format(s, e)
-                            )
-                        )
-                        break
+                else:
+                    cmd = [
+                        subfinder_path,
+                        "-dL",
+                        domains_file,
+                        "-silent",
+                        "-o",
+                        output_file,
+                    ]
+                    display_cmd = " ".join(cmd)
+                    uses_output_file = True
 
-                if cancelled:
+                SwingUtilities.invokeLater(
+                    lambda c=display_cmd, p=profile_cfg.get("profile", profile_value): self.asset_area.append(
+                        "[*] [{}] Subfinder: {}\n".format(p, c)
+                    )
+                )
+
+                ok, was_cancelled, stdout_data, err = self._run_command_stage(
+                    "assetdiscovery",
+                    "Subfinder",
+                    cmd,
+                    self.asset_area,
+                    timeout_seconds,
+                )
+                if was_cancelled:
                     SwingUtilities.invokeLater(
                         lambda: self.asset_area.append("[!] Asset discovery cancelled by user\n")
                     )
                     return
+                if not ok:
+                    SwingUtilities.invokeLater(
+                        lambda e=err: self.asset_area.append(
+                            "[!] Subfinder failed: {}\n".format(e)
+                        )
+                    )
 
-                if stage_ok and os.path.exists(httpx_file):
-                    with open(httpx_file, "r") as reader:
+                if uses_output_file and os.path.exists(output_file):
+                    with open(output_file, "r") as reader:
                         for line in reader:
-                            text = self._ascii_safe(line).strip()
-                            if not text:
+                            host = self._ascii_safe(line, lower=True).strip().split(" ")[
+                                0
+                            ].strip()
+                            host = host.lstrip("*.").rstrip(".")
+                            if not host:
                                 continue
-                            first_token = text.split(" ")[0].strip()
-                            if first_token.startswith("http://") or first_token.startswith("https://"):
-                                discovered_urls.append(first_token)
+                            discovered_domains.append(host)
 
-                if not discovered_urls and os.path.exists(dnsx_file):
-                    with open(dnsx_file, "r") as reader:
-                        for line in reader:
-                            host = self._ascii_safe(line).strip().split(" ")[0].strip()
-                            if host:
-                                discovered_urls.append("https://" + host)
+                if not discovered_domains and stdout_data:
+                    for line in self._ascii_safe(stdout_data).splitlines():
+                        host = self._ascii_safe(line, lower=True).strip().split(" ")[
+                            0
+                        ].strip()
+                        host = host.lstrip("*.").rstrip(".")
+                        if host and "." in host and "/" not in host:
+                            discovered_domains.append(host)
 
-                discovered_urls = sorted(set(discovered_urls))
+                if (not discovered_domains) and (not ok):
+                    discovered_domains = sorted(set(domains))
+                    SwingUtilities.invokeLater(
+                        lambda: self.asset_area.append(
+                            "[!] Fallback: using input domains as seed assets\n"
+                        )
+                    )
+
+                discovered_domains = sorted(set(discovered_domains))
+                discovered_urls = [
+                    "https://" + host for host in discovered_domains if host
+                ]
                 with self.asset_lock:
                     self.asset_discovered = list(discovered_urls)
 
@@ -11906,17 +13157,47 @@ Generate a complete Burp extension that:
                 out_lines.append("API ASSET DISCOVERY RESULTS")
                 out_lines.append("=" * 80)
                 out_lines.append("[*] Domains input: {}".format(len(domains)))
-                out_lines.append("[*] Alive URLs discovered: {}".format(len(discovered_urls)))
+                out_lines.append(
+                    "[*] Asset domains discovered: {}".format(len(discovered_domains))
+                )
+                out_lines.append("[*] Asset URLs generated: {}".format(len(discovered_urls)))
                 out_lines.append("")
-                out_lines.extend(discovered_urls[:120] if discovered_urls else ["[+] No alive URLs discovered"])
-                if len(discovered_urls) > 120:
-                    out_lines.append("[*] {} more URLs not shown".format(len(discovered_urls) - 120))
+                out_lines.extend(
+                    discovered_domains[:120]
+                    if discovered_domains
+                    else ["[+] No domains discovered"]
+                )
+                if len(discovered_domains) > 120:
+                    out_lines.append(
+                        "[*] {} more domains not shown".format(
+                            len(discovered_domains) - 120
+                        )
+                    )
+                if use_custom_subfinder and custom_subfinder_command and (not uses_output_file):
+                    out_lines.append("")
+                    out_lines.append(
+                        "[*] Note: custom command does not reference {output_file}; parsed stdout/fallback."
+                    )
+                out_lines.append("")
+                out_lines.append("COPY-READY ASSET DOMAINS")
+                out_lines.append("-" * 80)
+                out_lines.extend(
+                    discovered_domains if discovered_domains else ["[+] No domains discovered"]
+                )
+                out_lines.append("")
+                out_lines.append("COPY-READY ASSET URLS")
+                out_lines.append("-" * 80)
+                out_lines.extend(
+                    discovered_urls if discovered_urls else ["[+] No URLs generated"]
+                )
                 SwingUtilities.invokeLater(
                     lambda t="\n".join(out_lines) + "\n": self.asset_area.append(t)
                 )
                 SwingUtilities.invokeLater(
                     lambda: self.log_to_ui(
-                        "[+] API Asset Discovery complete: {} URLs".format(len(discovered_urls))
+                        "[+] Subfinder complete: {} domains, {} URLs".format(
+                            len(discovered_domains), len(discovered_urls)
+                        )
                     )
                 )
             finally:
@@ -11954,6 +13235,118 @@ Generate a complete Burp extension that:
         if chooser.showOpenDialog(self._panel) == JFileChooser.APPROVE_OPTION:
             path = chooser.getSelectedFile().getAbsolutePath()
             self.openapi_spec_field.setText(path)
+
+    def _openapi_spec_candidate_score(self, path_lower):
+        """Score likely OpenAPI/Swagger endpoints from observed paths."""
+        safe_path = self._ascii_safe(path_lower, lower=True)
+        score = 0
+
+        if "openapi" in safe_path:
+            score += 10
+        if "swagger" in safe_path:
+            score += 8
+        if "api-docs" in safe_path:
+            score += 7
+        if safe_path.endswith(".json") or safe_path.endswith(".yaml") or safe_path.endswith(".yml"):
+            score += 4
+        if "/v3/api-docs" in safe_path or "/v2/api-docs" in safe_path:
+            score += 3
+        if "swagger-ui" in safe_path:
+            score -= 4
+
+        return score
+
+    def _collect_openapi_spec_candidates(self, max_candidates=15):
+        """Collect likely OpenAPI/Swagger targets from observed proxy history."""
+        try:
+            max_items = int(max_candidates)
+        except Exception as e:
+            self._callbacks.printError(
+                "OpenAPI candidate max parsing failed: {}".format(self._ascii_safe(e))
+            )
+            max_items = 15
+        if max_items <= 0:
+            max_items = 15
+
+        with self.lock:
+            snapshot = list(self.api_data.values())
+
+        candidate_map = {}
+        for entries in snapshot:
+            entry = self._get_entry(entries)
+            normalized = self._normalize_endpoint_data(entry)
+            method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+            if method not in ["GET", "HEAD", "OPTIONS"]:
+                continue
+
+            host = self._ascii_safe(normalized.get("host"), lower=True).strip()
+            protocol = self._ascii_safe(normalized.get("protocol"), lower=True).strip()
+            path = self._ascii_safe(normalized.get("path") or "/").strip()
+            if not host or protocol not in ["http", "https"]:
+                continue
+            if not path.startswith("/"):
+                path = "/" + path
+
+            score = self._openapi_spec_candidate_score(path.lower())
+            if score <= 0:
+                continue
+
+            query = self._ascii_safe(entry.get("query_string") or "").strip()
+            candidate_url = "{}://{}{}".format(protocol, host, path)
+            if query and any(
+                token in query.lower() for token in ["url=", "format=", "spec=", "schema="]
+            ):
+                candidate_url = "{}?{}".format(candidate_url, query)
+
+            existing = candidate_map.get(candidate_url)
+            if (existing is None) or (score > existing.get("score", 0)):
+                candidate_map[candidate_url] = {
+                    "url": candidate_url,
+                    "score": score,
+                    "path": path,
+                }
+
+        ordered = sorted(
+            candidate_map.values(),
+            key=lambda x: (-int(x.get("score", 0) or 0), self._ascii_safe(x.get("url"), lower=True)),
+        )
+        return ordered[:max_items]
+
+    def _autoselect_openapi_spec_from_history(self, append_output=False, overwrite=False):
+        """Preselect best OpenAPI candidate from proxy history."""
+        if not hasattr(self, "openapi_spec_field") or self.openapi_spec_field is None:
+            return None
+        if (not overwrite) and self.openapi_spec_field.getText().strip():
+            return self._ascii_safe(self.openapi_spec_field.getText()).strip()
+
+        candidates = self._collect_openapi_spec_candidates()
+        self.openapi_spec_candidates = list(candidates)
+        if not candidates:
+            if append_output and hasattr(self, "openapi_area") and self.openapi_area is not None:
+                self.openapi_area.append("[!] No OpenAPI/Swagger candidates found in proxy history\n")
+            return None
+
+        selected = self._ascii_safe(candidates[0].get("url") or "").strip()
+        if selected:
+            self.openapi_spec_field.setText(selected)
+            if append_output and hasattr(self, "openapi_area") and self.openapi_area is not None:
+                self.openapi_area.append("[+] Auto-selected OpenAPI target: {}\n".format(selected))
+                if len(candidates) > 1:
+                    self.openapi_area.append("[*] Alternate candidates:\n")
+                    for item in candidates[1:6]:
+                        self.openapi_area.append("  - {}\n".format(self._ascii_safe(item.get("url") or "")))
+            return selected
+        return None
+
+    def _detect_openapi_spec_from_history(self, event):
+        """Manual refresh for OpenAPI candidate auto-selection from history."""
+        selected = self._autoselect_openapi_spec_from_history(
+            append_output=True, overwrite=True
+        )
+        if selected:
+            self.log_to_ui("[+] OpenAPI candidate selected from proxy history")
+        else:
+            self.log_to_ui("[!] No OpenAPI candidate detected in proxy history")
 
     def _normalize_spec_path(self, path):
         """Normalize spec path placeholders to match Recon normalization."""
@@ -12124,8 +13517,19 @@ Generate a complete Burp extension that:
         """Compare observed traffic with OpenAPI spec and report drift."""
         spec_source = self.openapi_spec_field.getText().strip()
         if not spec_source:
-            self.openapi_area.setText("[!] Select OpenAPI/Swagger file or URL first\n")
-            return
+            selected = self._autoselect_openapi_spec_from_history(
+                append_output=False, overwrite=False
+            )
+            spec_source = self.openapi_spec_field.getText().strip()
+            if selected:
+                self.openapi_area.setText(
+                    "[+] Auto-selected OpenAPI target from proxy history: {}\n".format(
+                        spec_source
+                    )
+                )
+            else:
+                self.openapi_area.setText("[!] Select OpenAPI/Swagger file or URL first\n")
+                return
         if not self.api_data:
             self.openapi_area.setText("[!] No endpoints captured. Capture/import first.\n")
             return

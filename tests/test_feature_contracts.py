@@ -214,15 +214,51 @@ def test_param_and_version_collectors_scope_out_noise():
         "PARAM_MINER_NOISE_PATH_MARKERS = (",
         "def _collect_param_targets(",
         "def _collect_version_targets(",
+        "def _build_version_test_path(",
         "api_endpoints, filter_meta = self._collect_param_targets()",
         "api_endpoints, filter_meta = self._collect_version_targets()",
         '"[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(',
         "if (not has_auth_context) and self._path_contains_noise_marker(",
-        "if (not api_marker) and method not in [\"POST\", \"PUT\", \"PATCH\", \"DELETE\"]:",
+        "already_versioned = bool(self._extract_version_segment(path))",
+        "if (not already_versioned) and (not api_marker) and method not in [",
+        "test_path = self._build_version_test_path(path, ver)",
     ]
     for token in required_tokens:
         assert token in text, "Missing param/version scope token: {}".format(token)
     print("[PASS] test_param_and_version_collectors_scope_out_noise")
+
+
+def test_openapi_drift_autodetects_spec_from_proxy_history():
+    text = _source_text()
+    required_tokens = [
+        '"Detect",',
+        "lambda e: self._detect_openapi_spec_from_history(e),",
+        "def _openapi_spec_candidate_score(",
+        "def _collect_openapi_spec_candidates(",
+        "def _autoselect_openapi_spec_from_history(",
+        "def _detect_openapi_spec_from_history(",
+        "selected = self._autoselect_openapi_spec_from_history(",
+        "Auto-selected OpenAPI target from proxy history",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing OpenAPI autodetect token: {}".format(token)
+    print("[PASS] test_openapi_drift_autodetects_spec_from_proxy_history")
+
+
+def test_api_asset_results_include_copy_ready_urls_block():
+    text = _source_text()
+    required_tokens = [
+        '"Run Subfinder",',
+        '"Subfinder Path:"',
+        "COPY-READY ASSET DOMAINS",
+        "COPY-READY ASSET URLS",
+        "Fallback: using input domains as seed assets",
+        "self._resolve_custom_command(",
+        '"Subfinder",',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing API assets copy/fallback token: {}".format(token)
+    print("[PASS] test_api_asset_results_include_copy_ready_urls_block")
 
 
 def test_recon_exports_include_postman_and_insomnia():
@@ -250,26 +286,34 @@ def test_recon_exports_include_postman_and_insomnia():
 def test_new_verification_and_discovery_tabs_are_wired():
     text = _source_text()
     required_tokens = [
-        'self.tabbed_pane.addTab("SQLMap Verify", sqlmap_verify_panel)',
-        'self.tabbed_pane.addTab("Dalfox Verify", dalfox_verify_panel)',
-        'self.tabbed_pane.addTab("API Assets", asset_discovery_panel)',
+        'self.tabbed_pane.addTab("sqlmap", sqlmap_verify_panel)',
+        'self.tabbed_pane.addTab("Delfox", dalfox_verify_panel)',
+        'self.tabbed_pane.addTab("Subfinder", asset_discovery_panel)',
         'self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)',
+        'self.tabbed_pane.addTab("GraphQL", graphql_panel)',
         "def _create_sqlmap_verify_tab(",
         "def _create_dalfox_verify_tab(",
         "def _create_api_asset_discovery_tab(",
         "def _create_openapi_drift_tab(",
+        "def _create_graphql_tab(",
         "def _run_sqlmap_verify(",
         "def _run_dalfox_verify(",
         "def _run_api_asset_discovery(",
         "def _run_openapi_drift(",
+        "def _run_graphql_analysis(",
         "def _send_sqlmap_to_recon(",
         "def _send_dalfox_to_recon(",
         "def _send_asset_discovery_to_recon(",
         "def _send_openapi_to_recon(",
+        "def _send_graphql_to_recon(",
         "def _export_sqlmap_results(",
         "def _export_dalfox_results(",
         "def _export_asset_discovery_results(",
         "def _export_openapi_drift_results(",
+        "def _export_graphql_results(",
+        "[MISSING] {}",
+        "[*] Tool: ",
+        "[*] CMD: ",
     ]
     for token in required_tokens:
         assert token in text, "Missing new tab wiring token: {}".format(token)
@@ -279,25 +323,27 @@ def test_new_verification_and_discovery_tabs_are_wired():
 def test_tool_profiles_and_health_button_are_wired():
     text = _source_text()
     required_tokens = [
-        "import tool_profiles",
         'tool_health_btn = JButton("Tool Health")',
         "tool_health_btn.addActionListener(lambda e: self._run_tool_health_check(e))",
         "def _run_tool_health_check(",
         "def _tool_health_specs(",
         "def _resolve_tool_health_path(",
-        "tool_profiles.probe_binary_help(",
-        "tool_profiles.evaluate_help_text(",
+        "def _normalize_profile(",
+        "def _evaluate_help_text(",
         'self.sqlmap_profile_combo = JComboBox(self._profile_labels())',
         'self.dalfox_profile_combo = JComboBox(self._profile_labels())',
         'self.asset_profile_combo = JComboBox(self._profile_labels())',
+        'self.asset_custom_cmd_checkbox = JCheckBox("Enable Custom", False)',
+        'self.asset_custom_cmd_field = JTextField("", 35)',
         'self.nuclei_profile_combo = JComboBox(self._profile_labels())',
-        "tool_profiles.build_sqlmap_command(",
-        "tool_profiles.build_dalfox_command(",
-        "tool_profiles.build_asset_stage_commands(",
-        "tool_profiles.nuclei_profile_settings(",
+        "def _build_sqlmap_command(",
+        "def _build_dalfox_command(",
+        "def _asset_profile_settings(",
+        "def _nuclei_profile_settings(",
     ]
     for token in required_tokens:
         assert token in text, "Missing tool profile/health token: {}".format(token)
+    assert "import tool_profiles" not in text, "Legacy tool_profiles import should be removed"
     print("[PASS] test_tool_profiles_and_health_button_are_wired")
 
 
