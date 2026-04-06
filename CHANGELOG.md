@@ -2,9 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
 
-- No changes yet.
+## [1.4.3] - 2026-04-07
+
+### Added
+- Token Lineage deep-logic analysis (passive, non-destructive):
+  - Added dedicated module: `src/token_lineage_analysis.py`.
+  - Added Token Lineage package wrappers in `src/behavior_analysis.py`.
+  - Detects high-ROI lifecycle drift patterns from captured traffic:
+    - logout/revoke success with continued protected access,
+    - refresh rotation overlap across multiple tokens,
+    - subject-level parallel token sprawl on overlapping resources.
+- Deep-logic export + AI context artifacts for Token Lineage:
+  - `token_lineage_findings.json`
+  - `token_lineage_ledger.json`
+  - `ai_token_lineage_findings.json`
+  - `ai_token_lineage_ledger.json`
+
+### Changed
+- `Run Invariants` and Recon `Refresh Invariants` now include Token Lineage generation/storage alongside Differential + Sequence + Golden + State flows.
+- Recon invariant footer status now includes `Lineage=` cached count.
+- AI bundle/schema/all-tabs context now include `token_lineage` block and `token_lineage_count` metadata.
 
 ## [1.4.2] - 2026-04-07
 

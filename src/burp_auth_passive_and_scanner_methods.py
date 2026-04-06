@@ -1339,7 +1339,7 @@ def _run_sequence_invariants(self, event):
         return
 
     self.passive_area.setText(
-        "[*] Starting deep-logic analysis (Differential + Sequence + Golden + State)...\n"
+        "[*] Starting deep-logic analysis (Differential + Sequence + Golden + State + Token Lineage)...\n"
     )
     self.passive_area.append(
         "[*] Scope: {} | Targets: {} of {}\n\n".format(
@@ -1356,6 +1356,7 @@ def _run_sequence_invariants(self, event):
             package = self._build_sequence_invariant_package(snapshot)
             golden_package = self._build_golden_ticket_package(snapshot)
             state_package = self._build_state_transition_package(snapshot)
+            token_lineage_package = self._build_token_lineage_package(snapshot)
             advanced_packages = self._build_advanced_logic_packages(
                 snapshot,
                 sequence_package=package,
@@ -1386,6 +1387,12 @@ def _run_sequence_invariants(self, event):
                 scope_label=scope,
                 target_count=len(snapshot),
             )
+            self._sort_and_store_token_lineage_payload(
+                token_lineage_package,
+                source_label="passive_run",
+                scope_label=scope,
+                target_count=len(snapshot),
+            )
             self._store_advanced_logic_packages(
                 advanced_packages,
                 source_label="passive_run",
@@ -1400,12 +1407,16 @@ def _run_sequence_invariants(self, event):
             )
             text += self._format_golden_ticket_output(golden_package)
             text += self._format_state_transition_output(state_package)
+            text += self._format_token_lineage_output(token_lineage_package)
             text += self._format_advanced_logic_output(advanced_packages, mode="all")
             SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
             diff_count = int(counterfactual_package.get("finding_count", 0) or 0)
             finding_count = int(package.get("finding_count", 0) or 0)
             golden_count = int(golden_package.get("finding_count", 0) or 0)
             state_count = int(state_package.get("finding_count", 0) or 0)
+            token_lineage_count = int(
+                token_lineage_package.get("finding_count", 0) or 0
+            )
             chain_count = int(
                 (advanced_packages.get("abuse_chains", {}) or {}).get(
                     "finding_count", 0
@@ -1431,9 +1442,9 @@ def _run_sequence_invariants(self, event):
                 or 0
             )
             SwingUtilities.invokeLater(
-                lambda d=diff_count, c=finding_count, g=golden_count, s=state_count, ac=chain_count, pm=proof_count, sg=guardrail_count, rd=role_count: self.log_to_ui(
-                    "[+] Invariant analysis complete (diff={} seq={} golden={} state={} chains={} proof={} guardrails={} role={})".format(
-                        d, c, g, s, ac, pm, sg, rd
+                lambda d=diff_count, c=finding_count, g=golden_count, s=state_count, tl=token_lineage_count, ac=chain_count, pm=proof_count, sg=guardrail_count, rd=role_count: self.log_to_ui(
+                    "[+] Invariant analysis complete (diff={} seq={} golden={} state={} lineage={} chains={} proof={} guardrails={} role={})".format(
+                        d, c, g, s, tl, ac, pm, sg, rd
                     )
                 )
             )
@@ -1471,6 +1482,14 @@ def _build_golden_ticket_package(self, data_snapshot):
 def _build_state_transition_package(self, data_snapshot):
     """Build State Transition package from captured workflow/state behavior."""
     payload = behavior_analysis.build_state_transition_package(
+        data_snapshot,
+        get_entry=self._get_entry,
+    )
+    return self._sanitize_for_ai_payload(payload)
+
+def _build_token_lineage_package(self, data_snapshot):
+    """Build Token Lineage package from captured token/session lifecycle behavior."""
+    payload = behavior_analysis.build_token_lineage_package(
         data_snapshot,
         get_entry=self._get_entry,
     )
@@ -1575,6 +1594,43 @@ def _sort_and_store_state_transition_payload(
             "scope": self._ascii_safe(scope_label),
             "target_count": count_value,
             "transition_edge_count": transition_edge_count,
+            "finding_count": len(findings),
+        }
+    self._refresh_recon_invariant_status_label_async()
+
+def _sort_and_store_token_lineage_payload(
+    self, package, source_label="passive", scope_label="Filtered Scope", target_count=None
+):
+    """Sort/store Token Lineage findings and associated ledger."""
+    findings = list((package or {}).get("findings", []) or [])
+    findings.sort(
+        key=lambda item: (
+            -float(item.get("confidence_score", 0.0) or 0.0),
+            self._ascii_safe(item.get("severity"), lower=True),
+            self._ascii_safe(item.get("subject"), lower=True),
+        )
+    )
+    ledger = dict((package or {}).get("ledger", {}) or {})
+    generated_at = self._ascii_safe(
+        (package or {}).get("generated_at") or time.strftime("%Y-%m-%d %H:%M:%S")
+    )
+    count_value = (
+        int(target_count)
+        if isinstance(target_count, int) and target_count >= 0
+        else None
+    )
+    observed_token_count = int((package or {}).get("observed_token_count", 0) or 0)
+    observed_subject_count = int((package or {}).get("observed_subject_count", 0) or 0)
+    with self.token_lineage_lock:
+        self.token_lineage_findings = list(findings)
+        self.token_lineage_ledger = ledger
+        self.token_lineage_meta = {
+            "generated_at": generated_at,
+            "source": self._ascii_safe(source_label),
+            "scope": self._ascii_safe(scope_label),
+            "target_count": count_value,
+            "observed_token_count": observed_token_count,
+            "observed_subject_count": observed_subject_count,
             "finding_count": len(findings),
         }
     self._refresh_recon_invariant_status_label_async()
@@ -1766,6 +1822,72 @@ def _format_state_transition_output(self, package):
         label = self._ascii_safe(finding.get("confidence_label", ""))
         lines.append("[{}][{} {:.2f}] {}".format(severity, label.upper(), score, title))
         lines.append("  Pattern: {}".format(invariant))
+        evidence_lines = finding.get("evidence", []) or []
+        for evidence in evidence_lines[:2]:
+            lines.append("  Evidence: {}".format(self._ascii_safe(evidence)))
+        suggested = finding.get("suggested_checks", []) or []
+        if suggested:
+            lines.append("  Next: {}".format(self._ascii_safe(suggested[0])))
+        lines.append("")
+
+    if len(findings) > 80:
+        lines.append("[*] {} more findings not shown".format(len(findings) - 80))
+    return "\n".join(lines) + "\n"
+
+def _format_token_lineage_output(self, package):
+    """Format Token Lineage findings for Passive tab output area."""
+    findings = list((package or {}).get("findings", []) or [])
+    ledger = dict((package or {}).get("ledger", {}) or {})
+    observed_tokens = int((package or {}).get("observed_token_count", 0) or 0)
+    observed_subjects = int((package or {}).get("observed_subject_count", 0) or 0)
+    severity_distribution = ledger.get("severity_distribution", {}) or {}
+    confidence_distribution = ledger.get("confidence_distribution", {}) or {}
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 80)
+    lines.append("TOKEN LINEAGE RESULTS")
+    lines.append("=" * 80)
+    lines.append(
+        "[*] Observed Tokens: {} | Observed Subjects: {}".format(
+            observed_tokens, observed_subjects
+        )
+    )
+    lines.append("[*] Findings: {}".format(len(findings)))
+    lines.append(
+        "[*] Severity: Critical={} High={} Medium={} Info={}".format(
+            int(severity_distribution.get("critical", 0) or 0),
+            int(severity_distribution.get("high", 0) or 0),
+            int(severity_distribution.get("medium", 0) or 0),
+            int(severity_distribution.get("info", 0) or 0),
+        )
+    )
+    lines.append(
+        "[*] Confidence: High={} Medium={} Low={}".format(
+            int(confidence_distribution.get("high", 0) or 0),
+            int(confidence_distribution.get("medium", 0) or 0),
+            int(confidence_distribution.get("low", 0) or 0),
+        )
+    )
+    lines.append("")
+
+    if not findings:
+        lines.append("[+] No token lineage drift patterns flagged in current scope.")
+        lines.append("[*] Capture login/refresh/logout traffic and rerun.")
+        return "\n".join(lines) + "\n"
+
+    lines.append("TOP FINDINGS")
+    lines.append("-" * 80)
+    for finding in findings[:80]:
+        severity = self._ascii_safe(finding.get("severity", "info"), lower=True).upper()
+        title = self._ascii_safe(finding.get("title", ""))
+        invariant = self._ascii_safe(finding.get("invariant", ""))
+        subject = self._ascii_safe(finding.get("subject", ""))
+        score = float(finding.get("confidence_score", 0.0) or 0.0)
+        label = self._ascii_safe(finding.get("confidence_label", ""))
+        lines.append("[{}][{} {:.2f}] {}".format(severity, label.upper(), score, title))
+        lines.append("  Invariant: {}".format(invariant))
+        lines.append("  Subject: {}".format(subject))
         evidence_lines = finding.get("evidence", []) or []
         for evidence in evidence_lines[:2]:
             lines.append("  Evidence: {}".format(self._ascii_safe(evidence)))
@@ -2989,6 +3111,10 @@ def _export_sequence_invariant_ledger(self):
         state_findings = list(self.state_transition_findings or [])
         state_ledger = dict(self.state_transition_ledger or {})
         state_meta = dict(self.state_transition_meta or {})
+    with self.token_lineage_lock:
+        token_lineage_findings = list(self.token_lineage_findings or [])
+        token_lineage_ledger = dict(self.token_lineage_ledger or {})
+        token_lineage_meta = dict(self.token_lineage_meta or {})
     with self.advanced_logic_lock:
         advanced_packages = dict(self.advanced_logic_packages or {})
     abuse_package = dict(advanced_packages.get("abuse_chains", {}) or {})
@@ -3001,6 +3127,7 @@ def _export_sequence_invariant_ledger(self):
         and (not findings)
         and (not golden_findings)
         and (not state_findings)
+        and (not token_lineage_findings)
         and (not abuse_package.get("findings"))
         and (not proof_package.get("packet_sets"))
         and (not spec_package.get("violations"))
@@ -3056,6 +3183,19 @@ def _export_sequence_invariant_ledger(self):
             [
                 ("state_transition_findings.json", {"metadata": state_meta, "findings": state_findings}),
                 ("state_transition_ledger.json", {"metadata": state_meta, "ledger": state_ledger}),
+            ]
+        )
+    if token_lineage_findings:
+        files_to_write.extend(
+            [
+                (
+                    "token_lineage_findings.json",
+                    {"metadata": token_lineage_meta, "findings": token_lineage_findings},
+                ),
+                (
+                    "token_lineage_ledger.json",
+                    {"metadata": token_lineage_meta, "ledger": token_lineage_ledger},
+                ),
             ]
         )
     abuse_findings = list(abuse_package.get("findings", []) or [])
@@ -5614,12 +5754,15 @@ __all__ = [
     "_build_sequence_invariant_package",
     "_build_golden_ticket_package",
     "_build_state_transition_package",
+    "_build_token_lineage_package",
     "_sort_and_store_sequence_invariant_payload",
     "_sort_and_store_golden_ticket_payload",
     "_sort_and_store_state_transition_payload",
+    "_sort_and_store_token_lineage_payload",
     "_format_sequence_invariant_output",
     "_format_golden_ticket_output",
     "_format_state_transition_output",
+    "_format_token_lineage_output",
     "_collect_passive_snapshot",
     "_build_passive_filter_config",
     "_passive_entry_is_api_like",

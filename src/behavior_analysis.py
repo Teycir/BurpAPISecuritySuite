@@ -5,6 +5,7 @@ import re
 import time
 import golden_ticket_analysis
 import state_transition_analysis
+import token_lineage_analysis
 
 
 WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
@@ -440,5 +441,19 @@ def build_state_transition_findings(data_snapshot, get_entry=None):
 def build_state_transition_package(data_snapshot, get_entry=None):
     """Compatibility wrapper: delegate State Transition package build to extracted module."""
     return state_transition_analysis.build_state_transition_package(
+        data_snapshot, get_entry=get_entry
+    )
+
+
+def build_token_lineage_findings(data_snapshot, get_entry=None):
+    """Compatibility wrapper: delegate Token Lineage logic to extracted module."""
+    return token_lineage_analysis.build_token_lineage_findings(
+        data_snapshot, get_entry=get_entry
+    )
+
+
+def build_token_lineage_package(data_snapshot, get_entry=None):
+    """Compatibility wrapper: delegate Token Lineage package build to extracted module."""
+    return token_lineage_analysis.build_token_lineage_package(
         data_snapshot, get_entry=get_entry
     )

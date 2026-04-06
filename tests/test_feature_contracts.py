@@ -32,6 +32,7 @@ def _source_text():
         _pick_path("recon_param_intel.py"),
         _pick_path("golden_ticket_analysis.py"),
         _pick_path("state_transition_analysis.py"),
+        _pick_path("token_lineage_analysis.py"),
     ]
     chunks = []
     for source_path in source_paths:
@@ -1284,7 +1285,7 @@ def test_sequence_invariants_and_ledger_are_wired():
         "actions_row = JPanel(FlowLayout(FlowLayout.LEFT))",
         "deep_logic_row = JPanel(FlowLayout(FlowLayout.LEFT))",
         "deep_logic_row.add(JLabel(\"Deep Logic:\"))",
-        "Non-destructive deep logic checks. Includes scoreless differential invariants plus Sequence/Golden/State analysis.",
+        "Non-destructive deep logic checks. Includes scoreless differential invariants plus Sequence/Golden/State/Token Lineage analysis.",
         'refresh_invariants_btn = JButton("Refresh Invariants")',
         "self.recon_invariant_status_label = JLabel(\"\")",
         "def _refresh_sequence_invariants_from_recon(",
@@ -1307,6 +1308,7 @@ def test_sequence_invariants_and_ledger_are_wired():
         "def _build_sequence_invariant_package(",
         "def _build_golden_ticket_package(",
         "def _build_state_transition_package(",
+        "def _build_token_lineage_package(",
         "def _build_advanced_logic_packages(",
         "def _store_advanced_logic_packages(",
         "def _format_advanced_logic_output(",
@@ -1324,8 +1326,10 @@ def test_sequence_invariants_and_ledger_are_wired():
         "behavior_analysis.build_sequence_invariant_package(",
         "behavior_analysis.build_golden_ticket_package(",
         "behavior_analysis.build_state_transition_package(",
+        "behavior_analysis.build_token_lineage_package(",
         "def _format_golden_ticket_output(",
         "def _format_state_transition_output(",
+        "def _format_token_lineage_output(",
         "def _export_sequence_invariant_ledger(",
         "\"counterfactual_differential_findings.json\"",
         "\"counterfactual_differential_summary.json\"",
@@ -1335,6 +1339,8 @@ def test_sequence_invariants_and_ledger_are_wired():
         "\"golden_ticket_ledger.json\"",
         "\"state_transition_findings.json\"",
         "\"state_transition_ledger.json\"",
+        "\"token_lineage_findings.json\"",
+        "\"token_lineage_ledger.json\"",
         "\"ai_counterfactual_differential_findings.json\"",
         "\"ai_counterfactual_differential_summary.json\"",
         "\"ai_sequence_invariant_findings.json\"",
@@ -1343,11 +1349,15 @@ def test_sequence_invariants_and_ledger_are_wired():
         "\"ai_golden_ticket_ledger.json\"",
         "\"ai_state_transition_findings.json\"",
         "\"ai_state_transition_ledger.json\"",
+        "\"ai_token_lineage_findings.json\"",
+        "\"ai_token_lineage_ledger.json\"",
         "\"counterfactual_differentials\": counterfactual_differentials,",
         "\"sequence_invariants\": sequence_invariants,",
         "\"golden_tickets\": golden_tickets,",
         "\"state_transitions\": state_transitions,",
+        "\"token_lineage\": token_lineage,",
         "\"counterfactual_differential_count\"",
+        "\"token_lineage_count\"",
         "\"counterfactual_differentials\": {",
         "\"counterfactual_meta\"",
         "\"sequence_invariants\": {",
@@ -1356,6 +1366,8 @@ def test_sequence_invariants_and_ledger_are_wired():
         "\"golden_ticket_meta\"",
         "\"state_transitions\": {",
         "\"state_transition_meta\"",
+        "\"token_lineage\": {",
+        "\"token_lineage_meta\"",
         "source_label=\"ai_export\"",
         "def _snapshot_dict_attr(",
     ]
@@ -1415,6 +1427,21 @@ def test_state_transition_logic_is_extracted_to_dedicated_module():
     for token in required_tokens:
         assert token in text, "Missing extracted state-transition token: {}".format(token)
     print("[PASS] test_state_transition_logic_is_extracted_to_dedicated_module")
+
+
+def test_token_lineage_logic_is_extracted_to_dedicated_module():
+    text = _source_text()
+    required_tokens = [
+        "import token_lineage_analysis",
+        "def build_token_lineage_findings(data_snapshot, get_entry=None):",
+        "return token_lineage_analysis.build_token_lineage_findings(",
+        "def build_token_lineage_package(data_snapshot, get_entry=None):",
+        "return token_lineage_analysis.build_token_lineage_package(",
+        "def _build_token_lineage_package(",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing extracted token-lineage token: {}".format(token)
+    print("[PASS] test_token_lineage_logic_is_extracted_to_dedicated_module")
 
 
 def test_checkbox_state_persistence_is_wired():

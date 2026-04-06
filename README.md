@@ -218,6 +218,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **OpenAPI Drift**: Compare observed traffic vs OpenAPI spec for undocumented/missing endpoints
 - **Counterfactual Differentials**: Scoreless, non-destructive invariant breaks for representation/auth/identifier drift
 - **Sequence Invariants**: Non-destructive deep-logic checks with confidence/evidence ledger export
+- **Token Lineage Analysis**: Passive token/session lifecycle drift detection for logout/revoke/refresh rotation gaps
 - **Wayback Machine**: Discover historical endpoints and forgotten APIs
 - **Katana Crawler**: Deep web crawling with automatic endpoint discovery
 - **HTTPX Probe**: Fast HTTP probing with technology detection
@@ -262,6 +263,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Intelligent Automation**: Auto-detects BOLA/IDOR vulnerabilities across all authenticated endpoints
 - **AI-Powered**: Export all-tab AI bundles (plus sequence evidence ledger) for ChatGPT/Claude triage
 - **Differential-First Logic Coverage**: Includes scoreless counterfactual drift checks that many signature scanners miss
+- **Token Lifecycle Drift Coverage**: Adds passive token-lineage analysis for logout/refresh/session-rotation gaps many scanners ignore
 - **Comprehensive Coverage**: 15 attack types with 108+ API-specific payloads
 - **External Tool Integration**: Seamlessly integrates with Nuclei, SQLMap, Dalfox, HTTPX, Katana, FFUF, Subfinder, and DNSX
 - **Works with Burp Community**: No need for expensive Burp Pro license
@@ -285,7 +287,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 1. **Capture**: Browse/scan target API with auto-capture enabled
 2. **Review**: Check the `Recon` tab to inspect captured endpoints and findings
 3. **Deep Logic (Optional)**: In `Passive Discovery`, click `Run Differential` for scoreless counterfactual checks, or `Run Invariants` for the full deep-logic stack
-4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to refresh Differential + Sequence + Golden + State Matrix results before export
+4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to refresh Differential + Sequence + Golden + State Matrix + Token Lineage results before export
 5. **Export**: In `Recon`, click `Export AI Bundle` to generate all-tab AI context
 6. **Generate**: Feed exported JSON to an LLM (ChatGPT, Claude, etc.) for triage/payload planning
 
@@ -305,8 +307,8 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Insomnia**: Export scoped endpoints to Insomnia import JSON
 - **Tool Health**: One-click diagnostics for Nuclei/HTTPX/Katana/FFUF/Wayback/SQLMap/Dalfox/Subfinder/DNSX binary compatibility
 - **Button Help**: Quick guide for Recon buttons and expected outputs
-- **Refresh Invariants**: Refresh Differential + Sequence + Golden + State Matrix analysis from captured endpoints before AI export
-- **Invariant Status Line**: Shows Differential, Sequence, Golden, and State Matrix cache counts with source/update time
+- **Refresh Invariants**: Refresh Differential + Sequence + Golden + State Matrix + Token Lineage analysis from captured endpoints before AI export
+- **Invariant Status Line**: Shows Differential, Sequence, Golden, State Matrix, and Token Lineage cache counts with source/update time
 - **Clear Data**: Reset captured Recon endpoints and Logger events together
 
 #### Logger Tab
@@ -360,7 +362,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Mode Selector**: Run `All` or per-category checks (`API3`, `API4`, `API5`, `API6`, `API9`, `API10`)
 - **Scope Selector**: Analyze `All Endpoints`, `Filtered View`, or current host scope
 - **Run Differential**: Run scoreless counterfactual checks for representation/auth/identifier precedence drift (passive-only)
-- **Run Invariants**: Run full non-destructive stack (Differential + Sequence + Golden + State) for deep workflow/token/state analysis
+- **Run Invariants**: Run full non-destructive stack (Differential + Sequence + Golden + State + Token Lineage) for deep workflow/token/state analysis
 - **Run All Advanced**: One-click execution of all advanced deep-logic engines
 - **Abuse Chains**: Build shortest graph-to-replay exploit chains (`auth -> object access -> state change`)
 - **Proof Mode**: Generate minimal reproducible packet sets with expected vulnerable vs safe signals
@@ -368,7 +370,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Role Delta**: Compare role-level behavior (guest/user/admin-like) and rank suspicious parity for BOLA/BFLA triage
 - **Run / Stop / Clear**: Execute discovery, cancel safely, and reset output quickly
 - **Export / Copy**: Save findings or copy report text
-- **Export Ledger**: Save Differential + Sequence + Golden + State Matrix artifacts as JSON files
+- **Export Ledger**: Save Differential + Sequence + Golden + State Matrix + Token Lineage artifacts as JSON files
 - **Advanced Exports**: Also writes `abuse_chain_*`, `proof_mode_packet_sets`, `spec_guardrails_*`, and `role_delta_*` JSON artifacts
 - **Output**: Severity/categorical summary plus top findings for triage
 
@@ -719,6 +721,8 @@ vulnerability type. Focus on:
 │   ├── ai_golden_ticket_ledger.json
 │   ├── ai_state_transition_findings.json
 │   ├── ai_state_transition_ledger.json
+│   ├── ai_token_lineage_findings.json
+│   ├── ai_token_lineage_ledger.json
 │   ├── ai_openai_request.json
 │   ├── ai_anthropic_request.json
 │   └── ai_ollama_request.json
@@ -730,7 +734,9 @@ vulnerability type. Focus on:
 │   ├── golden_ticket_findings.json
 │   ├── golden_ticket_ledger.json
 │   ├── state_transition_findings.json
-│   └── state_transition_ledger.json
+│   ├── state_transition_ledger.json
+│   ├── token_lineage_findings.json
+│   └── token_lineage_ledger.json
 ├── TurboIntruder_TIMESTAMP/
 │   ├── race_condition.py
 │   ├── bola_enum.py
@@ -759,7 +765,7 @@ vulnerability type. Focus on:
 
 ### AI Integration
 - **Export Context Early**: Generate AI context after initial capture
-- **Run + Refresh Invariants Before Export**: Add fresh deep-logic evidence (Sequence + Golden + State Matrix) before sending data to AI
+- **Run + Refresh Invariants Before Export**: Add fresh deep-logic evidence (Differential + Sequence + Golden + State Matrix + Token Lineage) before sending data to AI
 - **Iterate Payloads**: Use AI-generated payloads, test, refine prompt
 - **Combine Techniques**: Merge AI payloads with built-in payload library
 
@@ -1068,13 +1074,19 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ### v1.4.2 - Counterfactual Differential Pipeline + Deep-Logic Expansion
 - ✅ Added scoreless, non-destructive `Run Differential` workflow in `Passive Discovery`.
+- ✅ Added `Token Lineage` analysis to detect logout/revoke/refresh-session drift from captured traffic.
 - ✅ Added counterfactual differential artifacts to `Export Ledger`:
   - `counterfactual_differential_findings.json`
   - `counterfactual_differential_summary.json`
+- ✅ Added token-lineage artifacts to `Export Ledger`:
+  - `token_lineage_findings.json`
+  - `token_lineage_ledger.json`
 - ✅ Added AI export artifacts:
   - `ai_counterfactual_differential_findings.json`
   - `ai_counterfactual_differential_summary.json`
-- ✅ Extended `Run Invariants` and Recon `Refresh Invariants` to include Differential cache generation.
+  - `ai_token_lineage_findings.json`
+  - `ai_token_lineage_ledger.json`
+- ✅ Extended `Run Invariants` and Recon `Refresh Invariants` to include Differential + Token Lineage cache generation.
 - ✅ Hardened error visibility in differential parsing path (parse failures are logged, not hidden).
 
 ### v1.4.1 - Logger Clear Data + Two-Line Toolbar
@@ -1118,11 +1130,16 @@ What is already shipped:
   - `Run Invariants` in `Passive Discovery` checks captured endpoint flows for hidden logic issues.
   - `Refresh Invariants` in `Recon` recomputes invariants before AI export.
   - `Export Ledger` saves invariant findings and confidence evidence as JSON.
+- ✅ **Token Lineage checks shipped**:
+  - Detects token lifecycle drift (logout/revoke success with continuing protected access, refresh overlap, parallel token sprawl per subject).
+  - Included in `Run Invariants`, `Refresh Invariants`, `Export Ledger`, and `Export AI Bundle`.
 - ✅ **AI bundle expanded with deep-logic evidence**:
   - `ai_sequence_invariant_findings.json`
   - `ai_sequence_evidence_ledger.json`
   - `ai_golden_ticket_findings.json`
   - `ai_golden_ticket_ledger.json`
+  - `ai_token_lineage_findings.json`
+  - `ai_token_lineage_ledger.json`
 - ✅ **Non-destructive AI prep layer (optional via `AI_PREP_LAYER`)**:
   - `ai_prep_invariant_hints.json`
   - `ai_prep_sequence_candidates.json`

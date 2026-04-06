@@ -601,6 +601,10 @@ def _initialize_runtime_state(self):
     self.state_transition_ledger = {}
     self.state_transition_meta = {}
     self.state_transition_lock = threading.Lock()
+    self.token_lineage_findings = []
+    self.token_lineage_ledger = {}
+    self.token_lineage_meta = {}
+    self.token_lineage_lock = threading.Lock()
     self.counterfactual_findings = []
     self.counterfactual_summary = {}
     self.counterfactual_meta = {}
@@ -1601,16 +1605,16 @@ def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
         "run replay": "Replay requests across auth profiles (guest/user/admin) for auth gap checks",
         "extract": "Extract header value from captured traffic into the selected auth profile field",
         "run passive": "Analyze captured traffic only (no active requests) for API risk patterns",
-        "run invariants": "Check captured endpoint flows for hidden logic issues",
+        "run invariants": "Check captured endpoint flows for hidden logic issues (Sequence/Golden/State/Token Lineage)",
         "run differential": "Run scoreless counterfactual differentials (representation/auth/identifier drift) from captured traffic only",
         "run all advanced": "Run abuse chains, proof mode, spec guardrails, and role delta in one workflow",
         "abuse chains": "Build shortest likely exploit chains (auth -> object access -> state change)",
         "proof mode": "Generate minimal reproducible packet sequences with vulnerable/safe response expectations",
         "spec guardrails": "Derive enforceable auth/param/transition rules from observed traffic and flag violations",
         "role delta": "Compare endpoint behavior across role signals (guest/user/admin) and rank suspicious parity",
-        "refresh invariants": "Recompute invariant checks from Recon data",
+        "refresh invariants": "Recompute Differential + Sequence + Golden + State + Token Lineage checks from Recon data",
         "export": "Export this tab findings to a timestamped file in the project export folder",
-        "export ledger": "Save deep-logic artifacts (including scoreless differential findings) to JSON files",
+        "export ledger": "Save deep-logic artifacts (including differential and token-lineage findings) to JSON files",
         "run nuclei": "Launch Nuclei with current profile/scope and parse findings back into this tab",
         "export targets": "Export current scoped target URLs prepared for Nuclei execution",
         "probe endpoints": "Run HTTPX on scoped URLs to capture status/title/tech probe output",
@@ -1793,29 +1797,41 @@ def _build_recon_invariant_status_text(self):
         golden_count = len(self.golden_ticket_findings or [])
     with self.state_transition_lock:
         state_count = len(self.state_transition_findings or [])
+    with self.token_lineage_lock:
+        token_lineage_count = len(self.token_lineage_findings or [])
+        token_lineage_meta = dict(self.token_lineage_meta or {})
 
     if (
         (not meta)
         and sequence_count <= 0
         and golden_count <= 0
         and state_count <= 0
+        and token_lineage_count <= 0
         and counterfactual_count <= 0
     ):
         return "Not generated yet (AI export computes this automatically)."
 
-    source = self._ascii_safe(meta.get("source") or "unknown")
+    source = self._ascii_safe(
+        meta.get("source") or token_lineage_meta.get("source") or "unknown"
+    )
     diff_source = self._ascii_safe(counterfactual_meta.get("source") or source)
-    scope = self._ascii_safe(meta.get("scope") or "unknown")
+    scope = self._ascii_safe(
+        meta.get("scope") or token_lineage_meta.get("scope") or "unknown"
+    )
     generated_at = self._ascii_safe(
-        meta.get("generated_at") or counterfactual_meta.get("generated_at") or "unknown"
+        meta.get("generated_at")
+        or token_lineage_meta.get("generated_at")
+        or counterfactual_meta.get("generated_at")
+        or "unknown"
     )
     confidence_dist = dict(ledger.get("confidence_distribution", {}) or {})
     high_conf = int(confidence_dist.get("high", 0) or 0)
-    return "Diff={} | Seq={} | Golden={} | State={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
+    return "Diff={} | Seq={} | Golden={} | State={} | Lineage={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
         counterfactual_count,
         sequence_count,
         golden_count,
         state_count,
+        token_lineage_count,
         high_conf,
         diff_source,
         scope,
@@ -1863,6 +1879,7 @@ def _refresh_sequence_invariants_from_recon(self, event):
             package = self._build_sequence_invariant_package(data_snapshot)
             golden_package = self._build_golden_ticket_package(data_snapshot)
             state_package = self._build_state_transition_package(data_snapshot)
+            token_lineage_package = self._build_token_lineage_package(data_snapshot)
             self._sort_and_store_counterfactual_payload(
                 counterfactual_package,
                 source_label="recon_refresh",
@@ -1887,16 +1904,25 @@ def _refresh_sequence_invariants_from_recon(self, event):
                 scope_label="All Endpoints",
                 target_count=len(data_snapshot),
             )
+            self._sort_and_store_token_lineage_payload(
+                token_lineage_package,
+                source_label="recon_refresh",
+                scope_label="All Endpoints",
+                target_count=len(data_snapshot),
+            )
             counterfactual_count = int(
                 counterfactual_package.get("finding_count", 0) or 0
             )
             finding_count = int(package.get("finding_count", 0) or 0)
             golden_count = int(golden_package.get("finding_count", 0) or 0)
             state_count = int(state_package.get("finding_count", 0) or 0)
+            token_lineage_count = int(
+                token_lineage_package.get("finding_count", 0) or 0
+            )
             SwingUtilities.invokeLater(
-                lambda d=counterfactual_count, c=finding_count, g=golden_count, s=state_count: self.log_to_ui(
-                    "[+] Recon invariants refreshed (diff={} seq={} golden={} state={})".format(
-                        d, c, g, s
+                lambda d=counterfactual_count, c=finding_count, g=golden_count, s=state_count, tl=token_lineage_count: self.log_to_ui(
+                    "[+] Recon invariants refreshed (diff={} seq={} golden={} state={} lineage={})".format(
+                        d, c, g, s, tl
                     )
                 )
             )
@@ -2297,7 +2323,7 @@ def _show_recon_button_help(self, _event=None):
     lines.append("Export Host:")
     lines.append("  Export only endpoints matching the selected host filter.")
     lines.append("Export AI Bundle:")
-    lines.append("  Export all-tab AI bundle (includes Sequence, Golden, and State Matrix findings).")
+    lines.append("  Export all-tab AI bundle (includes Differential, Sequence, Golden, State Matrix, and Token Lineage findings).")
     lines.append("Import:")
     lines.append("  Import a previous Recon JSON export.")
     lines.append("Postman:")
@@ -2325,7 +2351,7 @@ def _show_recon_button_help(self, _event=None):
     lines.append("Clear + Refill:")
     lines.append("  Clear current Recon/Logger data, then refill both from Burp Proxy history.")
     lines.append("Refresh Invariants:")
-    lines.append("  Recompute Sequence + Golden + State Matrix analysis from captured endpoints.")
+    lines.append("  Recompute Differential + Sequence + Golden + State Matrix + Token Lineage analysis from captured endpoints.")
     lines.append("")
     lines.append("Tip: hover any Recon button to see a quick tooltip.")
     JOptionPane.showMessageDialog(
@@ -3667,7 +3693,7 @@ def _create_passive_discovery_tab(self):
     )
     deep_logic_row.add(
         JLabel(
-            "Non-destructive deep logic checks. Includes scoreless differential invariants plus Sequence/Golden/State analysis."
+            "Non-destructive deep logic checks. Includes scoreless differential invariants plus Sequence/Golden/State/Token Lineage analysis."
         )
     )
 
@@ -3743,6 +3769,9 @@ def _create_passive_discovery_tab(self):
     self.state_transition_findings = []
     self.state_transition_ledger = {}
     self.state_transition_meta = {}
+    self.token_lineage_findings = []
+    self.token_lineage_ledger = {}
+    self.token_lineage_meta = {}
     self.advanced_logic_packages = {}
     return panel
 

@@ -617,6 +617,14 @@ def _export_ai_context(self):
             "ai_state_transition_ledger.json",
             bundle.get("state_transitions", {}).get("ledger", {}),
         ),
+        (
+            "ai_token_lineage_findings.json",
+            bundle.get("token_lineage", {}).get("findings", []),
+        ),
+        (
+            "ai_token_lineage_ledger.json",
+            bundle.get("token_lineage", {}).get("ledger", {}),
+        ),
         ("ai_feedback_template.json", bundle.get("feedback_template", {})),
         ("ai_openai_request.json", bundle.get("llm_exports", {}).get("openai", {})),
         (
@@ -691,6 +699,7 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
     sequence_invariants = self._build_sequence_invariant_package(data_snapshot)
     golden_tickets = self._build_golden_ticket_package(data_snapshot)
     state_transitions = self._build_state_transition_package(data_snapshot)
+    token_lineage = self._build_token_lineage_package(data_snapshot)
     self._sort_and_store_counterfactual_payload(
         counterfactual_differentials,
         source_label="ai_export",
@@ -711,6 +720,12 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
     )
     self._sort_and_store_state_transition_payload(
         state_transitions,
+        source_label="ai_export",
+        scope_label="All Endpoints",
+        target_count=len(data_snapshot),
+    )
+    self._sort_and_store_token_lineage_payload(
+        token_lineage,
         source_label="ai_export",
         scope_label="All Endpoints",
         target_count=len(data_snapshot),
@@ -769,6 +784,7 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
         "sequence_invariants": sequence_invariants,
         "golden_tickets": golden_tickets,
         "state_transitions": state_transitions,
+        "token_lineage": token_lineage,
         "all_tabs_context": all_tabs_context,
     }
     llm_exports = {
@@ -802,6 +818,9 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
             "state_transition_count": int(
                 state_transitions.get("finding_count", 0) or 0
             ),
+            "token_lineage_count": int(
+                token_lineage.get("finding_count", 0) or 0
+            ),
         },
         "legacy_context": legacy_context,
         "vulnerability_context": vulnerability_context,
@@ -815,6 +834,7 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
         "sequence_invariants": sequence_invariants,
         "golden_tickets": golden_tickets,
         "state_transitions": state_transitions,
+        "token_lineage": token_lineage,
     }
 
 def _build_ai_bundle_schema_contract(self):
@@ -835,6 +855,7 @@ def _build_ai_bundle_schema_contract(self):
             "sequence_invariants",
             "golden_tickets",
             "state_transitions",
+            "token_lineage",
             "ai_prep_layer",
         ],
         "properties": {
@@ -862,6 +883,10 @@ def _build_ai_bundle_schema_contract(self):
                 "required": ["findings", "ledger"],
             },
             "state_transitions": {
+                "type": "object",
+                "required": ["findings", "ledger"],
+            },
+            "token_lineage": {
                 "type": "object",
                 "required": ["findings", "ledger"],
             },
@@ -942,6 +967,7 @@ def _validate_ai_bundle_schema(self, bundle):
         "sequence_invariant_count",
         "golden_ticket_count",
         "state_transition_count",
+        "token_lineage_count",
     ]:
         if count_key not in metadata:
             metadata[count_key] = 0
@@ -1006,12 +1032,14 @@ def _validate_ai_bundle_schema(self, bundle):
     sequence = ensure_findings_block("sequence_invariants")
     golden = ensure_findings_block("golden_tickets")
     state = ensure_findings_block("state_transitions")
+    token_lineage = ensure_findings_block("token_lineage")
     metadata["counterfactual_differential_count"] = len(
         counterfactual.get("findings", [])
     )
     metadata["sequence_invariant_count"] = len(sequence.get("findings", []))
     metadata["golden_ticket_count"] = len(golden.get("findings", []))
     metadata["state_transition_count"] = len(state.get("findings", []))
+    metadata["token_lineage_count"] = len(token_lineage.get("findings", []))
 
     prep_layer = ensure_object("ai_prep_layer")
     if self._ai_prep_layer_enabled():
@@ -1157,6 +1185,20 @@ def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
             ),
             "meta": self._snapshot_dict_attr(
                 "state_transition_meta", lock_attr="state_transition_lock"
+            ),
+        },
+        "token_lineage": {
+            "finding_count": len(getattr(self, "token_lineage_findings", []) or []),
+            "findings": self._snapshot_list_attr(
+                "token_lineage_findings",
+                limit=300,
+                lock_attr="token_lineage_lock",
+            ),
+            "ledger": self._snapshot_dict_attr(
+                "token_lineage_ledger", lock_attr="token_lineage_lock"
+            ),
+            "meta": self._snapshot_dict_attr(
+                "token_lineage_meta", lock_attr="token_lineage_lock"
             ),
         },
         "nuclei": {
