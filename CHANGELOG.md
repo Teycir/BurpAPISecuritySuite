@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.1] - 2026-04-06
+
+### Added
+- Logger toolbar operator-visibility update:
+  - Added a dedicated red `Clear Data` action in Logger row-1 controls.
+  - `Clear Data` now performs shared data reset semantics (same behavior as Recon `Clear Data`).
+
+### Changed
+- Logger toolbar layout is now explicitly two-line to prevent control clipping on narrower Burp windows:
+  - row-1 keeps primary filters/toggles and high-frequency actions visible,
+  - row-2 hosts secondary actions/search/export controls.
+- Logger clear actions simplified:
+  - removed duplicate Logger-only clear buttons (`Clear`, `Clear Logs`) from the toolbar,
+  - kept one canonical Logger clear entrypoint (`Clear Data`) for Recon+Logger shared clearing.
+
+### Fixed
+- Fixed remaining Tags-column rendering leakage where HTML-like tag markup could appear literally in some Burp/Jython Swing render paths.
+  - Tags cells now use stable plain-token rendering fallback while retaining row/tag color semantics and tag tooltips.
+- Fixed shared clear-data parity so Recon `Clear Data` and Logger `Clear Data` consistently clear both Recon and Logger in-memory state.
+
+### Tests
+- Added/updated source-contract coverage in `tests/test_feature_contracts.py`:
+  - shared clear-data wiring (`clear_data` + `_clear_logger_logs(emit_log=False)` + Logger `Clear Data` button token).
+- Validation:
+  - `python3 -m py_compile burp_core_ui_and_fuzz_methods.py burp_capture_export_and_tooling_methods.py tests/test_feature_contracts.py` passed.
+  - `python3 tests/run_all_tests.py` passed (`Passed: 4/4`, `Failed: 0/4`).
+
 ## [1.4.0] - 2026-04-06
 
 ### Added

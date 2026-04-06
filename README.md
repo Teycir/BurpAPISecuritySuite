@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.4.0-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.4.1-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -129,6 +129,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
   - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
+    - [v1.4.1 - Logger Clear Data + Two-Line Toolbar](#v141---logger-clear-data--two-line-toolbar)
     - [v1.4.0 - Logger/Recon Parity + Stability + Sorting](#v140---loggerrecon-parity--stability--sorting)
     - [v1.3.9 - Logger Tab + Recon Hidden Params + Param Intel](#v139---logger-tab--recon-hidden-params--param-intel)
     - [v1.3.5 - AI Export + Invariants + Tooltip UX](#v135---ai-export--invariants--tooltip-ux)
@@ -303,12 +304,15 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Button Help**: Quick guide for Recon buttons and expected outputs
 - **Refresh Invariants**: Refresh Sequence + Golden + State Matrix analysis from captured endpoints before AI export
 - **Invariant Status Line**: Shows Sequence, Golden, and State Matrix counts with confidence/source/update time
-- **Clear Data**: Reset all captured endpoints
+- **Clear Data**: Reset captured Recon endpoints and Logger events together
 
 #### Logger Tab
 - **Timeline View**: High-signal request timeline (`tool`, `method`, `host/path`, `status`, `len`, `type`, `tags`).
+- **Two-Line Toolbar**: Controls are split across two rows to avoid hidden/clipped actions.
 - **Noise Filter**: Shared noise suppression aligned with Recon filtering heuristics.
+- **Auto Prune**: Trims oldest Logger rows when `Max Memory` is exceeded.
 - **Logging Off**: Single capture toggle for Logger ingestion (`on/off` model).
+- **Clear Data**: Shared clear action that resets both Logger events and Recon captured data.
 - **ReqM / RespM**: Useful marker counts by default, and regex hit counts when regex is active.
 - **Grep + Rules**: `Grep Values...`, `Tag Rules...`, and saved regex workflow (`Save Regex` + saved filters).
 - **Header Sorting**: Click a header to sort, Shift+click to add a second sort key.
@@ -1045,6 +1049,12 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 ## Updates & Roadmap
 
 ### Recent Updates
+
+### v1.4.1 - Logger Clear Data + Two-Line Toolbar
+- ✅ Added a single red Logger `Clear Data` action with shared behavior (clears both Recon and Logger state).
+- ✅ Removed duplicate Logger clear buttons so toolbar behavior is unambiguous.
+- ✅ Split Logger controls into a two-line toolbar so key actions stay visible on smaller window widths.
+- ✅ Hardened Logger Tags rendering fallback to plain tag tokens (prevents literal HTML-like tag leakage in table cells).
 
 ### v1.4.0 - Logger/Recon Parity + Stability + Sorting
 - ✅ Added Logger/Recon parity flow so Logger-selected rows consistently resolve endpoint details in Recon.
