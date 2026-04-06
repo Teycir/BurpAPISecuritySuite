@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.3.5-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.3.10-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -129,6 +129,8 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
   - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
+    - [v1.3.10 - Logger/Recon Parity + Stability + Sorting](#v1310---loggerrecon-parity--stability--sorting)
+    - [v1.3.9 - Logger Tab + Recon Hidden Params + Param Intel](#v139---logger-tab--recon-hidden-params--param-intel)
     - [v1.3.5 - AI Export + Invariants + Tooltip UX](#v135---ai-export--invariants--tooltip-ux)
     - [v1.3.1 - Tab Order and External Tool UX Alignment](#v131---tab-order-and-external-tool-ux-alignment)
     - [v1.3.0 - Verification and Spec Drift Tabs](#v130---verification-and-spec-drift-tabs)
@@ -302,6 +304,15 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Refresh Invariants**: Refresh Sequence + Golden + State Matrix analysis from captured endpoints before AI export
 - **Invariant Status Line**: Shows Sequence, Golden, and State Matrix counts with confidence/source/update time
 - **Clear Data**: Reset all captured endpoints
+
+#### Logger Tab
+- **Timeline View**: High-signal request timeline (`tool`, `method`, `host/path`, `status`, `len`, `type`, `tags`).
+- **Noise Filter**: Shared noise suppression aligned with Recon filtering heuristics.
+- **Logging Off**: Single capture toggle for Logger ingestion (`on/off` model).
+- **ReqM / RespM**: Useful marker counts by default, and regex hit counts when regex is active.
+- **Grep + Rules**: `Grep Values...`, `Tag Rules...`, and saved regex workflow (`Save Regex` + saved filters).
+- **Header Sorting**: Click a header to sort, Shift+click to add a second sort key.
+- **Right-Click Ops**: `Show Endpoint Detail`, `Send Selected To Repeater`, `Copy Selected Rows`, and bulk selection.
 
 #### 2. Diff Tab
 - **Load Export 1/2**: Load two API exports for comparison
@@ -1034,6 +1045,25 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 ## Updates & Roadmap
 
 ### Recent Updates
+
+### v1.3.10 - Logger/Recon Parity + Stability + Sorting
+- ✅ Added Logger/Recon parity flow so Logger-selected rows consistently resolve endpoint details in Recon.
+- ✅ Improved `Show Endpoint Detail` with recovery path for rows not yet materialized in Recon cache.
+- ✅ `ReqM` and `RespM` now show meaningful default marker metrics even without active regex.
+- ✅ Added Logger table header sorting with multi-column support (Shift+click adds a second sort key).
+- ✅ Added simple, consistent tooltip coverage for buttons and checkboxes using explicit + fallback tooltip wiring.
+- ✅ Added shared `Filter Noise` behavior in both Recon and Logger surfaces.
+- ✅ Simplified Logger capture UX to a single toggle model (`Logging Off`).
+- ✅ Added freeze mitigation after reload:
+  - disabled live resort-on-update for Logger table,
+  - made logger->recon sync hot path bounded/lightweight,
+  - skipped heavy recon sync work during bulk logger backfill.
+
+### v1.3.9 - Logger Tab + Recon Hidden Params + Param Intel
+- ✅ Added dedicated `Logger` tab with long-session controls, previews, filters, exports, and right-click triage actions.
+- ✅ Added Recon `Hidden Params` workflow for ranked hidden-parameter discovery from scoped capture data.
+- ✅ Added Recon `Param Intel` workflow for GAP-style parameter intelligence and exports.
+- ✅ Added Recon `Turbo Pack` export helpers and Logger/Recon tag interoperability.
 
 ### Plain-Language Summary (v1.3.2 -> Unreleased)
 

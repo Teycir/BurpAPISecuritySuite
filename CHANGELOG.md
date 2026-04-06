@@ -2,6 +2,221 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.10] - 2026-04-06
+
+### Added
+- Shared Recon/Logger noise filtering workflow:
+  - Added `Filter Noise` toggle to Recon filters.
+  - Added `Filter Noise` toggle to Logger controls.
+  - Reused shared noise heuristics to suppress ad-tech/static/tracker-heavy rows while preserving high-signal API traffic.
+- Logger table UX upgrades:
+  - Enabled column sorting via header click.
+  - Added concurrent multi-column sorting (`Shift+click` adds secondary sort key).
+  - Added header tooltip guidance for sorting behavior.
+- Logger signal metrics upgrades:
+  - `ReqM`/`RespM` now show useful default marker counts when regex is not active.
+  - Existing regex-driven `ReqM`/`RespM` behavior remains when regex filter is active.
+- Logger/Recon parity hardening:
+  - Added lightweight logger-to-recon sync helper for endpoint materialization.
+  - `Show Endpoint Detail` now includes recovery path when selected Logger row has no existing Recon entry.
+
+### Changed
+- Logger capture controls simplified:
+  - Removed redundant `Capture` checkbox from Logger toolbar.
+  - `Logging Off` is now the single authoritative Logger capture toggle.
+  - Logger status wording changed from `Capture: on/off` to `Logging: on/off`.
+- Tooltip coverage improved:
+  - Added fallback tooltip generation for checkboxes and buttons that do not define explicit tooltip text.
+  - Tooltips standardized to short, plain-language action descriptions.
+- Logger sorting/runtime behavior adjusted for stability:
+  - Disabled `sortsOnUpdates` to avoid UI stalls during bulk table refresh/backfill while keeping manual header sorting.
+
+### Fixed
+- Fixed Logger toggle deadlock where `Logging Off` could become stuck checked and prevent recovery.
+- Fixed intermittent `Show Endpoint Detail` failures caused by Logger/Recon endpoint cache drift.
+- Fixed `ReqM`/`RespM` appearing as `0` in non-regex workflows by adding default marker metrics.
+- Fixed sorted-table selection mapping issues by converting Logger table view indices to model indices for row actions.
+- Mitigated Burp reload freeze regressions by:
+  - removing expensive recon-rotation work from logger hot path under endpoint-cap pressure,
+  - avoiding heavy recon sync during bulk Logger history backfill.
+
+### Tests
+- Expanded source-contract checks in `tests/test_feature_contracts.py` for:
+  - Recon/Logger shared noise filter wiring.
+  - Logger sorting setup (`TableRowSorter`) and header guidance.
+  - Logger/Recon parity sync + detail recovery paths.
+  - Default `ReqM`/`RespM` marker helper wiring and sorted-row index conversions.
+- Validation:
+  - `python3 -m py_compile burp_core_ui_and_fuzz_methods.py burp_capture_export_and_tooling_methods.py tests/test_feature_contracts.py tests/run_all_tests.py` passed.
+  - `python3 tests/run_all_tests.py` passed (`Passed: 4/4`).
+
+## [1.3.9] - 2026-04-06
+
+### Added
+- Recon Param Miner-style hidden parameter workflow:
+  - New Recon button: `Hidden Params`.
+  - Generates ranked hidden-parameter candidates from scoped Recon data (`All`, `Filtered`, `Host`, or selected endpoint).
+  - Candidate pool now combines built-in seeds with harvested words from observed parameters, paths, and JSON request bodies.
+  - Added endpoint right-click shortcut: `Hidden Params (Selected Endpoint)`.
+- Recon GAP-style global parameter intelligence workflow:
+  - New Recon button: `Param Intel`.
+  - Aggregates parameter names across `url`, `body`, `json`, and `cookie` sources.
+  - Reports frequency, endpoint/host spread, source overlap, sample values, and lightweight risk hints.
+  - New export action: `Export Param Intel` with artifacts:
+    - `param_intel.json`
+    - `param_intel_report.txt`
+- Dedicated `Logger++` tab for long-running capture sessions:
+  - high-signal request timeline table (`tool`, `method`, `host/path`, `status`, `len`, `type`, `tags`),
+  - side-by-side request/response preview inspectors for selected entries,
+  - quick actions: `Show Selected`, `To Repeater`, `Export View`, `Clear Logs`.
+  - one-tab parity controls inspired by Burp Logger/Logger++:
+    - `Backfill History` + `Import on Open` proxy-history seeding,
+    - Grep-style regex search with `Req`/`Resp`/`In Scope` toggles,
+    - lightweight named filter library (`Save/Apply/Remove Filter`),
+    - custom `Tag Rules` popup (`tag|scope|regex`) for operator-defined labels (for example admin-risk tagging),
+    - explicit popup launchers for advanced workflows:
+      - `Grep Values...` popup with regex + request/response/in-scope toggles and live match preview,
+      - `Tag Rules...` popup with quick add fields (`Tag`, `Scope`, `Regex`) and admin preset shortcut,
+      - `Tag Rules...` now supports style metadata per rule (`fg`, `bg`, `enabled`) for colorized tag chips,
+      - `Tag Rules...` now includes real color picker actions (`Pick FG`, `Pick BG`) plus an innovative `Rule Lab`:
+        - live preview of regex matches on cached Logger events,
+        - sample matched endpoints (method/host/path/status/len),
+        - one-click `Auto Style` color suggestions based on tag intent,
+    - bulk operator actions from Logger table context menu:
+      - `Select All Rows`
+      - `Copy Selected Rows`
+      - `Send Selected To Repeater`
+      - `Tag Rules (Regex)...`,
+    - multi-format export selector (`JSONL`, `JSON`, `CSV`).
+- GraphQL Raider-inspired upgrades in `GraphQL` tab:
+  - attack-family toggles (`Introspection`, `Batching`, `Aliases`, `Depth`, `Mutations`, `Field Guess`, `Directives`, `Fragments`),
+  - one-click `Generate Raider` operation pack,
+  - request mode selector (`POST JSON` or `GET Query`) for Repeater/Intruder sends,
+  - custom header injection field for GraphQL operation dispatch.
+  - saved profile selector for quick mode switching:
+    - `Balanced`
+    - `Safe Recon`
+    - `Aggressive Raider`
+    with one-click apply to synchronize attack-family toggles + request mode + max-ops.
+
+### Changed
+- Recon help dialog and button tooltips now include `Hidden Params`, `Param Intel`, and `Export Param Intel`.
+- Recon clear-data flow now resets hidden-param and parameter-intel in-memory snapshots.
+- Extracted Recon Param/GAP logic into a dedicated helper module `recon_param_intel.py` and kept thin delegating wrappers in `BurpAPISecuritySuite.py` to reduce Jython compile pressure (`Module or method too large` risk).
+- Refactored Burp startup wiring so `registerExtenderCallbacks` is now a thin orchestrator with smaller helper methods for state init, Recon UI build, tab creation, output-dir init, and callback registration to further reduce Jython method-size risk.
+- Added `jython_size_helpers.py` and delegated additional large methods from `BurpAPISecuritySuite.py`:
+  - `_create_auth_replay_tab`
+  - `show_endpoint_details`
+  - `_run_auth_replay`
+  - `_process_traffic`
+  - `_collect_nuclei_targets`
+  - `_collect_ffuf_targets`
+  - `_collect_wayback_queries`
+  This further reduces compile pressure on the primary Burp entry module.
+- Reworked `BurpExtender` method layout for Jython compatibility:
+  - Methods are now defined at module scope and rebound to `BurpExtender` at import time.
+  - `BurpExtender` class body now mainly contains constants, significantly reducing class compile-size pressure.
+- Split extracted BurpExtender methods into dedicated helper modules:
+  - `burp_core_ui_and_fuzz_methods.py` (startup wiring, Recon/UI build, fuzz generation helpers)
+  - `burp_fuzz_detection_and_capture_methods.py` (fuzz detection/evidence and capture ingestion helpers)
+  - `burp_capture_export_and_tooling_methods.py` (capture normalization, export flows, and tool-control helpers)
+  - `burp_auth_passive_and_scanner_methods.py` (auth replay, passive analysis, scanner target orchestration)
+  - `burp_wayback_import_and_logging_methods.py` (Wayback import + shared UI logging helpers)
+  with runtime rebinding in `BurpAPISecuritySuite.py`, reducing main-module Jython compile pressure further.
+- Fixed split-module startup symbol resolution by expanding Swing/Java imports in helper modules (for example `BorderFactory`) so tabs render correctly after extension load.
+- Auth Replay now performs best-effort automatic header prefill for empty `Guest/User/Admin Header` fields from captured traffic before replay starts (selected endpoint preferred, then Recon history), closer to Autorize-style automatic detection UX.
+- Auth Replay tab UI now follows a more Autorize-like operator layout:
+  - table-first replay results view (`ID`, method/URL, per-role status/length, result summary),
+  - right-side configuration groups for headers, filters, and unauth detector settings,
+  - `Clear Table` now resets both table rows and replay output.
+- Logger capture path now includes long-session protections:
+  - bounded in-memory retention (`Max Rows`) with incremental prune batches,
+  - UI refresh debounce to avoid event-table repaint thrash during heavy traffic,
+  - capture pause toggle (`Capture`) and auto-prune toggle (`Auto-prune`),
+  - `Show Last` limit to keep render volume under operator control.
+- Logger view now reports grep match counts per row (`ReqM`, `RespM`) and live status summary includes grep/scope/capture state.
+- Logger table title now aligns with tab naming (`Logger Events`).
+- Logger toolbar now includes first-class operations controls:
+  - `Logging Off` capture toggle,
+  - quick `Clear` button,
+  - `?` help popup,
+  - response length filters (`Len >=`, `Len <=`).
+- Logger regex control now behaves as an active live filter (debounced):
+  - right-side `Regex` field is consumed directly in every logger refresh cycle,
+  - invalid inline regex is surfaced in status text without noisy repeated log spam.
+- Logger tag-rule defaults are now auto-seeded with colored baseline presets:
+  - `api_endpoint`, `auth`, `sensitive`, `idor_risk`, `write_ops`, `jwt`,
+  - presets merge with operator custom rules (missing built-ins appended, existing custom rules preserved).
+- Fuzzer sparse-session enrichment:
+  - added bounded heuristic candidate scoring/fallback when API-like target set is too small,
+  - retains scope/noise filtering while increasing campaign depth on low-signal captures,
+  - summary now reports fallback contribution (`+N heuristic endpoints from M candidates`).
+
+### Tests
+- Extended `tests/test_feature_contracts.py` with wiring checks for Recon Param Miner/GAP integrations.
+- Added source-contract coverage for Logger++ tab wiring and long-session control hooks.
+
+## [1.3.8] - 2026-04-06
+
+### Added
+- Autorize-inspired Auth Replay upgrades:
+  - Added interception-style filters: `Include Regex`, `Exclude Regex`, and `Methods`.
+  - Added configurable enforcement detectors:
+    - `Enforced Status` (comma-separated HTTP status list)
+    - `Enforced Regex` (response preview regex)
+  - Added per-profile detector overrides (`guest`, `user`, `unauth`) for status and regex matching.
+  - Added `Check Unauth` toggle to explicitly replay unauthenticated requests.
+  - Auth Replay findings now suppress bypass alerts when low-privileged responses clearly match enforcement detectors.
+- InQL-inspired GraphQL upgrades:
+  - Added local schema picker (`Schema File` + `Browse`) for introspection JSON analysis.
+  - Added `Analyze Schema` action to generate operations and summarize:
+    - generated queries/mutations/subscriptions
+    - points of interest categories
+    - circular type references
+  - Added `Batch Queries` export action for GraphQL batching/rate-limit testing payload packs.
+  - Added direct operation handoff actions:
+    - `To Repeater` sends generated schema operations as runnable GraphQL requests.
+    - `To Intruder` sends generated schema operations for Intruder workflows.
+  - Added GraphQL batch export artifacts:
+    - `graphql_batch_payload.json`
+    - `graphql_queries.txt`
+    - `README.txt`
+
+### Changed
+- GraphQL tab now tracks generated operation templates in memory (`graphql_generated_operations`) for downstream export/testing.
+- Auth Replay UI guidance now explicitly documents Autorize-style detector/filter mode.
+
+### Tests
+- Extended `tests/test_feature_contracts.py` with wiring checks for:
+  - Auth Replay detector/filter controls and enforcement logic helpers.
+  - GraphQL schema analysis and batch export actions/helpers.
+
+## [1.3.7] - 2026-04-06
+
+### Added
+- Recon Logger++-style triage controls:
+  - `Tag` filter sourced from auto-tagged endpoint metadata.
+  - `Tool` filter sourced from captured request origin (`Proxy`, `Repeater`, `Intruder`, `Manual`, etc.).
+  - `Regex` + scope filter (`Any`, `Request`, `Response`, `Req+Resp`) for advanced content matching.
+- Recon `Grep` action for capture-wide regex search and extraction of match groups from request/response data.
+- Extended automatic Recon tagging with Logger++-inspired categories:
+  - `api_endpoint`, `auth`, `idor_risk`, `sensitive`, `write_ops`, `jwt`, `admin_debug`, `no_auth`.
+- Recon `Turbo Pack` export:
+  - Exports Turbo Intruder-ready request templates with `%s` insertion points.
+  - Exports starter Turbo scripts (`basic.py`, `race_gate.py`), payload seed list, and manifest.
+  - Added right-click shortcut on selected Recon endpoint: `Export Turbo Pack (Selected Endpoint)`.
+
+### Changed
+- Recon capture entries now track `source_tool` so operators can filter/log by origin tool.
+- Endpoint tags now merge over time as additional samples are captured for the same endpoint key.
+- Recon button help text now includes `Grep` and `Turbo Pack` guidance.
+
+### Tests
+- Expanded `tests/test_feature_contracts.py` with wiring checks for:
+  - Recon Logger++-style filters and grep action.
+  - Recon Turbo Pack export and selected-endpoint popup action.
+  - Source tool tracking and new tag/filter update helpers.
+
 ## [1.3.6] - 2026-04-06
 
 ### Added
