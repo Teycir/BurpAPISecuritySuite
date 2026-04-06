@@ -586,6 +586,14 @@ def _export_ai_context(self):
         ("ai_all_tabs_context.json", bundle.get("all_tabs_context", {})),
         ("ai_behavioral_analysis.json", bundle.get("behavioral_analysis", {})),
         (
+            "ai_counterfactual_differential_findings.json",
+            bundle.get("counterfactual_differentials", {}).get("findings", []),
+        ),
+        (
+            "ai_counterfactual_differential_summary.json",
+            bundle.get("counterfactual_differentials", {}).get("summary", {}),
+        ),
+        (
             "ai_sequence_invariant_findings.json",
             bundle.get("sequence_invariants", {}).get("findings", []),
         ),
@@ -677,9 +685,18 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
         data_snapshot, attacks_snapshot
     )
     behavioral_analysis = self._export_behavioral_analysis(data_snapshot)
+    counterfactual_differentials = self._build_counterfactual_differential_package(
+        data_snapshot
+    )
     sequence_invariants = self._build_sequence_invariant_package(data_snapshot)
     golden_tickets = self._build_golden_ticket_package(data_snapshot)
     state_transitions = self._build_state_transition_package(data_snapshot)
+    self._sort_and_store_counterfactual_payload(
+        counterfactual_differentials,
+        source_label="ai_export",
+        scope_label="All Endpoints",
+        target_count=len(data_snapshot),
+    )
     self._sort_and_store_sequence_invariant_payload(
         sequence_invariants,
         source_label="ai_export",
@@ -748,6 +765,7 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
         "authentication_flows": vulnerability_context.get("authentication_flows", {}),
         "business_logic_hints": vulnerability_context.get("business_logic_hints", []),
         "behavioral_analysis": behavioral_analysis,
+        "counterfactual_differentials": counterfactual_differentials,
         "sequence_invariants": sequence_invariants,
         "golden_tickets": golden_tickets,
         "state_transitions": state_transitions,
@@ -772,6 +790,9 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
             "vulnerability_count": len(
                 vulnerability_context.get("vulnerabilities", [])
             ),
+            "counterfactual_differential_count": int(
+                counterfactual_differentials.get("finding_count", 0) or 0
+            ),
             "sequence_invariant_count": int(
                 sequence_invariants.get("finding_count", 0) or 0
             ),
@@ -790,6 +811,7 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
         "enhanced_prompt": self._generate_enhanced_ai_prompt(),
         "llm_exports": llm_exports,
         "ai_prep_layer": ai_prep_layer,
+        "counterfactual_differentials": counterfactual_differentials,
         "sequence_invariants": sequence_invariants,
         "golden_tickets": golden_tickets,
         "state_transitions": state_transitions,
@@ -809,6 +831,7 @@ def _build_ai_bundle_schema_contract(self):
             "feedback_template",
             "enhanced_prompt",
             "llm_exports",
+            "counterfactual_differentials",
             "sequence_invariants",
             "golden_tickets",
             "state_transitions",
@@ -825,6 +848,10 @@ def _build_ai_bundle_schema_contract(self):
             "llm_exports": {
                 "type": "object",
                 "required": ["openai", "anthropic", "local"],
+            },
+            "counterfactual_differentials": {
+                "type": "object",
+                "required": ["findings", "summary"],
             },
             "sequence_invariants": {
                 "type": "object",
@@ -911,6 +938,7 @@ def _validate_ai_bundle_schema(self, bundle):
         "total_endpoints",
         "total_attacks",
         "vulnerability_count",
+        "counterfactual_differential_count",
         "sequence_invariant_count",
         "golden_ticket_count",
         "state_transition_count",
@@ -951,9 +979,36 @@ def _validate_ai_bundle_schema(self, bundle):
         )
         return block
 
+    def ensure_scoreless_block(key):
+        block = ensure_object(key)
+        findings = block.get("findings")
+        summary = block.get("summary")
+        if not isinstance(findings, list):
+            block["findings"] = []
+            report["applied_defaults"].append("{}.findings=[]".format(key))
+            report["warnings"].append("invalid_findings_array: {}".format(key))
+        if not isinstance(summary, dict):
+            block["summary"] = {}
+            report["applied_defaults"].append("{}.summary={{}}".format(key))
+            report["warnings"].append("invalid_summary_object: {}".format(key))
+        block["finding_count"] = to_int(
+            block.get("finding_count"), fallback=len(block.get("findings", []))
+        )
+        if not isinstance(block.get("no_scoring"), bool):
+            block["no_scoring"] = True
+            report["applied_defaults"].append("{}.no_scoring=true".format(key))
+        if not isinstance(block.get("non_destructive"), bool):
+            block["non_destructive"] = True
+            report["applied_defaults"].append("{}.non_destructive=true".format(key))
+        return block
+
+    counterfactual = ensure_scoreless_block("counterfactual_differentials")
     sequence = ensure_findings_block("sequence_invariants")
     golden = ensure_findings_block("golden_tickets")
     state = ensure_findings_block("state_transitions")
+    metadata["counterfactual_differential_count"] = len(
+        counterfactual.get("findings", [])
+    )
     metadata["sequence_invariant_count"] = len(sequence.get("findings", []))
     metadata["golden_ticket_count"] = len(golden.get("findings", []))
     metadata["state_transition_count"] = len(state.get("findings", []))
@@ -1047,6 +1102,20 @@ def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
                 lock_attr="passive_discovery_lock",
             ),
             "output_tail": self._snapshot_text_area("passive_area"),
+        },
+        "counterfactual_differentials": {
+            "finding_count": len(getattr(self, "counterfactual_findings", []) or []),
+            "findings": self._snapshot_list_attr(
+                "counterfactual_findings",
+                limit=300,
+                lock_attr="counterfactual_lock",
+            ),
+            "summary": self._snapshot_dict_attr(
+                "counterfactual_summary", lock_attr="counterfactual_lock"
+            ),
+            "meta": self._snapshot_dict_attr(
+                "counterfactual_meta", lock_attr="counterfactual_lock"
+            ),
         },
         "sequence_invariants": {
             "finding_count": len(getattr(self, "sequence_invariant_findings", []) or []),

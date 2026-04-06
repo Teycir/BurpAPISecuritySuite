@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.4.1-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.4.2-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -129,6 +129,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
   - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
+    - [v1.4.2 - Counterfactual Differential Pipeline + Deep-Logic Expansion](#v142---counterfactual-differential-pipeline--deep-logic-expansion)
     - [v1.4.1 - Logger Clear Data + Two-Line Toolbar](#v141---logger-clear-data--two-line-toolbar)
     - [v1.4.0 - Logger/Recon Parity + Stability + Sorting](#v140---loggerrecon-parity--stability--sorting)
     - [v1.3.9 - Logger Tab + Recon Hidden Params + Param Intel](#v139---logger-tab--recon-hidden-params--param-intel)
@@ -215,6 +216,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Dalfox Verify**: Confirm reflected XSS candidates with Dalfox proof output
 - **API Asset Discovery**: Expand first-party scope with `subfinder` + `dnsx` + `httpx`
 - **OpenAPI Drift**: Compare observed traffic vs OpenAPI spec for undocumented/missing endpoints
+- **Counterfactual Differentials**: Scoreless, non-destructive invariant breaks for representation/auth/identifier drift
 - **Sequence Invariants**: Non-destructive deep-logic checks with confidence/evidence ledger export
 - **Wayback Machine**: Discover historical endpoints and forgotten APIs
 - **Katana Crawler**: Deep web crawling with automatic endpoint discovery
@@ -259,6 +261,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Free & Open Source**: All features available without licensing costs
 - **Intelligent Automation**: Auto-detects BOLA/IDOR vulnerabilities across all authenticated endpoints
 - **AI-Powered**: Export all-tab AI bundles (plus sequence evidence ledger) for ChatGPT/Claude triage
+- **Differential-First Logic Coverage**: Includes scoreless counterfactual drift checks that many signature scanners miss
 - **Comprehensive Coverage**: 15 attack types with 108+ API-specific payloads
 - **External Tool Integration**: Seamlessly integrates with Nuclei, SQLMap, Dalfox, HTTPX, Katana, FFUF, Subfinder, and DNSX
 - **Works with Burp Community**: No need for expensive Burp Pro license
@@ -281,8 +284,8 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 
 1. **Capture**: Browse/scan target API with auto-capture enabled
 2. **Review**: Check the `Recon` tab to inspect captured endpoints and findings
-3. **Deep Logic (Optional)**: In `Passive Discovery`, click `Run Invariants` to find multi-step logic and token misuse issues from captured traffic
-4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to refresh Sequence + Golden + State Matrix results before export
+3. **Deep Logic (Optional)**: In `Passive Discovery`, click `Run Differential` for scoreless counterfactual checks, or `Run Invariants` for the full deep-logic stack
+4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to refresh Differential + Sequence + Golden + State Matrix results before export
 5. **Export**: In `Recon`, click `Export AI Bundle` to generate all-tab AI context
 6. **Generate**: Feed exported JSON to an LLM (ChatGPT, Claude, etc.) for triage/payload planning
 
@@ -302,8 +305,8 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Insomnia**: Export scoped endpoints to Insomnia import JSON
 - **Tool Health**: One-click diagnostics for Nuclei/HTTPX/Katana/FFUF/Wayback/SQLMap/Dalfox/Subfinder/DNSX binary compatibility
 - **Button Help**: Quick guide for Recon buttons and expected outputs
-- **Refresh Invariants**: Refresh Sequence + Golden + State Matrix analysis from captured endpoints before AI export
-- **Invariant Status Line**: Shows Sequence, Golden, and State Matrix counts with confidence/source/update time
+- **Refresh Invariants**: Refresh Differential + Sequence + Golden + State Matrix analysis from captured endpoints before AI export
+- **Invariant Status Line**: Shows Differential, Sequence, Golden, and State Matrix cache counts with source/update time
 - **Clear Data**: Reset captured Recon endpoints and Logger events together
 
 #### Logger Tab
@@ -356,7 +359,8 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Passive Only**: Analyzes captured/replayed proxy traffic without active requests
 - **Mode Selector**: Run `All` or per-category checks (`API3`, `API4`, `API5`, `API6`, `API9`, `API10`)
 - **Scope Selector**: Analyze `All Endpoints`, `Filtered View`, or current host scope
-- **Run Invariants**: Run non-destructive checks for workflow logic, token-overreach patterns, and state-transition drift
+- **Run Differential**: Run scoreless counterfactual checks for representation/auth/identifier precedence drift (passive-only)
+- **Run Invariants**: Run full non-destructive stack (Differential + Sequence + Golden + State) for deep workflow/token/state analysis
 - **Run All Advanced**: One-click execution of all advanced deep-logic engines
 - **Abuse Chains**: Build shortest graph-to-replay exploit chains (`auth -> object access -> state change`)
 - **Proof Mode**: Generate minimal reproducible packet sets with expected vulnerable vs safe signals
@@ -364,7 +368,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Role Delta**: Compare role-level behavior (guest/user/admin-like) and rank suspicious parity for BOLA/BFLA triage
 - **Run / Stop / Clear**: Execute discovery, cancel safely, and reset output quickly
 - **Export / Copy**: Save findings or copy report text
-- **Export Ledger**: Save Sequence + Golden + State Matrix findings and confidence ledgers as JSON files
+- **Export Ledger**: Save Differential + Sequence + Golden + State Matrix artifacts as JSON files
 - **Advanced Exports**: Also writes `abuse_chain_*`, `proof_mode_packet_sets`, `spec_guardrails_*`, and `role_delta_*` JSON artifacts
 - **Output**: Severity/categorical summary plus top findings for triage
 
@@ -707,6 +711,8 @@ vulnerability type. Focus on:
 │   ├── ai_all_tabs_context.json
 │   ├── ai_vulnerability_context.json
 │   ├── ai_behavioral_analysis.json
+│   ├── ai_counterfactual_differential_findings.json
+│   ├── ai_counterfactual_differential_summary.json
 │   ├── ai_sequence_invariant_findings.json
 │   ├── ai_sequence_evidence_ledger.json
 │   ├── ai_golden_ticket_findings.json
@@ -717,6 +723,8 @@ vulnerability type. Focus on:
 │   ├── ai_anthropic_request.json
 │   └── ai_ollama_request.json
 ├── SequenceInvariant_Export_TIMESTAMP/
+│   ├── counterfactual_differential_findings.json
+│   ├── counterfactual_differential_summary.json
 │   ├── sequence_invariant_findings.json
 │   ├── sequence_evidence_ledger.json
 │   ├── golden_ticket_findings.json
@@ -1058,6 +1066,17 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ### Recent Updates
 
+### v1.4.2 - Counterfactual Differential Pipeline + Deep-Logic Expansion
+- ✅ Added scoreless, non-destructive `Run Differential` workflow in `Passive Discovery`.
+- ✅ Added counterfactual differential artifacts to `Export Ledger`:
+  - `counterfactual_differential_findings.json`
+  - `counterfactual_differential_summary.json`
+- ✅ Added AI export artifacts:
+  - `ai_counterfactual_differential_findings.json`
+  - `ai_counterfactual_differential_summary.json`
+- ✅ Extended `Run Invariants` and Recon `Refresh Invariants` to include Differential cache generation.
+- ✅ Hardened error visibility in differential parsing path (parse failures are logged, not hidden).
+
 ### v1.4.1 - Logger Clear Data + Two-Line Toolbar
 - ✅ Added a single red Logger `Clear Data` action with shared behavior (clears both Recon and Logger state).
 - ✅ Removed duplicate Logger clear buttons so toolbar behavior is unambiguous.
@@ -1083,10 +1102,18 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 - ✅ Added Recon `Param Intel` workflow for GAP-style parameter intelligence and exports.
 - ✅ Added Recon `Turbo Pack` export helpers and Logger/Recon tag interoperability.
 
-### Plain-Language Summary (v1.3.2 -> Unreleased)
+### Plain-Language Summary (v1.3.2 -> v1.4.2)
 
 What is already shipped:
 - ✅ **Recon-centered AI export flow**: `Export AI Bundle` is now in Recon (not Fuzzer), because it exports context from all tabs.
+- ✅ **Scoreless counterfactual differential workflow**:
+  - `Run Differential` in `Passive Discovery` detects representation/auth/identifier precedence drift from captured traffic only.
+  - Included in `Run Invariants`, Recon `Refresh Invariants`, `Export Ledger`, and `Export AI Bundle`.
+  - New artifacts:
+    - `counterfactual_differential_findings.json`
+    - `counterfactual_differential_summary.json`
+    - `ai_counterfactual_differential_findings.json`
+    - `ai_counterfactual_differential_summary.json`
 - ✅ **Deep-logic invariant workflow**:
   - `Run Invariants` in `Passive Discovery` checks captured endpoint flows for hidden logic issues.
   - `Refresh Invariants` in `Recon` recomputes invariants before AI export.

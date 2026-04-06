@@ -1338,7 +1338,9 @@ def _run_sequence_invariants(self, event):
         )
         return
 
-    self.passive_area.setText("[*] Starting deep-logic analysis (Sequence + Golden + State)...\n")
+    self.passive_area.setText(
+        "[*] Starting deep-logic analysis (Differential + Sequence + Golden + State)...\n"
+    )
     self.passive_area.append(
         "[*] Scope: {} | Targets: {} of {}\n\n".format(
             scope, len(endpoint_keys), total_available
@@ -1348,6 +1350,9 @@ def _run_sequence_invariants(self, event):
     def run_invariants():
         try:
             snapshot = self._collect_passive_snapshot(endpoint_keys)
+            counterfactual_package = self._build_counterfactual_differential_package(
+                snapshot
+            )
             package = self._build_sequence_invariant_package(snapshot)
             golden_package = self._build_golden_ticket_package(snapshot)
             state_package = self._build_state_transition_package(snapshot)
@@ -1356,6 +1361,12 @@ def _run_sequence_invariants(self, event):
                 sequence_package=package,
                 golden_package=golden_package,
                 state_package=state_package,
+            )
+            self._sort_and_store_counterfactual_payload(
+                counterfactual_package,
+                source_label="passive_run",
+                scope_label=scope,
+                target_count=len(snapshot),
             )
             self._sort_and_store_sequence_invariant_payload(
                 package,
@@ -1381,13 +1392,17 @@ def _run_sequence_invariants(self, event):
                 scope_label=scope,
                 target_count=len(snapshot),
             )
-            text = self._format_sequence_invariant_output(
+            text = self._format_counterfactual_output(
+                counterfactual_package, len(snapshot), total_available, scope
+            )
+            text += self._format_sequence_invariant_output(
                 package, len(snapshot), total_available, scope
             )
             text += self._format_golden_ticket_output(golden_package)
             text += self._format_state_transition_output(state_package)
             text += self._format_advanced_logic_output(advanced_packages, mode="all")
             SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
+            diff_count = int(counterfactual_package.get("finding_count", 0) or 0)
             finding_count = int(package.get("finding_count", 0) or 0)
             golden_count = int(golden_package.get("finding_count", 0) or 0)
             state_count = int(state_package.get("finding_count", 0) or 0)
@@ -1416,10 +1431,9 @@ def _run_sequence_invariants(self, event):
                 or 0
             )
             SwingUtilities.invokeLater(
-                lambda c=finding_count, g=golden_count, s=state_count, ac=chain_count, pm=proof_count, sg=guardrail_count, rd=role_count: self.log_to_ui(
-                    "[+] Invariant analysis complete (seq={} golden={} state={} chains={} proof={} guardrails={} role={})".format(
-                        c, g, s
-                        , ac, pm, sg, rd
+                lambda d=diff_count, c=finding_count, g=golden_count, s=state_count, ac=chain_count, pm=proof_count, sg=guardrail_count, rd=role_count: self.log_to_ui(
+                    "[+] Invariant analysis complete (diff={} seq={} golden={} state={} chains={} proof={} guardrails={} role={})".format(
+                        d, c, g, s, ac, pm, sg, rd
                     )
                 )
             )
@@ -2959,6 +2973,10 @@ def _export_passive_discovery_results(self):
 
 def _export_sequence_invariant_ledger(self):
     """Export sequence-invariant findings and confidence ledger to JSON."""
+    with self.counterfactual_lock:
+        counterfactual_findings = list(self.counterfactual_findings or [])
+        counterfactual_summary = dict(self.counterfactual_summary or {})
+        counterfactual_meta = dict(self.counterfactual_meta or {})
     with self.sequence_invariant_lock:
         findings = list(self.sequence_invariant_findings or [])
         ledger = dict(self.sequence_invariant_ledger or {})
@@ -2979,7 +2997,8 @@ def _export_sequence_invariant_ledger(self):
     role_package = dict(advanced_packages.get("role_delta", {}) or {})
 
     if (
-        (not findings)
+        (not counterfactual_findings)
+        and (not findings)
         and (not golden_findings)
         and (not state_findings)
         and (not abuse_package.get("findings"))
@@ -2988,7 +3007,7 @@ def _export_sequence_invariant_ledger(self):
         and (not role_package.get("findings"))
     ):
         self.passive_area.append(
-            "\n[!] No invariant findings to export. Run 'Run Invariants' first.\n"
+            "\n[!] No deep-logic findings to export. Run 'Run Invariants' or 'Run Differential' first.\n"
         )
         return
 
@@ -2999,6 +3018,25 @@ def _export_sequence_invariant_ledger(self):
         return
 
     files_to_write = []
+    if counterfactual_findings:
+        files_to_write.extend(
+            [
+                (
+                    "counterfactual_differential_findings.json",
+                    {
+                        "metadata": counterfactual_meta,
+                        "findings": counterfactual_findings,
+                    },
+                ),
+                (
+                    "counterfactual_differential_summary.json",
+                    {
+                        "metadata": counterfactual_meta,
+                        "summary": counterfactual_summary,
+                    },
+                ),
+            ]
+        )
     if findings:
         files_to_write.extend(
             [

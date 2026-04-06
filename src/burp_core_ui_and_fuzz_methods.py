@@ -601,6 +601,10 @@ def _initialize_runtime_state(self):
     self.state_transition_ledger = {}
     self.state_transition_meta = {}
     self.state_transition_lock = threading.Lock()
+    self.counterfactual_findings = []
+    self.counterfactual_summary = {}
+    self.counterfactual_meta = {}
+    self.counterfactual_lock = threading.Lock()
     self.advanced_logic_packages = {}
     self.advanced_logic_lock = threading.Lock()
     self.recon_invariant_status_label = None
@@ -1598,6 +1602,7 @@ def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
         "extract": "Extract header value from captured traffic into the selected auth profile field",
         "run passive": "Analyze captured traffic only (no active requests) for API risk patterns",
         "run invariants": "Check captured endpoint flows for hidden logic issues",
+        "run differential": "Run scoreless counterfactual differentials (representation/auth/identifier drift) from captured traffic only",
         "run all advanced": "Run abuse chains, proof mode, spec guardrails, and role delta in one workflow",
         "abuse chains": "Build shortest likely exploit chains (auth -> object access -> state change)",
         "proof mode": "Generate minimal reproducible packet sequences with vulnerable/safe response expectations",
@@ -1605,7 +1610,7 @@ def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
         "role delta": "Compare endpoint behavior across role signals (guest/user/admin) and rank suspicious parity",
         "refresh invariants": "Recompute invariant checks from Recon data",
         "export": "Export this tab findings to a timestamped file in the project export folder",
-        "export ledger": "Save invariant findings and confidence report",
+        "export ledger": "Save deep-logic artifacts (including scoreless differential findings) to JSON files",
         "run nuclei": "Launch Nuclei with current profile/scope and parse findings back into this tab",
         "export targets": "Export current scoped target URLs prepared for Nuclei execution",
         "probe endpoints": "Run HTTPX on scoped URLs to capture status/title/tech probe output",
@@ -1781,25 +1786,38 @@ def _build_recon_invariant_status_text(self):
         sequence_count = len(self.sequence_invariant_findings or [])
         meta = dict(self.sequence_invariant_meta or {})
         ledger = dict(self.sequence_invariant_ledger or {})
+    with self.counterfactual_lock:
+        counterfactual_count = len(self.counterfactual_findings or [])
+        counterfactual_meta = dict(self.counterfactual_meta or {})
     with self.golden_ticket_lock:
         golden_count = len(self.golden_ticket_findings or [])
     with self.state_transition_lock:
         state_count = len(self.state_transition_findings or [])
 
-    if not meta and sequence_count <= 0 and golden_count <= 0 and state_count <= 0:
+    if (
+        (not meta)
+        and sequence_count <= 0
+        and golden_count <= 0
+        and state_count <= 0
+        and counterfactual_count <= 0
+    ):
         return "Not generated yet (AI export computes this automatically)."
 
     source = self._ascii_safe(meta.get("source") or "unknown")
+    diff_source = self._ascii_safe(counterfactual_meta.get("source") or source)
     scope = self._ascii_safe(meta.get("scope") or "unknown")
-    generated_at = self._ascii_safe(meta.get("generated_at") or "unknown")
+    generated_at = self._ascii_safe(
+        meta.get("generated_at") or counterfactual_meta.get("generated_at") or "unknown"
+    )
     confidence_dist = dict(ledger.get("confidence_distribution", {}) or {})
     high_conf = int(confidence_dist.get("high", 0) or 0)
-    return "Seq={} | Golden={} | State={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
+    return "Diff={} | Seq={} | Golden={} | State={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
+        counterfactual_count,
         sequence_count,
         golden_count,
         state_count,
         high_conf,
-        source,
+        diff_source,
         scope,
         generated_at,
     )
@@ -1839,9 +1857,18 @@ def _refresh_sequence_invariants_from_recon(self, event):
 
     def worker():
         try:
+            counterfactual_package = self._build_counterfactual_differential_package(
+                data_snapshot
+            )
             package = self._build_sequence_invariant_package(data_snapshot)
             golden_package = self._build_golden_ticket_package(data_snapshot)
             state_package = self._build_state_transition_package(data_snapshot)
+            self._sort_and_store_counterfactual_payload(
+                counterfactual_package,
+                source_label="recon_refresh",
+                scope_label="All Endpoints",
+                target_count=len(data_snapshot),
+            )
             self._sort_and_store_sequence_invariant_payload(
                 package,
                 source_label="recon_refresh",
@@ -1860,13 +1887,16 @@ def _refresh_sequence_invariants_from_recon(self, event):
                 scope_label="All Endpoints",
                 target_count=len(data_snapshot),
             )
+            counterfactual_count = int(
+                counterfactual_package.get("finding_count", 0) or 0
+            )
             finding_count = int(package.get("finding_count", 0) or 0)
             golden_count = int(golden_package.get("finding_count", 0) or 0)
             state_count = int(state_package.get("finding_count", 0) or 0)
             SwingUtilities.invokeLater(
-                lambda c=finding_count, g=golden_count, s=state_count: self.log_to_ui(
-                    "[+] Recon invariants refreshed (seq={} golden={} state={})".format(
-                        c, g, s
+                lambda d=counterfactual_count, c=finding_count, g=golden_count, s=state_count: self.log_to_ui(
+                    "[+] Recon invariants refreshed (diff={} seq={} golden={} state={})".format(
+                        d, c, g, s
                     )
                 )
             )
@@ -3623,6 +3653,13 @@ def _create_passive_discovery_tab(self):
     )
     deep_logic_row.add(
         self._create_action_button(
+            "Run Differential",
+            Color(75, 0, 130),
+            lambda e: self._run_counterfactual_differentials(e),
+        )
+    )
+    deep_logic_row.add(
+        self._create_action_button(
             "Export Ledger",
             Color(72, 61, 139),
             lambda e: self._export_sequence_invariant_ledger(),
@@ -3630,7 +3667,7 @@ def _create_passive_discovery_tab(self):
     )
     deep_logic_row.add(
         JLabel(
-            "Sequence/state checks with confidence scoring (non-destructive). Includes Golden Ticket and State Matrix analysis."
+            "Non-destructive deep logic checks. Includes scoreless differential invariants plus Sequence/Golden/State analysis."
         )
     )
 
@@ -3697,6 +3734,9 @@ def _create_passive_discovery_tab(self):
     self.sequence_invariant_findings = []
     self.sequence_invariant_ledger = {}
     self.sequence_invariant_meta = {}
+    self.counterfactual_findings = []
+    self.counterfactual_summary = {}
+    self.counterfactual_meta = {}
     self.golden_ticket_findings = []
     self.golden_ticket_ledger = {}
     self.golden_ticket_meta = {}

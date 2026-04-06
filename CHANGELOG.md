@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- No changes yet.
+
+## [1.4.2] - 2026-04-07
+
 ### Changed
 - Burp startup profile configuration updates:
   - Removed Logger++ from auto-load extensions list
@@ -14,6 +18,13 @@ All notable changes to this project are documented in this file.
   - Moved dual-tab refill orchestration into dedicated module `src/burp_recon_logger_sync_methods.py`.
   - Coordinated Recon+Logger refill through one pipeline to avoid concurrent heavy backfill scans.
   - Backfill history seeding now uses bounded tail-window snapshots instead of full-history list copies.
+- Deep-logic run and status flows now include scoreless Differential artifacts:
+  - `Run Invariants` now runs Differential + Sequence + Golden + State + Advanced engines.
+  - Recon `Refresh Invariants` now refreshes Differential cache alongside Sequence/Golden/State.
+  - Recon invariant footer now surfaces `Diff=` count in cached status text.
+- Differential parsing/error behavior hardening:
+  - Removed silent JSON parse swallowing in differential extraction path.
+  - JSON parse failures are now explicitly surfaced via Burp `printError` logging.
 
 ### Added
 - Advanced deep-logic analysis suite in Passive Discovery:
@@ -27,6 +38,20 @@ All notable changes to this project are documented in this file.
   - `proof_mode_packet_sets.json`
   - `spec_guardrails_rules.json`, `spec_guardrails_violations.json`
   - `role_delta_findings.json`, `role_delta_ledger.json`
+- Counterfactual differential pipeline (passive-only, non-destructive, scoreless):
+  - New helper module: `src/burp_counterfactual_methods.py`.
+  - New Passive Discovery action: `Run Differential`.
+  - Detects high-ROI drift classes often missed by signature scanners:
+    - representation/auth invariance breaks,
+    - identifier source-precedence conflicts,
+    - weak-context sensitive-field exposure monotonicity drift.
+- Differential artifact export coverage:
+  - `counterfactual_differential_findings.json`
+  - `counterfactual_differential_summary.json`
+- AI export bundle/context/schema coverage for differential artifacts:
+  - `counterfactual_differentials` block in `ai_bundle.json` + schema validation/defaulting path.
+  - `ai_counterfactual_differential_findings.json`
+  - `ai_counterfactual_differential_summary.json`
 
 ## [1.4.1] - 2026-04-06
 

@@ -1205,6 +1205,7 @@ class EndpointRenderer(ListCellRenderer):
 import burp_core_ui_and_fuzz_methods
 import burp_recon_logger_sync_methods
 import burp_advanced_logic_methods
+import burp_counterfactual_methods
 import burp_fuzz_detection_and_capture_methods
 import burp_capture_export_and_tooling_methods
 import burp_auth_passive_and_scanner_methods
@@ -1214,6 +1215,7 @@ _BURP_METHOD_MODULES = [
     burp_core_ui_and_fuzz_methods,
     burp_recon_logger_sync_methods,
     burp_advanced_logic_methods,
+    burp_counterfactual_methods,
     burp_fuzz_detection_and_capture_methods,
     burp_capture_export_and_tooling_methods,
     burp_auth_passive_and_scanner_methods,
