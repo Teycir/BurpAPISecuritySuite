@@ -7,6 +7,7 @@ import re
 import shlex
 import threading
 import time
+from collections import deque
 import ai_prep_layer
 import behavior_analysis
 import heavy_runners
@@ -47,6 +48,119 @@ from javax.swing import (
 )
 from javax.swing.event import DocumentListener, ListSelectionListener
 from javax.swing.table import DefaultTableCellRenderer, DefaultTableModel, TableRowSorter
+
+_PERSISTED_CHECKBOX_ATTRS = (
+    "recon_autopopulate_checkbox",
+    "recon_noise_filter_checkbox",
+    "logger_auto_prune_checkbox",
+    "logger_noise_filter_checkbox",
+    "logger_logging_off_checkbox",
+    "logger_import_on_open_checkbox",
+    "logger_search_req_checkbox",
+    "logger_search_resp_checkbox",
+    "logger_in_scope_checkbox",
+    "fuzzer_lenient_checkbox",
+    "version_lenient_checkbox",
+    "param_lenient_checkbox",
+    "asset_custom_cmd_checkbox",
+    "nuclei_custom_cmd_checkbox",
+    "httpx_custom_cmd_checkbox",
+    "katana_custom_cmd_checkbox",
+    "wayback_custom_cmd_checkbox",
+    "auth_replay_check_unauth_checkbox",
+    "graphql_raider_introspection_checkbox",
+    "graphql_raider_batching_checkbox",
+    "graphql_raider_alias_checkbox",
+    "graphql_raider_depth_checkbox",
+    "graphql_raider_mutation_checkbox",
+    "graphql_raider_suggestion_checkbox",
+    "graphql_raider_directive_checkbox",
+    "graphql_raider_fragment_checkbox",
+    "graphql_raider_include_schema_ops_checkbox",
+)
+
+_PERSISTED_TEXT_ATTRS = (
+    "search_field",
+    "recon_regex_field",
+    "logger_filter_field",
+    "logger_regex_field",
+    "logger_len_min_field",
+    "logger_len_max_field",
+    "version_input",
+    "param_input",
+    "sqlmap_path_field",
+    "sqlmap_max_targets_field",
+    "sqlmap_target_timeout_field",
+    "dalfox_path_field",
+    "dalfox_max_targets_field",
+    "dalfox_target_timeout_field",
+    "asset_domains_field",
+    "asset_max_domains_field",
+    "asset_subfinder_path_field",
+    "asset_custom_cmd_field",
+    "openapi_spec_field",
+    "passive_max_field",
+    "nuclei_path_field",
+    "nuclei_custom_cmd_field",
+    "httpx_path_field",
+    "httpx_custom_cmd_field",
+    "katana_path_field",
+    "katana_custom_cmd_field",
+    "ffuf_path_field",
+    "ffuf_wordlist_field",
+    "wayback_from_field",
+    "wayback_to_field",
+    "wayback_limit_field",
+    "wayback_custom_cmd_field",
+    "graphql_targets_field",
+    "graphql_schema_file_field",
+    "graphql_max_targets_field",
+    "graphql_raider_max_ops_field",
+    "graphql_headers_field",
+    "auth_replay_max_field",
+    "auth_guest_header_field",
+    "auth_user_header_field",
+    "auth_admin_header_field",
+    "auth_replay_include_regex_field",
+    "auth_replay_exclude_regex_field",
+    "auth_replay_methods_field",
+    "auth_replay_enforced_status_field",
+    "auth_replay_enforced_regex_field",
+    "auth_replay_guest_status_field",
+    "auth_replay_guest_regex_field",
+    "auth_replay_user_status_field",
+    "auth_replay_user_regex_field",
+    "auth_replay_unauth_status_field",
+    "auth_replay_unauth_regex_field",
+)
+
+_PERSISTED_COMBO_ATTRS = (
+    "sample_limit",
+    "page_size_combo",
+    "recon_regex_scope_combo",
+    "group_by",
+    "method_filter",
+    "severity_filter",
+    "host_filter",
+    "tag_filter",
+    "tool_filter",
+    "logger_tool_combo",
+    "logger_method_combo",
+    "logger_status_combo",
+    "logger_show_last_combo",
+    "logger_max_rows_combo",
+    "logger_export_format_combo",
+    "attack_type_combo",
+    "sqlmap_profile_combo",
+    "dalfox_profile_combo",
+    "asset_profile_combo",
+    "passive_scope_combo",
+    "passive_mode_combo",
+    "nuclei_profile_combo",
+    "graphql_profile_combo",
+    "graphql_request_mode_combo",
+    "auth_replay_scope_combo",
+)
 
 
 class _LoggerTableModel(DefaultTableModel):
@@ -206,7 +320,9 @@ class _LoggerTableCellRenderer(DefaultTableCellRenderer):
 
         event = None
         try:
-            events = list(getattr(self.extender, "logger_view_events", []) or [])
+            events = getattr(self.extender, "logger_view_events", None)
+            if events is None:
+                events = []
             model_row = int(row)
             try:
                 model_row = int(table.convertRowIndexToModel(int(row)))
@@ -223,7 +339,10 @@ class _LoggerTableCellRenderer(DefaultTableCellRenderer):
             component.setToolTipText(None)
             return component
 
-        if hasattr(self.extender, "_logger_extract_tag_tokens"):
+        cached_tokens = event.get("_tag_tokens")
+        if isinstance(cached_tokens, list):
+            tags = list(cached_tokens)
+        elif hasattr(self.extender, "_logger_extract_tag_tokens"):
             tags = self.extender._logger_extract_tag_tokens(event.get("tags") or "")
         else:
             tags_text = self.extender._ascii_safe(event.get("tags") or "", lower=True)
@@ -291,6 +410,38 @@ class _LoggerFilterListener(DocumentListener):
         self.timer.start()
 
 
+class _PersistTextFieldListener(DocumentListener):
+    """Debounced persistence listener for JTextField controls."""
+
+    def __init__(self, extender, attr_name, delay_ms=300):
+        self.extender = extender
+        self.attr_name = attr_name
+        self.delay_ms = max(120, int(delay_ms or 300))
+        self.timer = None
+
+    def insertUpdate(self, _event):
+        self._schedule()
+
+    def removeUpdate(self, _event):
+        self._schedule()
+
+    def changedUpdate(self, _event):
+        self._schedule()
+
+    def _schedule(self):
+        if self.timer:
+            self.timer.cancel()
+        self.timer = threading.Timer(
+            self.delay_ms / 1000.0,
+            lambda: SwingUtilities.invokeLater(self._flush),
+        )
+        self.timer.daemon = True
+        self.timer.start()
+
+    def _flush(self):
+        self.extender._persist_text_attr(self.attr_name)
+
+
 class _LoggerPopupMouseListener(MouseAdapter):
     """Ensure right-click popup actions target the clicked logger row."""
 
@@ -333,6 +484,7 @@ def registerExtenderCallbacks(self, callbacks):
     self._initialize_main_panel()
     recon_panel = self._build_recon_tab()
     self._create_tabs(recon_panel)
+    self._restore_persisted_ui_state()
     self._initialize_output_dir()
     self._register_extension_callbacks()
     self.log_to_ui("[+] API Security Suite loaded - Capturing API traffic...")
@@ -386,9 +538,12 @@ def _initialize_runtime_state(self):
     self._capture_ui_refresh_last_ts = 0.0
     self._capture_ui_refresh_min_interval_ms = 250
     self._recon_last_regex_error = ""
+    self._recon_filter_endpoint_tags_snapshot = None
     self.recon_hidden_param_results = []
     self.recon_param_intel_snapshot = None
     self.logger_events = []
+    # Queue-style buffer keeps front-trim operations cheap in long sessions.
+    self.logger_events = deque()
     self.logger_lock = threading.Lock()
     self.logger_event_seq = 0
     self.logger_max_rows = 5000
@@ -401,6 +556,8 @@ def _initialize_runtime_state(self):
     self._logger_refresh_timer = None
     self._logger_refresh_last_ts = 0.0
     self._logger_refresh_min_interval_ms = 450
+    self._logger_tool_combo_signature = ()
+    self._logger_filter_library_signature = ()
     self.logger_request_preview_max = 1200
     self.logger_response_preview_max = 2400
     self._syncing_logger_controls = False
@@ -419,7 +576,174 @@ def _initialize_runtime_state(self):
     self.logger_filter_library = []
     self.logger_tag_rules = []
     self.logger_noise_filter_enabled = True
+    self._ui_checkbox_persistence_ready = False
     self._ensure_logger_default_tag_rules(force=False)
+
+def _setting_key(self, suffix):
+    token = self._ascii_safe(suffix or "").strip()
+    return "api_security_suite.{}".format(token)
+
+def _load_bool_setting(self, suffix, default=False):
+    if getattr(self, "_callbacks", None) is None:
+        return bool(default)
+    key = self._setting_key(suffix)
+    raw_value = self._callbacks.loadExtensionSetting(key)
+    if raw_value is None:
+        return bool(default)
+    value = self._ascii_safe(raw_value, lower=True).strip()
+    if value in ["1", "true", "yes", "on"]:
+        return True
+    if value in ["0", "false", "no", "off"]:
+        return False
+    return bool(default)
+
+def _save_bool_setting(self, suffix, enabled):
+    if getattr(self, "_callbacks", None) is None:
+        return
+    key = self._setting_key(suffix)
+    self._callbacks.saveExtensionSetting(key, "1" if bool(enabled) else "0")
+
+def _load_text_setting(self, suffix, default_text=""):
+    if getattr(self, "_callbacks", None) is None:
+        return self._ascii_safe(default_text or "")
+    key = self._setting_key(suffix)
+    raw_value = self._callbacks.loadExtensionSetting(key)
+    if raw_value is None:
+        return self._ascii_safe(default_text or "")
+    return self._ascii_safe(raw_value)
+
+def _save_text_setting(self, suffix, value):
+    if getattr(self, "_callbacks", None) is None:
+        return
+    key = self._setting_key(suffix)
+    self._callbacks.saveExtensionSetting(key, self._ascii_safe(value or ""))
+
+def _persist_checkbox_attr(self, attr_name):
+    checkbox = getattr(self, attr_name, None)
+    if checkbox is None:
+        return
+    self._save_bool_setting("checkbox.{}".format(attr_name), bool(checkbox.isSelected()))
+
+def _persist_text_attr(self, attr_name):
+    field = getattr(self, attr_name, None)
+    if field is None:
+        return
+    try:
+        value = field.getText()
+    except Exception as read_err:
+        _ = read_err
+        return
+    self._save_text_setting("text.{}".format(attr_name), value)
+
+def _combo_contains_item(self, combo, candidate):
+    text = self._ascii_safe(candidate or "")
+    if not text:
+        return False
+    try:
+        count = int(combo.getItemCount())
+    except Exception as count_err:
+        _ = count_err
+        return False
+    idx = 0
+    while idx < count:
+        item_text = self._ascii_safe(combo.getItemAt(idx) or "")
+        if item_text == text:
+            return True
+        idx += 1
+    return False
+
+def _persist_combo_attr(self, attr_name):
+    combo = getattr(self, attr_name, None)
+    if combo is None:
+        return
+    try:
+        selected = combo.getSelectedItem()
+    except Exception as selected_err:
+        _ = selected_err
+        return
+    self._save_text_setting("combo.{}".format(attr_name), self._ascii_safe(selected or ""))
+
+def _restore_persisted_ui_state(self):
+    if bool(getattr(self, "_ui_checkbox_persistence_ready", False)):
+        return
+    for attr_name in _PERSISTED_CHECKBOX_ATTRS:
+        checkbox = getattr(self, attr_name, None)
+        if checkbox is None:
+            continue
+        default_selected = bool(checkbox.isSelected())
+        restored = self._load_bool_setting(
+            "checkbox.{}".format(attr_name), default_selected
+        )
+        if restored != default_selected:
+            checkbox.setSelected(restored)
+        checkbox.addActionListener(
+            lambda _event, name=attr_name: self._persist_checkbox_attr(name)
+        )
+
+    for attr_name in _PERSISTED_TEXT_ATTRS:
+        field = getattr(self, attr_name, None)
+        if field is None:
+            continue
+        try:
+            default_value = self._ascii_safe(field.getText() or "")
+            restored_value = self._load_text_setting(
+                "text.{}".format(attr_name), default_value
+            )
+            if restored_value != default_value:
+                field.setText(restored_value)
+            field.getDocument().addDocumentListener(
+                _PersistTextFieldListener(self, attr_name)
+            )
+        except Exception as field_err:
+            self._callbacks.printError(
+                "Field persistence bind failed for {}: {}".format(
+                    attr_name, str(field_err)
+                )
+            )
+
+    for attr_name in _PERSISTED_COMBO_ATTRS:
+        combo = getattr(self, attr_name, None)
+        if combo is None:
+            continue
+        try:
+            default_value = self._ascii_safe(combo.getSelectedItem() or "")
+            restored_value = self._load_text_setting(
+                "combo.{}".format(attr_name), default_value
+            )
+            if restored_value and self._combo_contains_item(combo, restored_value):
+                combo.setSelectedItem(restored_value)
+            combo.addActionListener(
+                lambda _event, name=attr_name: self._persist_combo_attr(name)
+            )
+        except Exception as combo_err:
+            self._callbacks.printError(
+                "Combo persistence bind failed for {}: {}".format(
+                    attr_name, str(combo_err)
+                )
+            )
+
+    scope_lines_default = "\n".join(getattr(self, "target_base_scope_lines", []) or [])
+    scope_lines_text = self._load_text_setting("target_base_scope_lines", scope_lines_default)
+    parsed_scope = self._parse_target_base_scope_text(scope_lines_text)
+    self.target_base_scope_lines = parsed_scope["lines"]
+    self.target_base_scope_hosts = parsed_scope["hosts"]
+    self.target_base_scope_bases = parsed_scope["bases"]
+
+    scope_default = bool(getattr(self, "target_base_scope_only_enabled", False))
+    scope_restored = self._load_bool_setting("target_base_scope_only_enabled", scope_default)
+    self._set_target_base_scope_only(scope_restored, persist=False)
+    self._ui_checkbox_persistence_ready = True
+
+    if hasattr(self, "_restore_logger_popup_persistence"):
+        self._restore_logger_popup_persistence()
+    if hasattr(self, "_logger_apply_runtime_settings"):
+        self._logger_apply_runtime_settings(schedule_refresh=False)
+    if hasattr(self, "_sync_noise_filter_checkboxes"):
+        self._sync_noise_filter_checkboxes(source="recon")
+    if hasattr(self, "_refresh_logger_view"):
+        self._refresh_logger_view()
+    if hasattr(self, "refresh_view"):
+        self.refresh_view()
 
 def _initialize_pagination_state(self):
     self.current_page = 0
@@ -1046,6 +1370,9 @@ def _create_logger_tab(self):
     item_send_selected = JMenuItem("Send Selected To Repeater")
     item_send_selected.addActionListener(lambda e: self._logger_send_selected_to_repeater())
     logger_popup.add(item_send_selected)
+    item_send_ai = JMenuItem("Send Selected To AI Analysis")
+    item_send_ai.addActionListener(lambda e: self._logger_send_selected_to_ai())
+    logger_popup.add(item_send_ai)
     item_tag_rules = JMenuItem("Tag Rules (Regex)...")
     item_tag_rules.addActionListener(lambda e: self._open_logger_tag_rules_popup())
     logger_popup.add(item_tag_rules)
@@ -1694,7 +2021,7 @@ def _add_target_scope_controls(self, controls):
     controls.add(checkbox)
     self.target_scope_checkboxes.append(checkbox)
 
-def _set_target_base_scope_only(self, enabled):
+def _set_target_base_scope_only(self, enabled, persist=True):
     """Synchronize target-base-only scope state across tab checkboxes."""
     desired = bool(enabled)
     changed = desired != bool(self.target_base_scope_only_enabled)
@@ -1714,6 +2041,8 @@ def _set_target_base_scope_only(self, enabled):
     if changed:
         state = "enabled" if desired else "disabled"
         self.log_to_ui("[*] Base URL scope mode {}".format(state))
+    if persist:
+        self._save_bool_setting("target_base_scope_only_enabled", desired)
 
 def _add_force_kill_button(self, controls, output_area=None):
     """Attach emergency kill button for external scanner processes."""
@@ -1887,6 +2216,39 @@ def _copy_to_clipboard(self, text):
     else:
         self.log_to_ui("[!] No text to copy")
 
+def _export_text_output_to_ai(self, source_label, output_text):
+    title = self._ascii_safe(source_label or "Output")
+    content = self._ascii_safe(output_text or "").strip()
+    if not content:
+        self.log_to_ui("[!] {}: no output to export for AI".format(title))
+        return
+
+    prompt_lines = [
+        "You are a senior API security analyst.",
+        "Analyze the provided tool output and produce practical, high-signal findings.",
+        "Prioritize likely exploitable issues and avoid generic advice.",
+        "Return:",
+        "1) top findings with severity/confidence/evidence",
+        "2) concrete repro or validation steps",
+        "3) defensive fixes",
+        "4) a short testing plan for next iteration",
+    ]
+    export_lines = [
+        "=== AI ANALYSIS PACK: {} ===".format(title),
+        "Generated: {}".format(time.strftime("%Y-%m-%d %H:%M:%S")),
+        "",
+        "SMART PROMPT:",
+        "\n".join(prompt_lines),
+        "",
+        "TOOL OUTPUT:",
+        content,
+    ]
+    payload = "\n".join(export_lines)
+    self._copy_to_clipboard(payload)
+    if hasattr(self, "_show_text_dialog"):
+        self._show_text_dialog("AI Export - {}".format(title), payload, rows=30, cols=140)
+    self.log_to_ui("[+] AI export ready for {}".format(title))
+
 def _create_diff_tab(self):
     """Create the Diff comparison tab"""
     panel = JPanel(BorderLayout())
@@ -1919,6 +2281,13 @@ def _create_diff_tab(self):
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.diff_area.getText()),
+        )
+    )
+    controls.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("Diff", self.diff_area.getText()),
         )
     )
     panel.add(controls, BorderLayout.NORTH)
@@ -2095,6 +2464,15 @@ def _create_version_tab(self):
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.version_area.getText()),
+        )
+    )
+    action_row.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Version Scanner", self.version_area.getText()
+            ),
         )
     )
 
@@ -2357,6 +2735,15 @@ def _create_param_tab(self):
             lambda e: self._copy_to_clipboard(self.param_area.getText()),
         )
     )
+    action_row.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Param Miner", self.param_area.getText()
+            ),
+        )
+    )
 
     top_panel.add(input_row)
     top_panel.add(preset_row)
@@ -2599,6 +2986,13 @@ def _create_fuzzer_tab(self):
     )
     controls.add(
         self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("Fuzzer", self.fuzzer_area.getText()),
+        )
+    )
+    controls.add(
+        self._create_action_button(
             "Copy as cURL",
             Color(76, 175, 80),
             lambda e: self._copy_attack_as_curl(),
@@ -2617,8 +3011,11 @@ def _create_sqlmap_verify_tab(self):
     import os
 
     panel = JPanel(BorderLayout())
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("SQLMap Path:"))
+    top_panel = JPanel()
+    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("SQLMap Path:"))
     sqlmap_candidates = [
         os.path.expanduser("~/.local/bin/sqlmap"),
         os.path.expanduser("~/go/bin/sqlmap"),
@@ -2629,56 +3026,67 @@ def _create_sqlmap_verify_tab(self):
         "sqlmap",
     )
     self.sqlmap_path_field = JTextField(default_sqlmap, 28)
-    controls.add(self.sqlmap_path_field)
-    controls.add(JLabel("Max Targets:"))
+    controls_line1.add(self.sqlmap_path_field)
+    controls_line1.add(JLabel("Max Targets:"))
     self.sqlmap_max_targets_field = JTextField("12", 4)
-    controls.add(self.sqlmap_max_targets_field)
-    controls.add(JLabel("Per Target Timeout(s):"))
+    controls_line1.add(self.sqlmap_max_targets_field)
+    controls_line1.add(JLabel("Per Target Timeout(s):"))
     self.sqlmap_target_timeout_field = JTextField("45", 4)
-    controls.add(self.sqlmap_target_timeout_field)
-    controls.add(JLabel("Profile:"))
+    controls_line1.add(self.sqlmap_target_timeout_field)
+    controls_line1.add(JLabel("Profile:"))
     self.sqlmap_profile_combo = JComboBox(self._profile_labels())
     self.sqlmap_profile_combo.setSelectedItem("Balanced")
-    controls.add(self.sqlmap_profile_combo)
-    controls.add(
+    controls_line1.add(self.sqlmap_profile_combo)
+    controls_line2.add(
         self._create_action_button(
             "Run Verify", Color(220, 53, 69), lambda e: self._run_sqlmap_verify(e)
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Stop", Color(255, 140, 0), lambda e: self._stop_sqlmap(e)
         )
     )
-    self._add_force_kill_button(controls, lambda: getattr(self, "sqlmap_area", None))
-    controls.add(
+    self._add_force_kill_button(controls_line2, lambda: getattr(self, "sqlmap_area", None))
+    controls_line2.add(
         self._create_action_button(
             "Send to Recon",
             Color(76, 175, 80),
             lambda e: self._send_sqlmap_to_recon(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Export Results",
             Color(70, 130, 180),
             lambda e: self._export_sqlmap_results(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Clear", Color(108, 117, 125), lambda e: self.sqlmap_area.setText("")
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Copy",
             Color(96, 125, 139),
             lambda e: self._copy_to_clipboard(self.sqlmap_area.getText()),
         )
     )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "SQLMap Verify", self.sqlmap_area.getText()
+            ),
+        )
+    )
 
-    panel.add(controls, BorderLayout.NORTH)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
+    panel.add(top_panel, BorderLayout.NORTH)
     self.sqlmap_area, scroll = self._create_text_area_panel()
     panel.add(scroll, BorderLayout.CENTER)
     self.sqlmap_findings = []
@@ -2691,8 +3099,11 @@ def _create_dalfox_verify_tab(self):
     import os
 
     panel = JPanel(BorderLayout())
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("Dalfox Path:"))
+    top_panel = JPanel()
+    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("Dalfox Path:"))
     dalfox_candidates = [
         os.path.expanduser("~/go/bin/dalfox"),
         os.path.expanduser("~/.local/bin/dalfox"),
@@ -2703,56 +3114,67 @@ def _create_dalfox_verify_tab(self):
         "dalfox",
     )
     self.dalfox_path_field = JTextField(default_dalfox, 28)
-    controls.add(self.dalfox_path_field)
-    controls.add(JLabel("Max Targets:"))
+    controls_line1.add(self.dalfox_path_field)
+    controls_line1.add(JLabel("Max Targets:"))
     self.dalfox_max_targets_field = JTextField("12", 4)
-    controls.add(self.dalfox_max_targets_field)
-    controls.add(JLabel("Per Target Timeout(s):"))
+    controls_line1.add(self.dalfox_max_targets_field)
+    controls_line1.add(JLabel("Per Target Timeout(s):"))
     self.dalfox_target_timeout_field = JTextField("40", 4)
-    controls.add(self.dalfox_target_timeout_field)
-    controls.add(JLabel("Profile:"))
+    controls_line1.add(self.dalfox_target_timeout_field)
+    controls_line1.add(JLabel("Profile:"))
     self.dalfox_profile_combo = JComboBox(self._profile_labels())
     self.dalfox_profile_combo.setSelectedItem("Balanced")
-    controls.add(self.dalfox_profile_combo)
-    controls.add(
+    controls_line1.add(self.dalfox_profile_combo)
+    controls_line2.add(
         self._create_action_button(
             "Run Verify", Color(220, 53, 69), lambda e: self._run_dalfox_verify(e)
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Stop", Color(255, 140, 0), lambda e: self._stop_dalfox(e)
         )
     )
-    self._add_force_kill_button(controls, lambda: getattr(self, "dalfox_area", None))
-    controls.add(
+    self._add_force_kill_button(controls_line2, lambda: getattr(self, "dalfox_area", None))
+    controls_line2.add(
         self._create_action_button(
             "Send to Recon",
             Color(76, 175, 80),
             lambda e: self._send_dalfox_to_recon(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Export Results",
             Color(70, 130, 180),
             lambda e: self._export_dalfox_results(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Clear", Color(108, 117, 125), lambda e: self.dalfox_area.setText("")
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Copy",
             Color(96, 125, 139),
             lambda e: self._copy_to_clipboard(self.dalfox_area.getText()),
         )
     )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Dalfox Verify", self.dalfox_area.getText()
+            ),
+        )
+    )
 
-    panel.add(controls, BorderLayout.NORTH)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
+    panel.add(top_panel, BorderLayout.NORTH)
     self.dalfox_area, scroll = self._create_text_area_panel()
     panel.add(scroll, BorderLayout.CENTER)
     self.dalfox_findings = []
@@ -2889,6 +3311,15 @@ def _create_api_asset_discovery_tab(self):
             lambda e: self._copy_to_clipboard(self.asset_area.getText()),
         )
     )
+    actions_row.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "API Asset Discovery", self.asset_area.getText()
+            ),
+        )
+    )
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
     help_row.add(self.asset_preset_help_label)
 
@@ -2978,6 +3409,15 @@ def _create_openapi_drift_tab(self):
             lambda e: self._copy_to_clipboard(self.openapi_area.getText()),
         )
     )
+    controls.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "OpenAPI Drift", self.openapi_area.getText()
+            ),
+        )
+    )
 
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
     help_row.add(
@@ -3060,6 +3500,15 @@ def _create_passive_discovery_tab(self):
             lambda e: self._copy_to_clipboard(self.passive_area.getText()),
         )
     )
+    actions_row.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Passive Discovery", self.passive_area.getText()
+            ),
+        )
+    )
 
     deep_logic_row = JPanel(FlowLayout(FlowLayout.LEFT))
     deep_logic_row.add(JLabel("Deep Logic:"))
@@ -3116,8 +3565,9 @@ def _create_nuclei_tab(self):
     top_panel = JPanel()
     top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("Nuclei Path:"))
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("Nuclei Path:"))
     import os
 
     nuclei_candidates = [
@@ -3133,16 +3583,16 @@ def _create_nuclei_tab(self):
     self.nuclei_path_field = JTextField(
         default_nuclei, 25
     )
-    controls.add(self.nuclei_path_field)
+    controls_line1.add(self.nuclei_path_field)
     self.nuclei_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
-    controls.add(self.nuclei_custom_cmd_checkbox)
-    controls.add(JLabel("Command:"))
+    controls_line1.add(self.nuclei_custom_cmd_checkbox)
+    controls_line1.add(JLabel("Command:"))
     self.nuclei_custom_cmd_field = JTextField("", 35)
     self.nuclei_custom_cmd_field.setToolTipText(
         "Example: {nuclei_path} -list {targets_file} -jsonl-export {json_file} -silent"
     )
-    controls.add(self.nuclei_custom_cmd_field)
-    controls.add(JLabel("Preset:"))
+    controls_line1.add(self.nuclei_custom_cmd_field)
+    controls_line1.add(JLabel("Preset:"))
     self.nuclei_preset_help_label = JLabel(
         "Preset Help: Choose preset for quick safe command templates."
     )
@@ -3163,7 +3613,7 @@ def _create_nuclei_tab(self):
             "Targets API/authentication and configuration checks with focused templates.",
         ),
     ]
-    controls.add(
+    controls_line1.add(
         self._create_command_preset_combo(
             self.nuclei_custom_cmd_field,
             self.nuclei_custom_cmd_checkbox,
@@ -3171,7 +3621,7 @@ def _create_nuclei_tab(self):
             self.nuclei_preset_help_label,
         )
     )
-    controls.add(
+    controls_line1.add(
         self._create_preset_help_button(
             "Nuclei",
             ["{nuclei_path}", "{targets_file}", "{output_file}", "{json_file}"],
@@ -3189,45 +3639,55 @@ def _create_nuclei_tab(self):
             ],
         )
     )
-    controls.add(JLabel("Profile:"))
+    controls_line1.add(JLabel("Profile:"))
     self.nuclei_profile_combo = JComboBox(self._profile_labels())
     self.nuclei_profile_combo.setSelectedItem("Fast")
-    controls.add(self.nuclei_profile_combo)
-    self._add_target_scope_controls(controls)
-    controls.add(
+    controls_line1.add(self.nuclei_profile_combo)
+    controls_line2.add(
         self._create_action_button(
             "Run Nuclei", Color(138, 43, 226), lambda e: self._run_nuclei()
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Stop", Color(255, 140, 0), lambda e: self._stop_nuclei(e)
         )
     )
-    self._add_force_kill_button(controls, lambda: getattr(self, "nuclei_area", None))
-    controls.add(
+    self._add_target_scope_controls(controls_line2)
+    self._add_force_kill_button(
+        controls_line2, lambda: getattr(self, "nuclei_area", None)
+    )
+    controls_line2.add(
         self._create_action_button(
             "Export Targets",
             Color(70, 130, 180),
             lambda e: self._export_nuclei_targets(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Clear", Color(220, 53, 69), lambda e: self.nuclei_area.setText("")
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.nuclei_area.getText()),
         )
     )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("Nuclei", self.nuclei_area.getText()),
+        )
+    )
 
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
     help_row.add(self.nuclei_preset_help_label)
-    top_panel.add(controls)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
     top_panel.add(help_row)
     panel.add(top_panel, BorderLayout.NORTH)
 
@@ -3241,8 +3701,9 @@ def _create_httpx_tab(self):
     top_panel = JPanel()
     top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("HTTPX Path:"))
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("HTTPX Path:"))
     import os
 
     httpx_paths = [
@@ -3257,16 +3718,16 @@ def _create_httpx_tab(self):
         "httpx.exe" if os.name == "nt" else "httpx",
     )
     self.httpx_path_field = JTextField(default_httpx, 25)
-    controls.add(self.httpx_path_field)
+    controls_line1.add(self.httpx_path_field)
     self.httpx_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
-    controls.add(self.httpx_custom_cmd_checkbox)
-    controls.add(JLabel("Command:"))
+    controls_line1.add(self.httpx_custom_cmd_checkbox)
+    controls_line1.add(JLabel("Command:"))
     self.httpx_custom_cmd_field = JTextField("", 35)
     self.httpx_custom_cmd_field.setToolTipText(
         "Example: {httpx_path} -l {urls_file} -status-code -nc -silent"
     )
-    controls.add(self.httpx_custom_cmd_field)
-    controls.add(JLabel("Preset:"))
+    controls_line1.add(self.httpx_custom_cmd_field)
+    controls_line1.add(JLabel("Preset:"))
     self.httpx_preset_help_label = JLabel(
         "Preset Help: Choose preset for common HTTP probe profiles."
     )
@@ -3287,7 +3748,7 @@ def _create_httpx_tab(self):
             "Includes technology and server fingerprinting with status codes.",
         ),
     ]
-    controls.add(
+    controls_line1.add(
         self._create_command_preset_combo(
             self.httpx_custom_cmd_field,
             self.httpx_custom_cmd_checkbox,
@@ -3295,7 +3756,7 @@ def _create_httpx_tab(self):
             self.httpx_preset_help_label,
         )
     )
-    controls.add(
+    controls_line1.add(
         self._create_preset_help_button(
             "HTTPX",
             ["{httpx_path}", "{urls_file}"],
@@ -3311,38 +3772,46 @@ def _create_httpx_tab(self):
             ],
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Probe Endpoints", Color(0, 150, 136), lambda e: self._run_httpx(e)
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Stop", Color(255, 140, 0), lambda e: self._stop_httpx(e)
         )
     )
-    self._add_force_kill_button(controls, lambda: getattr(self, "httpx_area", None))
-    controls.add(
+    self._add_force_kill_button(controls_line2, lambda: getattr(self, "httpx_area", None))
+    controls_line2.add(
         self._create_action_button(
             "Export URLs", Color(70, 130, 180), lambda e: self._export_httpx_urls()
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Clear", Color(220, 53, 69), lambda e: self.httpx_area.setText("")
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.httpx_area.getText()),
         )
     )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("HTTPX", self.httpx_area.getText()),
+        )
+    )
 
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
     help_row.add(self.httpx_preset_help_label)
-    top_panel.add(controls)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
     top_panel.add(help_row)
     panel.add(top_panel, BorderLayout.NORTH)
 
@@ -3356,8 +3825,9 @@ def _create_katana_tab(self):
     top_panel = JPanel()
     top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("Katana Path:"))
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("Katana Path:"))
     import os
 
     katana_candidates = [
@@ -3373,16 +3843,16 @@ def _create_katana_tab(self):
     self.katana_path_field = JTextField(
         default_katana, 25
     )
-    controls.add(self.katana_path_field)
+    controls_line1.add(self.katana_path_field)
     self.katana_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
-    controls.add(self.katana_custom_cmd_checkbox)
-    controls.add(JLabel("Command:"))
+    controls_line1.add(self.katana_custom_cmd_checkbox)
+    controls_line1.add(JLabel("Command:"))
     self.katana_custom_cmd_field = JTextField("", 35)
     self.katana_custom_cmd_field.setToolTipText(
         "Example: {katana_path} -list {urls_file} -d 1 -jc -silent"
     )
-    controls.add(self.katana_custom_cmd_field)
-    controls.add(JLabel("Preset:"))
+    controls_line1.add(self.katana_custom_cmd_field)
+    controls_line1.add(JLabel("Preset:"))
     self.katana_preset_help_label = JLabel(
         "Preset Help: Choose depth profile based on crawl coverage needs."
     )
@@ -3403,7 +3873,7 @@ def _create_katana_tab(self):
             "Deeper crawl for maximum coverage; slower and noisier.",
         ),
     ]
-    controls.add(
+    controls_line1.add(
         self._create_command_preset_combo(
             self.katana_custom_cmd_field,
             self.katana_custom_cmd_checkbox,
@@ -3411,7 +3881,7 @@ def _create_katana_tab(self):
             self.katana_preset_help_label,
         )
     )
-    controls.add(
+    controls_line1.add(
         self._create_preset_help_button(
             "Katana",
             ["{katana_path}", "{urls_file}"],
@@ -3427,48 +3897,56 @@ def _create_katana_tab(self):
             ],
         )
     )
-    self._add_target_scope_controls(controls)
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Crawl Endpoints", Color(156, 39, 176), lambda e: self._run_katana(e)
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Stop", Color(255, 140, 0), lambda e: self._stop_katana(e)
         )
     )
-    self._add_force_kill_button(controls, lambda: getattr(self, "katana_area", None))
-    controls.add(
+    self._add_target_scope_controls(controls_line2)
+    self._add_force_kill_button(controls_line2, lambda: getattr(self, "katana_area", None))
+    controls_line2.add(
         self._create_action_button(
             "Export Discovered",
             Color(70, 130, 180),
             lambda e: self._export_katana_results(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Send to Recon",
             Color(76, 175, 80),
             lambda e: self._import_katana_to_recon(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Clear", Color(220, 53, 69), lambda e: self.katana_area.setText("")
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.katana_area.getText()),
         )
     )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("Katana", self.katana_area.getText()),
+        )
+    )
 
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
     help_row.add(self.katana_preset_help_label)
-    top_panel.add(controls)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
     top_panel.add(help_row)
     panel.add(top_panel, BorderLayout.NORTH)
 
@@ -3481,9 +3959,12 @@ def _create_katana_tab(self):
 def _create_ffuf_tab(self):
     """Create FFUF fuzzer tab"""
     panel = JPanel(BorderLayout())
+    top_panel = JPanel()
+    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("FFUF Path:"))
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("FFUF Path:"))
     import os
 
     ffuf_candidates = [
@@ -3499,8 +3980,8 @@ def _create_ffuf_tab(self):
     self.ffuf_path_field = JTextField(
         default_ffuf, 20
     )
-    controls.add(self.ffuf_path_field)
-    controls.add(JLabel("Wordlist:"))
+    controls_line1.add(self.ffuf_path_field)
+    controls_line1.add(JLabel("Wordlist:"))
     import os
 
     default_wordlist = os.path.expanduser("~/wordlists/api-endpoints.txt")
@@ -3509,47 +3990,56 @@ def _create_ffuf_tab(self):
     if not os.path.exists(default_wordlist):
         default_wordlist = "/usr/share/wordlists/dirb/common.txt"
     self.ffuf_wordlist_field = JTextField(default_wordlist, 20)
-    controls.add(self.ffuf_wordlist_field)
-    self._add_target_scope_controls(controls)
-    controls.add(
+    controls_line1.add(self.ffuf_wordlist_field)
+    controls_line2.add(
         self._create_action_button(
             "Fuzz Directories", Color(255, 87, 34), lambda e: self._run_ffuf(e)
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Stop", Color(255, 140, 0), lambda e: self._stop_ffuf(e)
         )
     )
-    self._add_force_kill_button(controls, lambda: getattr(self, "ffuf_area", None))
-    controls.add(
+    self._add_target_scope_controls(controls_line2)
+    self._add_force_kill_button(controls_line2, lambda: getattr(self, "ffuf_area", None))
+    controls_line2.add(
         self._create_action_button(
             "Export Results",
             Color(70, 130, 180),
             lambda e: self._export_ffuf_results(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Send to Intruder",
             Color(255, 140, 0),
             lambda e: self._send_ffuf_to_intruder(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Clear", Color(220, 53, 69), lambda e: self.ffuf_area.setText("")
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.ffuf_area.getText()),
         )
     )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("FFUF", self.ffuf_area.getText()),
+        )
+    )
 
-    panel.add(controls, BorderLayout.NORTH)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
+    panel.add(top_panel, BorderLayout.NORTH)
 
     self.ffuf_area, scroll = self._create_text_area_panel()
     panel.add(scroll, BorderLayout.CENTER)
@@ -3565,58 +4055,66 @@ def _create_wayback_tab(self):
     top_panel = JPanel()
     top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
     stdin_prefix = "type" if os.name == "nt" else "cat"
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("Wayback:"))
-    controls.add(
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("Wayback:"))
+    controls_line2.add(
         self._create_action_button(
             "Discover", Color(138, 43, 226), lambda e: self._run_wayback()
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Stop", Color(255, 140, 0), lambda e: self._stop_wayback(e)
         )
     )
-    self._add_force_kill_button(controls, lambda: getattr(self, "wayback_area", None))
-    controls.add(
+    self._add_force_kill_button(controls_line2, lambda: getattr(self, "wayback_area", None))
+    controls_line2.add(
         self._create_action_button(
             "Send to Recon",
             Color(76, 175, 80),
             lambda e: self._import_wayback_to_recon(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Export Results",
             Color(70, 130, 180),
             lambda e: self._export_wayback_results(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.wayback_area.getText()),
         )
     )
-    controls.add(JLabel(" | From:"))
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("Wayback", self.wayback_area.getText()),
+        )
+    )
+    controls_line1.add(JLabel(" | From:"))
     self.wayback_from_field = JTextField("2020", 4)
-    controls.add(self.wayback_from_field)
-    controls.add(JLabel("To:"))
+    controls_line1.add(self.wayback_from_field)
+    controls_line1.add(JLabel("To:"))
     self.wayback_to_field = JTextField(str(time.localtime().tm_year), 4)
-    controls.add(self.wayback_to_field)
-    controls.add(JLabel(" | Limit:"))
+    controls_line1.add(self.wayback_to_field)
+    controls_line1.add(JLabel(" | Limit:"))
     self.wayback_limit_field = JTextField("50", 3)
-    controls.add(self.wayback_limit_field)
+    controls_line1.add(self.wayback_limit_field)
     self.wayback_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
-    controls.add(self.wayback_custom_cmd_checkbox)
-    controls.add(JLabel("Command:"))
+    controls_line1.add(self.wayback_custom_cmd_checkbox)
+    controls_line1.add(JLabel("Command:"))
     self.wayback_custom_cmd_field = JTextField("", 45)
     self.wayback_custom_cmd_field.setToolTipText(
         "Example: {} \"{{targets_file}}\" | waybackurls".format(stdin_prefix)
     )
-    controls.add(self.wayback_custom_cmd_field)
-    controls.add(JLabel("Preset:"))
+    controls_line1.add(self.wayback_custom_cmd_field)
+    controls_line1.add(JLabel("Preset:"))
     self.wayback_preset_help_label = JLabel(
         "Preset Help: Choose passive historical URL source command."
     )
@@ -3637,7 +4135,7 @@ def _create_wayback_tab(self):
             "Same as gau preset with thread tuning for faster collection.",
         ),
     ]
-    controls.add(
+    controls_line1.add(
         self._create_command_preset_combo(
             self.wayback_custom_cmd_field,
             self.wayback_custom_cmd_checkbox,
@@ -3645,7 +4143,7 @@ def _create_wayback_tab(self):
             self.wayback_preset_help_label,
         )
     )
-    controls.add(
+    controls_line1.add(
         self._create_preset_help_button(
             "Wayback",
             ["{targets_file}", "{from_year}", "{to_year}", "{limit}"],
@@ -3662,15 +4160,16 @@ def _create_wayback_tab(self):
             ],
         )
     )
-    self._add_target_scope_controls(controls)
-    controls.add(
+    self._add_target_scope_controls(controls_line2)
+    controls_line2.add(
         self._create_action_button(
             "Clear", Color(220, 53, 69), lambda e: self.wayback_area.setText("")
         )
     )
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
     help_row.add(self.wayback_preset_help_label)
-    top_panel.add(controls)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
     top_panel.add(help_row)
     panel.add(top_panel, BorderLayout.NORTH)
     self.wayback_area, scroll = self._create_text_area_panel()
@@ -3685,108 +4184,118 @@ def _create_graphql_tab(self):
     top_panel = JPanel()
     top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("Targets (comma/newline, optional):"))
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("Targets (comma/newline, optional):"))
     self.graphql_targets_field = JTextField("", 45)
     self.graphql_targets_field.setToolTipText(
         "Optional. Leave empty to auto-pick GraphQL endpoints from Recon history."
     )
-    controls.add(self.graphql_targets_field)
-    controls.add(JLabel("Schema File:"))
+    controls_line1.add(self.graphql_targets_field)
+    controls_line1.add(JLabel("Schema File:"))
     self.graphql_schema_file_field = JTextField("", 24)
     self.graphql_schema_file_field.setToolTipText(
         "Optional local introspection JSON file for InQL-like schema analysis."
     )
-    controls.add(self.graphql_schema_file_field)
-    controls.add(
+    controls_line1.add(self.graphql_schema_file_field)
+    controls_line1.add(JLabel("Max:"))
+    self.graphql_max_targets_field = JTextField("12", 3)
+    controls_line1.add(self.graphql_max_targets_field)
+    controls_line2.add(
         self._create_action_button(
             "Browse",
             Color(96, 125, 139),
             lambda e: self._browse_graphql_schema_file(e),
         )
     )
-    controls.add(JLabel("Max:"))
-    self.graphql_max_targets_field = JTextField("12", 3)
-    controls.add(self.graphql_max_targets_field)
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Show Targets",
             Color(70, 130, 180),
             lambda e: self._show_graphql_targets_popup(e),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Run Analysis",
             Color(138, 43, 226),
             lambda e: self._run_graphql_analysis(e),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Generate Raider",
             Color(111, 66, 193),
             lambda e: self._generate_graphql_raider_operations(e),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Analyze Schema",
             Color(111, 66, 193),
             lambda e: self._analyze_graphql_schema_file(e),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Batch Queries",
             Color(0, 150, 136),
             lambda e: self._export_graphql_batch_queries(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Stop", Color(255, 140, 0), lambda e: self._stop_graphql(e)
         )
     )
-    self._add_force_kill_button(controls, lambda: getattr(self, "graphql_area", None))
-    controls.add(
+    self._add_force_kill_button(controls_line2, lambda: getattr(self, "graphql_area", None))
+    controls_line2.add(
         self._create_action_button(
             "Send to Recon",
             Color(76, 175, 80),
             lambda e: self._send_graphql_to_recon(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "To Repeater",
             Color(32, 201, 151),
             lambda e: self._send_graphql_operations_to_repeater(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "To Intruder",
             Color(255, 140, 0),
             lambda e: self._send_graphql_operations_to_intruder(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Export Results",
             Color(70, 130, 180),
             lambda e: self._export_graphql_results(),
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Clear", Color(220, 53, 69), lambda e: self.graphql_area.setText("")
         )
     )
-    controls.add(
+    controls_line2.add(
         self._create_action_button(
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.graphql_area.getText()),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "GraphQL Analysis", self.graphql_area.getText()
+            ),
         )
     )
 
@@ -3846,7 +4355,8 @@ def _create_graphql_tab(self):
             "Runs: Subfinder, HTTPX, Katana, FFUF, Wayback, Nuclei, Dalfox, SQLMap (if available)."
         )
     )
-    top_panel.add(controls)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
     top_panel.add(raider_row)
     top_panel.add(info_row)
     panel.add(top_panel, BorderLayout.NORTH)
@@ -5585,6 +6095,16 @@ def _get_unicode_normalization(self):
 __all__ = [
     "registerExtenderCallbacks",
     "_initialize_runtime_state",
+    "_setting_key",
+    "_load_bool_setting",
+    "_save_bool_setting",
+    "_load_text_setting",
+    "_save_text_setting",
+    "_persist_checkbox_attr",
+    "_persist_text_attr",
+    "_combo_contains_item",
+    "_persist_combo_attr",
+    "_restore_persisted_ui_state",
     "_initialize_pagination_state",
     "_initialize_main_panel",
     "_build_recon_top_panel",
@@ -5624,6 +6144,7 @@ __all__ = [
     "_create_text_area_panel",
     "_show_recon_button_help",
     "_copy_to_clipboard",
+    "_export_text_output_to_ai",
     "_create_diff_tab",
     "_load_diff_file",
     "_run_diff",

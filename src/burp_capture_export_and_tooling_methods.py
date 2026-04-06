@@ -1108,10 +1108,17 @@ def _recon_entry_is_noise(self, entry, endpoint_tags=None):
         return False
     return True
 
-def _endpoint_is_recon_noise(self, endpoint_key, entries):
+def _endpoint_is_recon_noise(self, endpoint_key, entries, endpoint_tags_snapshot=None):
     """Return True when all samples for one endpoint are noisy."""
     entries_list = entries if isinstance(entries, list) else [entries]
-    endpoint_tags = list(self.endpoint_tags.get(endpoint_key, []) or [])
+    if endpoint_tags_snapshot is None:
+        endpoint_tags_snapshot = getattr(
+            self, "_recon_filter_endpoint_tags_snapshot", None
+        )
+    if isinstance(endpoint_tags_snapshot, dict):
+        endpoint_tags = list(endpoint_tags_snapshot.get(endpoint_key, []) or [])
+    else:
+        endpoint_tags = list(self.endpoint_tags.get(endpoint_key, []) or [])
     if self._has_high_signal_tags(endpoint_tags):
         return False
     has_sample = False
@@ -1196,6 +1203,8 @@ def _filter_endpoints(self):
     severity = str(self.severity_filter.getSelectedItem())
     tag = str(self.tag_filter.getSelectedItem())
     tool = str(self.tool_filter.getSelectedItem())
+    host_lower = self._ascii_safe(host, lower=True)
+    tag_lower = self._ascii_safe(tag, lower=True)
     noise_filter_enabled = bool(getattr(self, "recon_noise_filter_enabled", True))
     noise_box = getattr(self, "recon_noise_filter_checkbox", None)
     if noise_box is not None:
@@ -1215,37 +1224,45 @@ def _filter_endpoints(self):
                 self.log_to_ui("[!] Recon regex invalid: {}".format(err_msg))
             regex_obj = None
     filtered = {}
-
-    for key, entries in self.api_data.items():
-        if (
-            search
-            and search not in key.lower()
-            and search not in self._get_entry(entries)["host"].lower()
-        ):
-            continue
-        if method != "All" and not key.startswith(method + ":"):
-            continue
-        if host != "All" and self._get_entry(entries)["host"] != host:
-            continue
-        if (
-            severity != "All"
-            and self._get_severity(key, entries) != severity.lower()
-        ):
-            continue
-        if noise_filter_enabled and self._endpoint_is_recon_noise(key, entries):
-            continue
-        if tag != "All":
-            tags = [self._ascii_safe(t, lower=True) for t in self.endpoint_tags.get(key, [])]
-            if self._ascii_safe(tag, lower=True) not in tags:
+    with self.lock:
+        data_snapshot = list(self.api_data.items())
+        endpoint_tags_snapshot = dict(self.endpoint_tags)
+    setattr(self, "_recon_filter_endpoint_tags_snapshot", endpoint_tags_snapshot)
+    try:
+        for key, entries in data_snapshot:
+            entry = self._get_entry(entries)
+            entry_host = self._ascii_safe(entry.get("host") or "", lower=True)
+            if (
+                search
+                and search not in key.lower()
+                and search not in entry_host
+            ):
                 continue
-        entries_list = entries if isinstance(entries, list) else [entries]
-        if tool != "All":
-            if not any(self._get_recon_entry_tool(item) == tool for item in entries_list):
+            if method != "All" and not key.startswith(method + ":"):
                 continue
-        if regex_obj is not None:
-            if not self._endpoint_matches_recon_regex(entries_list, regex_obj, regex_scope):
+            if host != "All" and entry_host != host_lower:
                 continue
-        filtered[key] = entries
+            if (
+                severity != "All"
+                and self._get_severity(key, entries) != severity.lower()
+            ):
+                continue
+            if noise_filter_enabled and self._endpoint_is_recon_noise(key, entries):
+                continue
+            if tag != "All":
+                tags = endpoint_tags_snapshot.get(key, []) or []
+                if not any(self._ascii_safe(t, lower=True) == tag_lower for t in tags):
+                    continue
+            entries_list = entries if isinstance(entries, list) else [entries]
+            if tool != "All":
+                if not any(self._get_recon_entry_tool(item) == tool for item in entries_list):
+                    continue
+            if regex_obj is not None:
+                if not self._endpoint_matches_recon_regex(entries_list, regex_obj, regex_scope):
+                    continue
+            filtered[key] = entries
+    finally:
+        setattr(self, "_recon_filter_endpoint_tags_snapshot", None)
     return filtered
 
 def _on_filter_change(self):
@@ -1282,8 +1299,8 @@ def _change_page_size(self):
 
 def refresh_view(self):
     try:
+        filtered = self._filter_endpoints()
         with self.lock:
-            filtered = self._filter_endpoints()
             tags_snapshot = dict(self.endpoint_tags)
 
         # Calculate pagination
@@ -1592,10 +1609,51 @@ def _logger_trim_if_needed(self, force=False):
         drop_count = overflow if force else max(overflow, trim_batch)
         if drop_count > len(self.logger_events):
             drop_count = len(self.logger_events)
-        del self.logger_events[:drop_count]
+        if hasattr(self.logger_events, "popleft"):
+            dropped = 0
+            while dropped < drop_count:
+                try:
+                    self.logger_events.popleft()
+                    dropped += 1
+                except Exception as trim_err:
+                    self._callbacks.printError(
+                        "Logger trim popleft error: {}".format(str(trim_err))
+                    )
+                    break
+            drop_count = dropped
+        else:
+            del self.logger_events[:drop_count]
         self.logger_dropped_count = int(getattr(self, "logger_dropped_count", 0) or 0) + drop_count
         self.logger_last_prune_ts = time.strftime("%H:%M:%S")
     return drop_count
+
+def _logger_effective_preview_caps(self):
+    """Return adaptive request/response preview caps for current logger memory mode."""
+    req_cap = int(getattr(self, "logger_request_preview_max", 1200) or 1200)
+    resp_cap = int(getattr(self, "logger_response_preview_max", 2400) or 2400)
+    max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+    if max_rows >= 20000:
+        req_cap = min(req_cap, 500)
+        resp_cap = min(resp_cap, 900)
+    elif max_rows >= 10000:
+        req_cap = min(req_cap, 700)
+        resp_cap = min(resp_cap, 1400)
+    elif max_rows >= 5000:
+        req_cap = min(req_cap, 1000)
+        resp_cap = min(resp_cap, 2000)
+    req_cap = max(300, req_cap)
+    resp_cap = max(500, resp_cap)
+    return req_cap, resp_cap
+
+def _logger_effective_header_preview_limit(self, side="request"):
+    """Return adaptive per-event header preview count."""
+    side_key = self._ascii_safe(side or "request", lower=True).strip()
+    max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+    if max_rows >= 20000:
+        return 4 if side_key == "request" else 5
+    if max_rows >= 10000:
+        return 6
+    return 8 if side_key == "request" else 10
 
 def _sync_recon_entry_from_logger(self, endpoint_key, entry, tags=None):
     """Ensure logger-originated rows exist in Recon cache (deduped + bounded)."""
@@ -1756,6 +1814,9 @@ def _logger_capture_event(
     if sync_recon:
         self._sync_recon_entry_from_logger(endpoint_key, entry, tags=tag_values)
     tag_text = ",".join(tag_values[:8])
+    req_cap, resp_cap = self._logger_effective_preview_caps()
+    req_header_limit = self._logger_effective_header_preview_limit("request")
+    resp_header_limit = self._logger_effective_header_preview_limit("response")
 
     query_suffix = "?{}".format(query) if query else ""
     request_line = "{} {}{} HTTP/1.1".format(method, path, query_suffix)
@@ -1764,7 +1825,7 @@ def _logger_capture_event(
     req_headers = entry.get("headers", {}) or {}
     header_count = 0
     for key, value in req_headers.items():
-        if header_count >= 10:
+        if header_count >= req_header_limit:
             break
         header_count += 1
         key_text = self._ascii_safe(key)
@@ -1778,7 +1839,6 @@ def _logger_capture_event(
         req_preview_lines.append("")
         req_preview_lines.append(request_body)
     request_preview = "\n".join(req_preview_lines)
-    req_cap = int(getattr(self, "logger_request_preview_max", 1200) or 1200)
     if len(request_preview) > req_cap:
         request_preview = request_preview[:req_cap] + "\n... [truncated]"
 
@@ -1786,7 +1846,7 @@ def _logger_capture_event(
     response_headers = entry.get("response_headers", {}) or {}
     resp_header_count = 0
     for key, value in response_headers.items():
-        if resp_header_count >= 10:
+        if resp_header_count >= resp_header_limit:
             break
         resp_header_count += 1
         resp_preview_lines.append("{}: {}".format(self._ascii_safe(key), self._ascii_safe(value)))
@@ -1795,7 +1855,6 @@ def _logger_capture_event(
         resp_preview_lines.append("")
         resp_preview_lines.append(response_body)
     response_preview = "\n".join(resp_preview_lines)
-    resp_cap = int(getattr(self, "logger_response_preview_max", 2400) or 2400)
     if len(response_preview) > resp_cap:
         response_preview = response_preview[:resp_cap] + "\n... [truncated]"
 
@@ -1917,8 +1976,23 @@ def _refresh_logger_tool_filter(self):
     if combo is None:
         return
     with self.logger_lock:
-        tools = sorted(list(set([self._ascii_safe(x.get("tool") or "") for x in self.logger_events if self._ascii_safe(x.get("tool") or "").strip()])))
+        tool_names = set()
+        for item in self.logger_events:
+            tool_name = self._ascii_safe(item.get("tool") or "").strip()
+            if tool_name:
+                tool_names.add(tool_name)
+        tools = sorted(tool_names)
+    tools_signature = tuple(tools)
+    cached_signature = tuple(getattr(self, "_logger_tool_combo_signature", ()) or ())
     selected = self._ascii_safe(str(combo.getSelectedItem()) if combo.getSelectedItem() is not None else "All")
+    if cached_signature == tools_signature:
+        if selected and selected not in tools and selected != "All":
+            self._syncing_logger_controls = True
+            try:
+                combo.setSelectedItem("All")
+            finally:
+                self._syncing_logger_controls = False
+        return
     self._syncing_logger_controls = True
     try:
         combo.removeAllItems()
@@ -1927,6 +2001,9 @@ def _refresh_logger_tool_filter(self):
             combo.addItem(tool_name)
         if selected in tools or selected == "All":
             combo.setSelectedItem(selected)
+        else:
+            combo.setSelectedItem("All")
+        self._logger_tool_combo_signature = tools_signature
     finally:
         self._syncing_logger_controls = False
 
@@ -2097,10 +2174,15 @@ def _open_logger_grep_popup(self):
     if getattr(self, "logger_in_scope_checkbox", None) is not None:
         inline_scope = bool(self.logger_in_scope_checkbox.isSelected())
 
-    regex_field = JTextField(inline_pattern, 72)
-    search_req_checkbox = JCheckBox("Search Requests", inline_req)
-    search_resp_checkbox = JCheckBox("Search Responses", inline_resp)
-    in_scope_checkbox = JCheckBox("In Scope Only", inline_scope)
+    popup_pattern = self._load_text_setting("logger_popup.grep_pattern", inline_pattern)
+    popup_req = self._load_bool_setting("logger_popup.grep_req", inline_req)
+    popup_resp = self._load_bool_setting("logger_popup.grep_resp", inline_resp)
+    popup_scope = self._load_bool_setting("logger_popup.grep_scope", inline_scope)
+
+    regex_field = JTextField(popup_pattern, 72)
+    search_req_checkbox = JCheckBox("Search Requests", popup_req)
+    search_resp_checkbox = JCheckBox("Search Responses", popup_resp)
+    in_scope_checkbox = JCheckBox("In Scope Only", popup_scope)
 
     preview_area = JTextArea(14, 120)
     preview_area.setEditable(False)
@@ -2189,6 +2271,12 @@ def _open_logger_grep_popup(self):
         self.logger_search_resp_checkbox.setSelected(bool(search_resp_checkbox.isSelected()))
     if getattr(self, "logger_in_scope_checkbox", None) is not None:
         self.logger_in_scope_checkbox.setSelected(bool(in_scope_checkbox.isSelected()))
+    self._save_text_setting(
+        "logger_popup.grep_pattern", self._ascii_safe(regex_field.getText() or "")
+    )
+    self._save_bool_setting("logger_popup.grep_req", bool(search_req_checkbox.isSelected()))
+    self._save_bool_setting("logger_popup.grep_resp", bool(search_resp_checkbox.isSelected()))
+    self._save_bool_setting("logger_popup.grep_scope", bool(in_scope_checkbox.isSelected()))
     self._run_logger_regex_search()
 
 def _reset_logger_regex_search(self, clear_field=True, log_feedback=True):
@@ -2209,6 +2297,155 @@ def _reset_logger_regex_search(self, clear_field=True, log_feedback=True):
     if log_feedback:
         self.log_to_ui("[*] Logger++ grep reset")
 
+def _persist_logger_filter_library(self):
+    """Persist named logger regex filters across Burp sessions."""
+    with self.logger_lock:
+        library_snapshot = list(getattr(self, "logger_filter_library", []) or [])
+    cleaned = []
+    for item in library_snapshot:
+        if not isinstance(item, dict):
+            continue
+        alias = self._ascii_safe(item.get("alias") or "").strip()
+        regex_text = self._ascii_safe(item.get("regex") or "").strip()
+        if (not alias) or (not regex_text):
+            continue
+        cleaned.append({"alias": alias[:80], "regex": regex_text[:400]})
+        if len(cleaned) >= 200:
+            break
+    try:
+        payload = json.dumps(cleaned, separators=(",", ":"))
+    except (TypeError, ValueError) as json_err:
+        self._callbacks.printError(
+            "Logger filter library persistence encode failed: {}".format(str(json_err))
+        )
+        return
+    self._save_text_setting("logger_filter_library_json", payload)
+
+def _restore_logger_filter_library(self):
+    """Restore named logger regex filters from extension settings."""
+    raw_payload = self._load_text_setting("logger_filter_library_json", "").strip()
+    if not raw_payload:
+        return
+    try:
+        parsed = json.loads(raw_payload)
+    except (TypeError, ValueError) as json_err:
+        self._callbacks.printError(
+            "Logger filter library persistence decode failed: {}".format(str(json_err))
+        )
+        return
+    if not isinstance(parsed, list):
+        return
+    cleaned = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        alias = self._ascii_safe(item.get("alias") or "").strip()
+        regex_text = self._ascii_safe(item.get("regex") or "").strip()
+        if (not alias) or (not regex_text):
+            continue
+        cleaned.append({"alias": alias[:80], "regex": regex_text[:400]})
+        if len(cleaned) >= 200:
+            break
+    with self.logger_lock:
+        self.logger_filter_library = cleaned
+    self._logger_filter_library_signature = ()
+    self._refresh_logger_filter_library_combo()
+
+def _persist_logger_tag_rules(self):
+    """Persist logger tag rules across Burp sessions."""
+    with self.logger_lock:
+        rules_snapshot = list(getattr(self, "logger_tag_rules", []) or [])
+    scope_map = {"any": "Any", "url": "URL", "request": "Request", "response": "Response"}
+    cleaned = []
+    for item in rules_snapshot:
+        if not isinstance(item, dict):
+            continue
+        tag = self._ascii_safe(item.get("tag") or "", lower=True).strip().replace(" ", "_")
+        scope_key = self._ascii_safe(item.get("scope") or "Any", lower=True).strip()
+        regex_text = self._ascii_safe(item.get("regex") or "").strip()
+        fg_text = self._ascii_safe(item.get("fg") or "#000000", lower=True).strip()
+        bg_text = self._ascii_safe(item.get("bg") or "#fff176", lower=True).strip()
+        enabled = bool(item.get("enabled", True))
+        scope_text = scope_map.get(scope_key)
+        if (not tag) or (not scope_text) or (not regex_text):
+            continue
+        if not re.match(r"^#[0-9a-f]{6}$", fg_text):
+            fg_text = "#000000"
+        if not re.match(r"^#[0-9a-f]{6}$", bg_text):
+            bg_text = "#fff176"
+        cleaned.append(
+            {
+                "tag": tag[:48],
+                "scope": scope_text,
+                "regex": regex_text[:400],
+                "fg": fg_text,
+                "bg": bg_text,
+                "enabled": enabled,
+            }
+        )
+        if len(cleaned) >= 150:
+            break
+    try:
+        payload = json.dumps(cleaned, separators=(",", ":"))
+    except (TypeError, ValueError) as json_err:
+        self._callbacks.printError(
+            "Logger tag-rule persistence encode failed: {}".format(str(json_err))
+        )
+        return
+    self._save_text_setting("logger_tag_rules_json", payload)
+
+def _restore_logger_tag_rules(self):
+    """Restore logger tag rules from extension settings."""
+    raw_payload = self._load_text_setting("logger_tag_rules_json", "").strip()
+    if not raw_payload:
+        return
+    try:
+        parsed = json.loads(raw_payload)
+    except (TypeError, ValueError) as json_err:
+        self._callbacks.printError(
+            "Logger tag-rule persistence decode failed: {}".format(str(json_err))
+        )
+        return
+    if not isinstance(parsed, list):
+        return
+    scope_map = {"any": "Any", "url": "URL", "request": "Request", "response": "Response"}
+    cleaned = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        tag = self._ascii_safe(item.get("tag") or "", lower=True).strip().replace(" ", "_")
+        scope_key = self._ascii_safe(item.get("scope") or "Any", lower=True).strip()
+        regex_text = self._ascii_safe(item.get("regex") or "").strip()
+        fg_text = self._ascii_safe(item.get("fg") or "#000000", lower=True).strip()
+        bg_text = self._ascii_safe(item.get("bg") or "#fff176", lower=True).strip()
+        enabled = bool(item.get("enabled", True))
+        scope_text = scope_map.get(scope_key)
+        if (not tag) or (not scope_text) or (not regex_text):
+            continue
+        if not re.match(r"^#[0-9a-f]{6}$", fg_text):
+            fg_text = "#000000"
+        if not re.match(r"^#[0-9a-f]{6}$", bg_text):
+            bg_text = "#fff176"
+        cleaned.append(
+            {
+                "tag": tag[:48],
+                "scope": scope_text,
+                "regex": regex_text[:400],
+                "fg": fg_text,
+                "bg": bg_text,
+                "enabled": enabled,
+            }
+        )
+        if len(cleaned) >= 150:
+            break
+    with self.logger_lock:
+        self.logger_tag_rules = cleaned
+
+def _restore_logger_popup_persistence(self):
+    """Restore logger popup-related persisted state."""
+    self._restore_logger_filter_library()
+    self._restore_logger_tag_rules()
+
 def _refresh_logger_filter_library_combo(self):
     """Refresh filter-library dropdown from saved logger regex snippets."""
     combo = getattr(self, "logger_filter_library_combo", None)
@@ -2216,21 +2453,43 @@ def _refresh_logger_filter_library_combo(self):
         return
     with self.logger_lock:
         entries = list(getattr(self, "logger_filter_library", []) or [])
+    aliases = []
+    for item in entries:
+        alias = self._ascii_safe(item.get("alias") or "").strip()
+        if alias:
+            aliases.append(alias)
+    aliases_signature = tuple(aliases)
+    cached_signature = tuple(
+        getattr(self, "_logger_filter_library_signature", ()) or ()
+    )
     selected = self._ascii_safe(
         str(combo.getSelectedItem()) if combo.getSelectedItem() is not None else ""
     )
+    if cached_signature == aliases_signature:
+        if (not aliases) and selected != "(No Saved Filters)":
+            self._syncing_logger_controls = True
+            try:
+                combo.setSelectedItem("(No Saved Filters)")
+            finally:
+                self._syncing_logger_controls = False
+        elif aliases and selected and selected not in aliases:
+            self._syncing_logger_controls = True
+            try:
+                combo.setSelectedItem(aliases[0])
+            finally:
+                self._syncing_logger_controls = False
+        return
     self._syncing_logger_controls = True
     try:
         combo.removeAllItems()
-        if not entries:
+        if not aliases:
             combo.addItem("(No Saved Filters)")
         else:
-            for item in entries:
-                alias = self._ascii_safe(item.get("alias") or "").strip()
-                if alias:
-                    combo.addItem(alias)
+            for alias in aliases:
+                combo.addItem(alias)
         if selected:
             combo.setSelectedItem(selected)
+        self._logger_filter_library_signature = aliases_signature
     finally:
         self._syncing_logger_controls = False
 
@@ -2267,6 +2526,7 @@ def _save_logger_filter(self):
             library, key=lambda item: self._ascii_safe(item.get("alias") or "", lower=True)
         )[:200]
         self.logger_filter_library = library
+    self._persist_logger_filter_library()
     self._refresh_logger_filter_library_combo()
     combo = getattr(self, "logger_filter_library_combo", None)
     if combo is not None:
@@ -2319,6 +2579,7 @@ def _remove_logger_filter(self):
             != self._ascii_safe(alias, lower=True)
         ]
         self.logger_filter_library = library
+    self._persist_logger_filter_library()
     self._refresh_logger_filter_library_combo()
     if len(library) < original:
         self.log_to_ui("[*] Logger++ removed filter '{}'".format(alias))
@@ -2561,10 +2822,20 @@ def _open_logger_tag_rules_popup(self):
     editor.setLineWrap(False)
     editor.setWrapStyleWord(False)
 
-    quick_tag_field = JTextField("", 14)
+    quick_tag_default = self._load_text_setting("logger_popup.tag.quick_tag", "")
+    quick_scope_default = self._load_text_setting("logger_popup.tag.quick_scope", "Any")
+    quick_regex_default = self._load_text_setting("logger_popup.tag.quick_regex", "")
+    quick_fg_default = self._load_text_setting("logger_popup.tag.quick_fg", "#ffffff")
+    quick_bg_default = self._load_text_setting("logger_popup.tag.quick_bg", "#ff5252")
+    quick_enabled_default = self._load_bool_setting("logger_popup.tag.quick_enabled", True)
+
+    quick_tag_field = JTextField(quick_tag_default, 14)
     quick_scope_combo = JComboBox(["Any", "URL", "Request", "Response"])
-    quick_scope_combo.setSelectedItem("Any")
-    quick_regex_field = JTextField("", 36)
+    if self._ascii_safe(quick_scope_default).strip() in ["Any", "URL", "Request", "Response"]:
+        quick_scope_combo.setSelectedItem(self._ascii_safe(quick_scope_default).strip())
+    else:
+        quick_scope_combo.setSelectedItem("Any")
+    quick_regex_field = JTextField(quick_regex_default, 36)
     quick_fg_combo = JComboBox(
         [
             "#000000",
@@ -2575,7 +2846,10 @@ def _open_logger_tag_rules_popup(self):
             "#be123c",
         ]
     )
-    quick_fg_combo.setSelectedItem("#ffffff")
+    if re.match(r"^#[0-9a-f]{6}$", self._ascii_safe(quick_fg_default, lower=True).strip()):
+        quick_fg_combo.setSelectedItem(self._ascii_safe(quick_fg_default, lower=True).strip())
+    else:
+        quick_fg_combo.setSelectedItem("#ffffff")
     quick_fg_combo.setEditable(True)
     quick_bg_combo = JComboBox(
         [
@@ -2588,9 +2862,12 @@ def _open_logger_tag_rules_popup(self):
             "#cfd8dc",
         ]
     )
-    quick_bg_combo.setSelectedItem("#ff5252")
+    if re.match(r"^#[0-9a-f]{6}$", self._ascii_safe(quick_bg_default, lower=True).strip()):
+        quick_bg_combo.setSelectedItem(self._ascii_safe(quick_bg_default, lower=True).strip())
+    else:
+        quick_bg_combo.setSelectedItem("#ff5252")
     quick_bg_combo.setEditable(True)
-    quick_enabled_checkbox = JCheckBox("Enabled", True)
+    quick_enabled_checkbox = JCheckBox("Enabled", quick_enabled_default)
     lab_status_label = JLabel("Rule Lab: ready")
     lab_preview_area = JTextArea(8, 110)
     lab_preview_area.setEditable(False)
@@ -2764,7 +3041,10 @@ def _open_logger_tag_rules_popup(self):
     lab_panel.add(JScrollPane(lab_preview_area), BorderLayout.CENTER)
     center.add(lab_panel, BorderLayout.SOUTH)
     panel.add(center, BorderLayout.CENTER)
-    _apply_auto_style()
+    if (not self._ascii_safe(quick_tag_default).strip()) and (
+        not self._ascii_safe(quick_regex_default).strip()
+    ):
+        _apply_auto_style()
     _refresh_rule_lab()
 
     decision = JOptionPane.showConfirmDialog(
@@ -2783,6 +3063,26 @@ def _open_logger_tag_rules_popup(self):
         "request": "Request",
         "response": "Response",
     }
+    self._save_text_setting(
+        "logger_popup.tag.quick_tag", self._ascii_safe(quick_tag_field.getText() or "")
+    )
+    self._save_text_setting(
+        "logger_popup.tag.quick_scope",
+        self._ascii_safe(str(quick_scope_combo.getSelectedItem() or "Any")),
+    )
+    self._save_text_setting(
+        "logger_popup.tag.quick_regex", self._ascii_safe(quick_regex_field.getText() or "")
+    )
+    self._save_text_setting(
+        "logger_popup.tag.quick_fg", _combo_selected_text(quick_fg_combo, "#ffffff")
+    )
+    self._save_text_setting(
+        "logger_popup.tag.quick_bg", _combo_selected_text(quick_bg_combo, "#ff5252")
+    )
+    self._save_bool_setting(
+        "logger_popup.tag.quick_enabled", bool(quick_enabled_checkbox.isSelected())
+    )
+
     parsed = []
     errors = []
     raw_text = self._ascii_safe(editor.getText() or "")
@@ -2852,6 +3152,7 @@ def _open_logger_tag_rules_popup(self):
 
     with self.logger_lock:
         self.logger_tag_rules = list(parsed)
+    self._persist_logger_tag_rules()
     self._schedule_logger_ui_refresh(force=True)
     self.log_to_ui("[+] Logger tag rules updated: {} rules".format(len(parsed)))
 
@@ -2995,7 +3296,13 @@ def _logger_event_matches_filters(
     if noise_filter_enabled and self._logger_event_is_noise(event):
         return False
 
-    tags_for_search = ", ".join(self._logger_extract_tag_tokens(event.get("tags") or ""))
+    cached_tokens = event.get("_tag_tokens")
+    if isinstance(cached_tokens, list):
+        tags_for_search = ", ".join(cached_tokens[:8])
+    else:
+        parsed_tokens = self._logger_extract_tag_tokens(event.get("tags") or "")
+        event["_tag_tokens"] = list(parsed_tokens)
+        tags_for_search = ", ".join(parsed_tokens[:8])
     search = self._ascii_safe(filter_text, lower=True).strip()
     haystack = " ".join(
         [
@@ -3163,12 +3470,13 @@ def _refresh_logger_view(self):
     grep_total_hits = 0
     endpoint_tag_map = {}
     for event in snapshot:
-        event_view = dict(event)
+        event_view = event
         event_view["tags"] = self._logger_apply_tag_rules(event_view, compiled_tag_rules)
         if not self._ascii_safe(event_view.get("base_tags") or "").strip():
             event_view["base_tags"] = event_view["tags"]
         endpoint_key = self._ascii_safe(event_view.get("endpoint_key") or "").strip()
         tag_tokens = self._logger_extract_tag_tokens(event_view.get("tags") or "")
+        event_view["_tag_tokens"] = list(tag_tokens)
         if endpoint_key and tag_tokens:
             collected = endpoint_tag_map.get(endpoint_key)
             if collected is None:
@@ -3219,7 +3527,9 @@ def _refresh_logger_view(self):
     model = getattr(self, "logger_table_model", None)
     if model is not None:
         def _tag_cell_text(event_obj):
-            tokens = self._logger_extract_tag_tokens(event_obj.get("tags") or "")
+            tokens = event_obj.get("_tag_tokens")
+            if not isinstance(tokens, list):
+                tokens = self._logger_extract_tag_tokens(event_obj.get("tags") or "")
             if not tokens:
                 return ""
             return ", ".join(tokens[:8])
@@ -3379,6 +3689,246 @@ def _logger_event_full_url(self, event):
         url_text += "?" + query
     return url_text
 
+def _entry_full_url(self, entry):
+    """Build full URL from one Recon entry."""
+    protocol = self._ascii_safe(entry.get("protocol") or "https", lower=True).strip()
+    if protocol not in ["http", "https"]:
+        protocol = "https"
+    host = self._ascii_safe(entry.get("host") or "", lower=True).strip()
+    path = self._ascii_safe(entry.get("path") or entry.get("normalized_path") or "/")
+    query = self._ascii_safe(entry.get("query_string") or "")
+    try:
+        port = int(entry.get("port", 0) or 0)
+    except (TypeError, ValueError):
+        port = 0
+    if not host:
+        return path
+    if not path.startswith("/"):
+        path = "/" + path
+    if port <= 0:
+        port = 443 if protocol == "https" else 80
+    if (protocol == "https" and port == 443) or (protocol == "http" and port == 80):
+        url_text = "{}://{}{}".format(protocol, host, path)
+    else:
+        url_text = "{}://{}:{}{}".format(protocol, host, port, path)
+    if query:
+        url_text += "?" + query
+    return url_text
+
+def _shell_single_quote(self, text):
+    raw = self._ascii_safe(text or "")
+    return "'" + raw.replace("'", "'\"'\"'") + "'"
+
+def _build_entry_request_text(self, entry):
+    """Reconstruct full raw HTTP request text from one Recon entry."""
+    method = self._ascii_safe(entry.get("method") or "GET").upper().strip() or "GET"
+    path = self._ascii_safe(entry.get("path") or entry.get("normalized_path") or "/")
+    if not path.startswith("/"):
+        path = "/" + path
+    query = self._ascii_safe(entry.get("query_string") or "")
+    target = path + ("?" + query if query else "")
+
+    headers = dict(entry.get("headers") or {})
+    host = self._ascii_safe(entry.get("host") or "").strip()
+    has_host = False
+    has_content_length = False
+    header_lines = []
+    for name, value in headers.items():
+        key = self._ascii_safe(name or "")
+        data = self._ascii_safe(value or "")
+        key_lower = self._ascii_safe(key, lower=True)
+        if key_lower == "host":
+            has_host = True
+        if key_lower == "content-length":
+            has_content_length = True
+        if key and data:
+            header_lines.append("{}: {}".format(key, data))
+    if host and (not has_host):
+        header_lines.insert(0, "Host: {}".format(host))
+
+    body = self._ascii_safe(entry.get("request_body") or "")
+    if body and (not has_content_length):
+        header_lines.append("Content-Length: {}".format(len(body)))
+    request_lines = ["{} {} HTTP/1.1".format(method, target)] + header_lines + ["", body]
+    return "\r\n".join(request_lines)
+
+def _build_entry_curl_command(self, entry):
+    """Build a ready-to-run curl command from one Recon entry."""
+    method = self._ascii_safe(entry.get("method") or "GET").upper().strip() or "GET"
+    url_text = self._entry_full_url(entry)
+    headers = dict(entry.get("headers") or {})
+    body = self._ascii_safe(entry.get("request_body") or "")
+
+    parts = [
+        "curl -i -sS -k -X {}".format(method),
+        self._shell_single_quote(url_text),
+    ]
+    for name, value in headers.items():
+        key = self._ascii_safe(name or "")
+        data = self._ascii_safe(value or "")
+        if not key or (not data):
+            continue
+        if self._ascii_safe(key, lower=True) == "content-length":
+            continue
+        parts.append("-H {}".format(self._shell_single_quote("{}: {}".format(key, data))))
+    if body:
+        parts.append("--data-raw {}".format(self._shell_single_quote(body)))
+    return " \\\n  ".join(parts)
+
+def _build_ai_request_analysis_prompt(self, endpoint_key, entry, source_label):
+    endpoint = self._ascii_safe(endpoint_key or "")
+    source = self._ascii_safe(source_label or "Recon")
+    method = self._ascii_safe(entry.get("method") or "GET").upper().strip() or "GET"
+    url_text = self._entry_full_url(entry)
+    lines = [
+        "You are a senior API security tester.",
+        "Analyze the supplied HTTP request and response context from Burp capture data.",
+        "Focus on realistic exploitability and high-signal API weaknesses (BOLA/IDOR, authz/authn, mass assignment, injection, SSRF, business logic, race, data exposure).",
+        "Use this target context:",
+        "- Source: {}".format(source),
+        "- Endpoint Key: {}".format(endpoint),
+        "- Request: {} {}".format(method, url_text),
+        "",
+        "Return in this format:",
+        "1) Top findings (severity + confidence + evidence)",
+        "2) Exact reproduction steps",
+        "3) Optional crafted payload variations",
+        "4) Mitigations mapped to each finding",
+        "5) Short follow-up test checklist",
+    ]
+    return "\n".join(lines)
+
+def _build_ai_request_export(self, endpoint_key, entry, source_label):
+    request_text = self._build_entry_request_text(entry)
+    curl_text = self._build_entry_curl_command(entry)
+    prompt_text = self._build_ai_request_analysis_prompt(endpoint_key, entry, source_label)
+
+    status = int(entry.get("response_status", 0) or 0)
+    response_headers = dict(entry.get("response_headers") or {})
+    response_body = self._ascii_safe(entry.get("response_body") or "")
+    response_lines = ["HTTP {}".format(status)]
+    for name, value in response_headers.items():
+        key = self._ascii_safe(name or "")
+        data = self._ascii_safe(value or "")
+        if key and data:
+            response_lines.append("{}: {}".format(key, data))
+    if response_body:
+        response_lines.append("")
+        if len(response_body) > 6000:
+            response_lines.append(response_body[:6000] + "\n... [truncated]")
+        else:
+            response_lines.append(response_body)
+    response_text = "\n".join(response_lines)
+
+    output_lines = [
+        "=== AI REQUEST ANALYSIS PACK ===",
+        "Generated: {}".format(time.strftime("%Y-%m-%d %H:%M:%S")),
+        "Source: {}".format(self._ascii_safe(source_label or "Recon")),
+        "Endpoint: {}".format(self._ascii_safe(endpoint_key or "")),
+        "URL: {}".format(self._entry_full_url(entry)),
+        "",
+        "SMART PROMPT:",
+        prompt_text,
+        "",
+        "READY CURL:",
+        curl_text,
+        "",
+        "FULL HTTP REQUEST:",
+        request_text,
+        "",
+        "SAMPLE HTTP RESPONSE:",
+        response_text,
+    ]
+    return "\n".join(output_lines)
+
+def _send_endpoint_to_ai(self, endpoint_key, source_label="Recon", entry_override=None):
+    """Export one endpoint as an AI-ready request analysis package."""
+    endpoint = self._ascii_safe(endpoint_key or "").strip()
+    if not endpoint:
+        self.log_to_ui("[!] AI export: missing endpoint key")
+        return
+
+    selected_entry = None
+    if isinstance(entry_override, dict):
+        selected_entry = dict(entry_override)
+    if selected_entry is None:
+        with self.lock:
+            entries = self.api_data.get(endpoint, [])
+        if isinstance(entries, list) and entries:
+            selected_entry = dict(entries[-1])
+        elif isinstance(entries, dict) and entries:
+            selected_entry = dict(entries)
+    if not isinstance(selected_entry, dict):
+        self.log_to_ui("[!] AI export: endpoint not found ({})".format(endpoint))
+        return
+
+    package_text = self._build_ai_request_export(endpoint, selected_entry, source_label)
+    self._copy_to_clipboard(package_text)
+    self._show_text_dialog(
+        "AI Request Export - {}".format(endpoint),
+        package_text,
+        rows=30,
+        cols=140,
+    )
+    self.log_to_ui("[+] AI request export ready for {}".format(endpoint))
+
+def _logger_send_selected_to_ai(self):
+    """Export selected Logger row as AI-ready request analysis package."""
+    indices = self._logger_selected_indices()
+    if not indices:
+        self.log_to_ui("[!] Logger: select a row first")
+        return
+    with self.logger_lock:
+        view_snapshot = list(self.logger_view_events or [])
+    first_idx = int(indices[0] if indices else -1)
+    if first_idx < 0 or first_idx >= len(view_snapshot):
+        self.log_to_ui("[!] Logger: selected row unavailable")
+        return
+    event = dict(view_snapshot[first_idx] or {})
+    endpoint_key = self._ascii_safe(event.get("endpoint_key") or "").strip()
+    if not endpoint_key:
+        endpoint_key = "{}:{}".format(
+            self._ascii_safe(event.get("method") or "GET").upper().strip() or "GET",
+            self._normalize_path(self._ascii_safe(event.get("path") or "/")),
+        )
+
+    selected_entry = None
+    with self.lock:
+        entries = list(self.api_data.get(endpoint_key, []) or [])
+    if entries:
+        event_method = self._ascii_safe(event.get("method") or "GET").upper().strip()
+        event_path = self._normalize_path(self._ascii_safe(event.get("path") or "/"))
+        event_query = self._ascii_safe(event.get("query") or "")
+        for candidate in reversed(entries):
+            c_method = self._ascii_safe(candidate.get("method") or "GET").upper().strip()
+            c_path = self._normalize_path(
+                self._ascii_safe(candidate.get("path") or candidate.get("normalized_path") or "/")
+            )
+            c_query = self._ascii_safe(candidate.get("query_string") or "")
+            if c_method == event_method and c_path == event_path and c_query == event_query:
+                selected_entry = dict(candidate)
+                break
+        if selected_entry is None:
+            selected_entry = dict(entries[-1])
+
+    if selected_entry is None:
+        selected_entry = {
+            "method": self._ascii_safe(event.get("method") or "GET").upper().strip() or "GET",
+            "path": self._ascii_safe(event.get("path") or "/"),
+            "normalized_path": self._normalize_path(self._ascii_safe(event.get("path") or "/")),
+            "host": self._ascii_safe(event.get("host") or "", lower=True).strip(),
+            "protocol": self._ascii_safe(event.get("protocol") or "https", lower=True).strip(),
+            "port": int(event.get("port", 0) or 0),
+            "query_string": self._ascii_safe(event.get("query") or ""),
+            "headers": {},
+            "request_body": "",
+            "response_status": int(event.get("status", 0) or 0),
+            "response_headers": {},
+            "response_body": self._ascii_safe(event.get("response_preview") or ""),
+            "response_length": int(event.get("response_length", 0) or 0),
+        }
+    self._send_endpoint_to_ai(endpoint_key, source_label="Logger", entry_override=selected_entry)
+
 def _logger_copy_selected_rows(self):
     """Copy selected logger rows to clipboard as TSV."""
     indices = self._logger_selected_indices()
@@ -3523,7 +4073,12 @@ def _clear_logger_logs(self, emit_log=True):
     cleared = 0
     with self.logger_lock:
         cleared = int(len(self.logger_events or []))
-        self.logger_events = []
+        if hasattr(self.logger_events, "__class__") and hasattr(
+            self.logger_events, "popleft"
+        ):
+            self.logger_events = self.logger_events.__class__()
+        else:
+            self.logger_events = []
         self.logger_view_events = []
         self.logger_dropped_count = 0
         self.logger_last_prune_ts = ""
@@ -3844,6 +4399,9 @@ def _open_target_base_scope_popup(self):
     self.target_base_scope_lines = parsed["lines"]
     self.target_base_scope_hosts = parsed["hosts"]
     self.target_base_scope_bases = parsed["bases"]
+    self._save_text_setting(
+        "target_base_scope_lines", "\n".join(self.target_base_scope_lines)
+    )
 
     line_count = len(self.target_base_scope_lines)
     if line_count == 0:
@@ -4015,8 +4573,7 @@ def _select_export_scope_data(self, export_name):
             return scope, dict(self.api_data)
 
     if scope == "Filtered View":
-        with self.lock:
-            filtered = dict(self._filter_endpoints())
+        filtered = dict(self._filter_endpoints())
         if not filtered:
             self.log_to_ui("[!] Filtered view is empty")
             return None, None
@@ -6313,6 +6870,8 @@ __all__ = [
     "_logger_apply_runtime_settings",
     "_show_logger_help_popup",
     "_logger_trim_if_needed",
+    "_logger_effective_preview_caps",
+    "_logger_effective_header_preview_limit",
     "_sync_recon_entry_from_logger",
     "_logger_capture_event",
     "_logger_count_default_request_markers",
@@ -6326,6 +6885,11 @@ __all__ = [
     "_logger_collect_grep_popup_matches",
     "_open_logger_grep_popup",
     "_reset_logger_regex_search",
+    "_persist_logger_filter_library",
+    "_restore_logger_filter_library",
+    "_persist_logger_tag_rules",
+    "_restore_logger_tag_rules",
+    "_restore_logger_popup_persistence",
     "_refresh_logger_filter_library_combo",
     "_save_logger_filter",
     "_apply_logger_filter",
@@ -6347,8 +6911,15 @@ __all__ = [
     "_logger_selected_indices",
     "_logger_select_all_rows",
     "_logger_event_full_url",
+    "_entry_full_url",
+    "_shell_single_quote",
+    "_build_entry_request_text",
+    "_build_entry_curl_command",
+    "_build_ai_request_analysis_prompt",
+    "_build_ai_request_export",
     "_logger_copy_selected_rows",
     "_logger_show_endpoint_detail",
+    "_logger_send_selected_to_ai",
     "_logger_send_selected_to_repeater",
     "_clear_logger_logs",
     "_export_logger_view",
@@ -6400,6 +6971,7 @@ __all__ = [
     "_send_to_recon",
     "_send_to_repeater",
     "_send_endpoint_to_repeater",
+    "_send_endpoint_to_ai",
     "_build_url",
     "_export_urls_to_file",
     "_run_tool_async",

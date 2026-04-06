@@ -9,20 +9,26 @@ import os
 
 def _source_text():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src_dir = os.path.join(base_dir, "src")
+    def _pick_path(filename):
+        src_path = os.path.join(src_dir, filename)
+        if os.path.exists(src_path):
+            return src_path
+        return os.path.join(base_dir, filename)
     source_paths = [
         os.path.join(base_dir, "BurpAPISecuritySuite.py"),
-        os.path.join(base_dir, "burp_core_ui_and_fuzz_methods.py"),
-        os.path.join(base_dir, "burp_fuzz_detection_and_capture_methods.py"),
-        os.path.join(base_dir, "burp_capture_export_and_tooling_methods.py"),
-        os.path.join(base_dir, "burp_auth_passive_and_scanner_methods.py"),
-        os.path.join(base_dir, "burp_wayback_import_and_logging_methods.py"),
-        os.path.join(base_dir, "heavy_runners.py"),
-        os.path.join(base_dir, "jython_size_helpers.py"),
-        os.path.join(base_dir, "ai_prep_layer.py"),
-        os.path.join(base_dir, "behavior_analysis.py"),
-        os.path.join(base_dir, "recon_param_intel.py"),
-        os.path.join(base_dir, "golden_ticket_analysis.py"),
-        os.path.join(base_dir, "state_transition_analysis.py"),
+        _pick_path("burp_core_ui_and_fuzz_methods.py"),
+        _pick_path("burp_fuzz_detection_and_capture_methods.py"),
+        _pick_path("burp_capture_export_and_tooling_methods.py"),
+        _pick_path("burp_auth_passive_and_scanner_methods.py"),
+        _pick_path("burp_wayback_import_and_logging_methods.py"),
+        _pick_path("heavy_runners.py"),
+        _pick_path("jython_size_helpers.py"),
+        _pick_path("ai_prep_layer.py"),
+        _pick_path("behavior_analysis.py"),
+        _pick_path("recon_param_intel.py"),
+        _pick_path("golden_ticket_analysis.py"),
+        _pick_path("state_transition_analysis.py"),
     ]
     chunks = []
     for source_path in source_paths:
@@ -988,17 +994,21 @@ def test_emergency_pkill_button_and_handler_present():
         'def _pkill_external_tools(',
         'def _add_force_kill_button(',
         '"PKill Tools"',
-        'self._add_force_kill_button(controls, lambda: getattr(self, "nuclei_area", None))',
-        'self._add_force_kill_button(controls, lambda: getattr(self, "httpx_area", None))',
-        'self._add_force_kill_button(controls, lambda: getattr(self, "katana_area", None))',
-        'self._add_force_kill_button(controls, lambda: getattr(self, "ffuf_area", None))',
-        'self._add_force_kill_button(controls, lambda: getattr(self, "wayback_area", None))',
         '["pkill", "-TERM", "-f", pattern]',
         '["killall", "-q", pattern]',
         '["taskkill", "/IM", name, "/F", "/T"]',
     ]
     for token in required_tokens:
         assert token in text, "Missing emergency kill token: {}".format(token)
+    for area_name in [
+        "nuclei_area",
+        "httpx_area",
+        "katana_area",
+        "ffuf_area",
+        "wayback_area",
+    ]:
+        token = 'lambda: getattr(self, "{}", None)'.format(area_name)
+        assert token in text, "Missing emergency kill area binding: {}".format(area_name)
     print("[PASS] test_emergency_pkill_button_and_handler_present")
 
 
@@ -1076,7 +1086,11 @@ def test_custom_command_labels_are_concise_and_opt_in():
     assert (
         'self.wayback_custom_cmd_checkbox = JCheckBox("Enable Custom", False)' in text
     )
-    assert text.count('controls.add(JLabel("Command:"))') >= 4
+    command_label_hits = (
+        text.count('controls.add(JLabel("Command:"))')
+        + text.count('controls_line1.add(JLabel("Command:"))')
+    )
+    assert command_label_hits >= 4
     print("[PASS] test_custom_command_labels_are_concise_and_opt_in")
 
 
@@ -1282,3 +1296,98 @@ def test_state_transition_logic_is_extracted_to_dedicated_module():
     for token in required_tokens:
         assert token in text, "Missing extracted state-transition token: {}".format(token)
     print("[PASS] test_state_transition_logic_is_extracted_to_dedicated_module")
+
+
+def test_checkbox_state_persistence_is_wired():
+    text = _source_text()
+    required_tokens = [
+        "_PERSISTED_CHECKBOX_ATTRS",
+        "def _load_bool_setting(",
+        "def _save_bool_setting(",
+        "def _persist_checkbox_attr(",
+        "def _restore_persisted_ui_state(",
+        "self._restore_persisted_ui_state()",
+        "self._callbacks.loadExtensionSetting(",
+        "self._callbacks.saveExtensionSetting(",
+        "target_base_scope_only_enabled",
+        'self._save_bool_setting("target_base_scope_only_enabled", desired)',
+        "lambda _event, name=attr_name: self._persist_checkbox_attr(name)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing checkbox persistence token: {}".format(token)
+    print("[PASS] test_checkbox_state_persistence_is_wired")
+
+
+def test_text_and_combo_field_persistence_is_wired():
+    text = _source_text()
+    required_tokens = [
+        "_PERSISTED_TEXT_ATTRS",
+        "_PERSISTED_COMBO_ATTRS",
+        "class _PersistTextFieldListener(DocumentListener):",
+        "def _load_text_setting(",
+        "def _save_text_setting(",
+        "def _persist_text_attr(",
+        "def _combo_contains_item(",
+        "def _persist_combo_attr(",
+        'self._save_text_setting("text.{}".format(attr_name), value)',
+        'self._save_text_setting("combo.{}".format(attr_name), self._ascii_safe(selected or ""))',
+        "_PersistTextFieldListener(self, attr_name)",
+        "combo.addActionListener(",
+        'scope_lines_text = self._load_text_setting("target_base_scope_lines", scope_lines_default)',
+        'self._save_text_setting(',
+        '"target_base_scope_lines", "\\n".join(self.target_base_scope_lines)',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing text/combo persistence token: {}".format(token)
+    print("[PASS] test_text_and_combo_field_persistence_is_wired")
+
+
+def test_logger_popup_persistence_is_wired():
+    text = _source_text()
+    required_tokens = [
+        "def _persist_logger_filter_library(",
+        "def _restore_logger_filter_library(",
+        "def _persist_logger_tag_rules(",
+        "def _restore_logger_tag_rules(",
+        "def _restore_logger_popup_persistence(",
+        "self._restore_logger_popup_persistence()",
+        'self._load_text_setting("logger_popup.grep_pattern", inline_pattern)',
+        'self._save_text_setting(',
+        '"logger_popup.grep_pattern", self._ascii_safe(regex_field.getText() or "")',
+        '"logger_popup.grep_req"',
+        '"logger_popup.grep_resp"',
+        '"logger_popup.grep_scope"',
+        '"logger_filter_library_json"',
+        '"logger_tag_rules_json"',
+        '"logger_popup.tag.quick_tag"',
+        '"logger_popup.tag.quick_scope"',
+        '"logger_popup.tag.quick_regex"',
+        '"logger_popup.tag.quick_fg"',
+        '"logger_popup.tag.quick_bg"',
+        '"logger_popup.tag.quick_enabled"',
+        "self._persist_logger_filter_library()",
+        "self._persist_logger_tag_rules()",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing logger popup persistence token: {}".format(token)
+    print("[PASS] test_logger_popup_persistence_is_wired")
+
+
+def test_ai_export_actions_are_wired_across_outputs():
+    text = _source_text()
+    required_tokens = [
+        'ai_item = JMenuItem("Send to AI Analysis")',
+        'item_send_ai = JMenuItem("Send Selected To AI Analysis")',
+        "def _send_endpoint_to_ai(",
+        "def _logger_send_selected_to_ai(",
+        "def _build_entry_request_text(",
+        "def _build_entry_curl_command(",
+        "SMART PROMPT:",
+        "READY CURL:",
+        "FULL HTTP REQUEST:",
+        "def _export_text_output_to_ai(",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing AI export token: {}".format(token)
+    assert text.count('"To AI"') >= 12
+    print("[PASS] test_ai_export_actions_are_wired_across_outputs")
