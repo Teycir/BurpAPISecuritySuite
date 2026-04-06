@@ -150,7 +150,50 @@ class _LoggerTableCellRenderer(DefaultTableCellRenderer):
         row_bg = self._soften_color(tag_bg, mix=row_mix)
         row_fg = Color(33, 37, 41)
         is_high_risk = primary in self.HIGH_RISK_TAGS
-        return row_fg, row_bg, tag_fg, tag_bg, is_high_risk
+        return primary, row_fg, row_bg, tag_fg, tag_bg, is_high_risk
+
+    def _resolve_tag_colors(self, tag_name, style_map):
+        tag = self.extender._ascii_safe(tag_name or "", lower=True).strip()
+        fg_text = "#1f2933"
+        bg_text = "#f8f9fb"
+        if tag in self.TAG_COLORS:
+            fg_text, bg_text = self.TAG_COLORS[tag]
+        if tag in style_map:
+            style = style_map.get(tag) or {}
+            fg_text = self.extender._ascii_safe(style.get("fg") or fg_text, lower=True)
+            bg_text = self.extender._ascii_safe(style.get("bg") or bg_text, lower=True)
+        tag_fg = self._hex_to_color(fg_text, Color(31, 41, 51))
+        tag_bg = self._hex_to_color(bg_text, Color(248, 249, 251))
+        return tag_fg, tag_bg
+
+    def _color_hex(self, color_obj):
+        return "#{:02x}{:02x}{:02x}".format(
+            int(color_obj.getRed()), int(color_obj.getGreen()), int(color_obj.getBlue())
+        )
+
+    def _escape_html(self, text):
+        raw = self.extender._ascii_safe(text or "")
+        return (
+            raw.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    def _build_tag_html(self, tags, style_map):
+        if not tags:
+            return ""
+        chips = []
+        for tag in tags[:8]:
+            tag_fg, tag_bg = self._resolve_tag_colors(tag, style_map)
+            chips.append(
+                "<span style=\"color:{}; background-color:{}; padding:1px 4px; border-radius:3px;\">{}</span>".format(
+                    self._color_hex(tag_fg),
+                    self._color_hex(tag_bg),
+                    self._escape_html(tag),
+                )
+            )
+        return "<html>{}</html>".format("&nbsp;".join(chips))
 
     def getTableCellRendererComponent(
         self, table, value, isSelected, hasFocus, row, column
@@ -161,16 +204,16 @@ class _LoggerTableCellRenderer(DefaultTableCellRenderer):
         text = self.extender._ascii_safe(value or "")
         self.setText(text)
 
-        if isSelected:
-            component.setForeground(table.getSelectionForeground())
-            component.setBackground(table.getSelectionBackground())
-            return component
-
         event = None
         try:
             events = list(getattr(self.extender, "logger_view_events", []) or [])
-            if 0 <= int(row) < len(events):
-                event = events[int(row)]
+            model_row = int(row)
+            try:
+                model_row = int(table.convertRowIndexToModel(int(row)))
+            except (TypeError, ValueError):
+                model_row = int(row)
+            if 0 <= model_row < len(events):
+                event = events[model_row]
         except (TypeError, ValueError, IndexError):
             event = None
 
@@ -180,26 +223,38 @@ class _LoggerTableCellRenderer(DefaultTableCellRenderer):
             component.setToolTipText(None)
             return component
 
-        tags_text = self.extender._ascii_safe(event.get("tags") or "", lower=True)
-        tags = [
-            self.extender._ascii_safe(token, lower=True).strip()
-            for token in tags_text.split(",")
-            if self.extender._ascii_safe(token).strip()
-        ]
+        if hasattr(self.extender, "_logger_extract_tag_tokens"):
+            tags = self.extender._logger_extract_tag_tokens(event.get("tags") or "")
+        else:
+            tags_text = self.extender._ascii_safe(event.get("tags") or "", lower=True)
+            tags = [
+                self.extender._ascii_safe(token, lower=True).strip()
+                for token in tags_text.split(",")
+                if self.extender._ascii_safe(token).strip()
+            ]
+        tags_text = ", ".join(tags)
         style_map = event.get("_tag_style_map", {}) or {}
-        row_fg, row_bg, tag_fg, tag_bg, is_high_risk = self._resolve_palette(tags, style_map)
+        primary, row_fg, row_bg, tag_fg, tag_bg, is_high_risk = self._resolve_palette(
+            tags, style_map
+        )
 
         is_tag_column = int(column) == 12
         if is_tag_column:
-            primary = tags[0] if tags else "none"
             tooltip = "Tags: {} | Primary: {}".format(
-                tags_text if tags_text else "(none)", primary
+                tags_text if tags_text else "(none)", primary if primary else "none"
             )
             component.setToolTipText(tooltip)
+            # Keep a plain-text fallback to avoid Swing/Jython HTML rendering glitches
+            # where markup can appear literally in the table cell.
+            component.setText(tags_text if tags_text else "")
         else:
             component.setToolTipText(None)
-        component.setForeground(tag_fg if is_tag_column else row_fg)
-        component.setBackground(tag_bg if is_tag_column else row_bg)
+        if isSelected:
+            component.setForeground(table.getSelectionForeground())
+            component.setBackground(table.getSelectionBackground())
+        else:
+            component.setForeground(tag_fg if is_tag_column else row_fg)
+            component.setBackground(tag_bg if is_tag_column else row_bg)
         base_font = table.getFont()
         if is_high_risk or is_tag_column:
             component.setFont(base_font.deriveFont(Font.BOLD))
@@ -713,7 +768,9 @@ def _create_logger_tab(self):
     panel = JPanel(BorderLayout())
     self._ensure_logger_default_tag_rules(force=False)
 
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls = controls_line1
     controls.add(JLabel("Filter:"))
     self.logger_filter_field = JTextField("", 20)
     self.logger_filter_field.setToolTipText(
@@ -736,6 +793,11 @@ def _create_logger_tab(self):
     controls.add(
         self._create_action_button(
             "Save Regex", Color(111, 66, 193), lambda e: self._save_logger_filter()
+        )
+    )
+    controls.add(
+        self._create_action_button(
+            "Clear Data", Color(220, 53, 69), lambda e: self.clear_data()
         )
     )
     controls.add(JLabel("Saved:"))
@@ -794,6 +856,7 @@ def _create_logger_tab(self):
         "Backfill from Burp Proxy history when Logger++ tab is initialized."
     )
     controls.add(self.logger_import_on_open_checkbox)
+    controls = controls_line2
     controls.add(JLabel("Export:"))
     self.logger_export_format_combo = JComboBox(["JSONL", "JSON", "CSV"])
     self.logger_export_format_combo.setSelectedItem("JSONL")
@@ -900,17 +963,11 @@ def _create_logger_tab(self):
             "Export View", Color(40, 167, 69), lambda e: self._export_logger_view()
         )
     )
-    controls.add(
-        self._create_action_button(
-            "Clear", Color(220, 53, 69), lambda e: self._clear_logger_logs()
-        )
-    )
-    controls.add(
-        self._create_action_button(
-            "Clear Logs", Color(220, 53, 69), lambda e: self._clear_logger_logs()
-        )
-    )
-    panel.add(controls, BorderLayout.NORTH)
+    controls_wrapper = JPanel()
+    controls_wrapper.setLayout(BoxLayout(controls_wrapper, BoxLayout.Y_AXIS))
+    controls_wrapper.add(controls_line1)
+    controls_wrapper.add(controls_line2)
+    panel.add(controls_wrapper, BorderLayout.NORTH)
 
     stats_row = JPanel(FlowLayout(FlowLayout.LEFT))
     self.logger_stats_label = JLabel("Events: 0 | Showing: 0 | Dropped: 0")
@@ -1093,6 +1150,7 @@ def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
         "copy": "Copy this tab output text to your system clipboard for AI/reports",
         "copy as curl": "Copy selected/generated attack request as a reusable curl command",
         "clear": "Clear this tab output panel only (does not delete Recon capture data)",
+        "clear data": "Clear Recon + Logger captured data and reset both views",
         "compare": "Compare two exported Recon snapshots and list added/removed endpoints",
         "standard": "Load standard version tokens preset into the Versions input field",
         "decimal": "Load decimal version format preset (for example v1.0, v2.1)",
@@ -4751,6 +4809,12 @@ def _generate_attack_lines(self, key, attack):
     if not attack:
         return []
     lines = ["[{}] {}".format(attack["type"], key)]
+
+    if "_score" in attack:
+        try:
+            lines.append("  Score: {}/100".format(int(attack.get("_score", 0) or 0)))
+        except (TypeError, ValueError):
+            pass
     
     # Show authentication requirement warning
     if attack.get("auth_required"):
@@ -4797,6 +4861,69 @@ def _generate_attack_lines(self, key, attack):
     
     lines.append("")  # Blank line between attacks
     return lines
+
+def _score_fuzz_attack(self, key, attack, normalized):
+    """Compute exploitability score so campaigns are ranked by value, not insertion order."""
+    attack_type = self._ascii_safe((attack or {}).get("type") or "")
+    method = self._ascii_safe((normalized or {}).get("method") or "", lower=True).upper()
+    path = self._ascii_safe((normalized or {}).get("path") or "", lower=True)
+    auth = [self._ascii_safe(x, lower=True) for x in ((normalized or {}).get("auth", []) or [])]
+    params = (normalized or {}).get("params", {}) or {}
+
+    base_scores = {
+        "IDOR/BOLA": 95,
+        "BOLA": 93,
+        "Auth Bypass": 90,
+        "SQL Injection": 88,
+        "SSRF": 86,
+        "XXE": 84,
+        "JWT Exploitation": 82,
+        "GraphQL Abuse": 81,
+        "Deserialization": 80,
+        "SSTI": 78,
+        "NoSQL Injection": 74,
+        "Mass Assignment": 72,
+        "Business Logic": 70,
+        "XSS": 66,
+        "Race Condition": 64,
+        "WAF Bypass": 40,
+    }
+    score = int(base_scores.get(attack_type, 55))
+
+    param_count = 0
+    for field in ["url", "body", "json", "cookie"]:
+        param_count += len(params.get(field, []) or [])
+    score += min(8, int(param_count))
+
+    reflected = list((attack or {}).get("reflected", []) or [])
+    if reflected:
+        score += min(5, len(reflected))
+
+    if bool((attack or {}).get("auth_required")):
+        score += 3
+    if method in ["POST", "PUT", "PATCH", "DELETE"]:
+        score += 4
+    if self._fuzzer_has_api_signal(normalized, include_write_method=True):
+        score += 3
+    if self._fuzzer_has_object_target(normalized):
+        score += 2
+    if any(x != "none" for x in auth):
+        score += 2
+    if any(marker in path for marker in ["/admin", "/auth", "/token", "/account"]):
+        score += 2
+
+    confidence_text = self._ascii_safe((attack or {}).get("confidence") or "", lower=True)
+    if confidence_text == "high":
+        score += 3
+    elif confidence_text == "medium":
+        score += 1
+
+    if attack_type == "WAF Bypass" and not self._fuzzer_has_api_signal(normalized):
+        score -= 18
+    if attack_type == "WAF Bypass" and method == "GET":
+        score -= 8
+
+    return max(1, min(100, int(score)))
 
 def _fuzzer_endpoint_is_api_like(self, normalized, strict=True):
     """Gate fuzzer candidates to API-like traffic, not static/ad-tech routes."""
@@ -5252,11 +5379,19 @@ def _generate_fuzzing_attacks(self, endpoints, attack_type):
             ]
             for attack in checks:
                 if attack:
+                    attack["_score"] = self._score_fuzz_attack(key, attack, normalized)
                     attacks.append((key, attack))
         except Exception as e:
             self._callbacks.printError(
                 "Error processing {}: {}".format(key, str(e))
             )
+    attacks.sort(
+        key=lambda item: (
+            int((item[1] or {}).get("_score", 0) or 0),
+            self._ascii_safe((item[1] or {}).get("type") or "", lower=True),
+        ),
+        reverse=True,
+    )
     return attacks
 
 def _check_race_condition(self, normalized, attack_type):
@@ -5400,6 +5535,22 @@ def _check_waf_bypass(self, normalized, attack_type):
     """Check if endpoint should be tested for WAF bypass (pure function)"""
     if not self._attack_selected(attack_type, ["WAF Bypass"]):
         return None
+    if not self._fuzzer_has_api_signal(normalized, include_write_method=True):
+        return None
+
+    method = self._ascii_safe(normalized.get("method"), lower=True).strip().upper()
+    path = self._ascii_safe(normalized.get("path") or "/", lower=True)
+    status = int(normalized.get("response_status", 0) or 0)
+    auth = [self._ascii_safe(x, lower=True) for x in (normalized.get("auth", []) or [])]
+    has_auth_context = any(x != "none" for x in auth)
+    has_guarded_status = status in [401, 403, 405, 406, 415, 429, 451]
+    has_sensitive_surface = any(
+        marker in path
+        for marker in ["/api/", "/graphql", "/auth", "/token", "/admin", "/upload", "/gateway"]
+    )
+    if (not has_guarded_status) and (not has_sensitive_surface) and (not has_auth_context):
+        if method not in ["POST", "PUT", "PATCH", "DELETE"]:
+            return None
 
     return {
         "type": "WAF Bypass",
@@ -5536,6 +5687,7 @@ __all__ = [
     "_check_path_traversal",
     "_check_mass_assignment",
     "_generate_attack_lines",
+    "_score_fuzz_attack",
     "_fuzzer_endpoint_is_api_like",
     "_fuzzer_sparse_candidate_score",
     "_augment_fuzzer_targets_sparse",

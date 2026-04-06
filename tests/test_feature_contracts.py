@@ -590,6 +590,53 @@ def test_shared_noise_filter_helpers_are_wired_for_recon_and_logger():
     print("[PASS] test_shared_noise_filter_helpers_are_wired_for_recon_and_logger")
 
 
+def test_logger_noise_filter_keeps_noisy_write_api_hosts_filtered():
+    text = _source_text()
+    required_tokens = [
+        "if api_signal and method in [\"POST\", \"PUT\", \"PATCH\", \"DELETE\"] and (not host_noise):",
+        "extra_noise_host_markers = (",
+        "\"googletagmanager.com\",",
+        "\"doubleclick.net\",",
+        "\"onetag-sys.com\",",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing noisy-write-host logger filter token: {}".format(token)
+    print("[PASS] test_logger_noise_filter_keeps_noisy_write_api_hosts_filtered")
+
+
+def test_logger_tag_ingestion_canonicalizes_legacy_markup_tokens():
+    text = _source_text()
+    required_tokens = [
+        "def _logger_extract_tag_tokens(self, raw_text):",
+        "text = re.sub(r\"(?i)\\b(tags|primary)\\s*:\\s*\", \" \", text)",
+        "text = re.sub(r\"[^a-z0-9_-]+\", \" \", text)",
+        "if re.match(r\"^[0-9a-f]{3,8}$\", token):",
+        "for raw_tag in list(tags or []):",
+        "for clean_tag in self._logger_extract_tag_tokens(raw_tag):",
+        "for raw_tag in list(self.endpoint_tags.get(endpoint_key, []) or []):",
+        "tag_text = \",\".join(tag_values[:8])",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing logger tag canonicalization token: {}".format(token)
+    print("[PASS] test_logger_tag_ingestion_canonicalizes_legacy_markup_tokens")
+
+
+def test_clear_data_clears_recon_and_logger_tabs():
+    text = _source_text()
+    required_tokens = [
+        "logger_cleared = int(self._clear_logger_logs(emit_log=False) or 0)",
+        "\"[+] Cleared {} endpoints and {} logger events\".format(count, logger_cleared)",
+        "def _clear_logger_logs(self, emit_log=True):",
+        "if emit_log:",
+        '"Clear Data"',
+        "lambda e: self.clear_data()",
+        '"clear data": "Clear Recon + Logger captured data and reset both views"',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing shared clear-data token: {}".format(token)
+    print("[PASS] test_clear_data_clears_recon_and_logger_tabs")
+
+
 def test_recon_param_miner_and_gap_features_are_wired():
     text = _source_text()
     required_tokens = [

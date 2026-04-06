@@ -814,10 +814,13 @@ def clear_data(self):
         self.endpoint_times.clear()
         self.recon_hidden_param_results = []
         self.recon_param_intel_snapshot = None
+    logger_cleared = int(self._clear_logger_logs(emit_log=False) or 0)
     self.list_model.clear()
     self.details_area.setText("")
     self._callbacks.setExtensionName("API Recon")
-    self.log_to_ui("[+] Cleared {} endpoints".format(count))
+    self.log_to_ui(
+        "[+] Cleared {} endpoints and {} logger events".format(count, logger_cleared)
+    )
     SwingUtilities.invokeLater(
         lambda: self.endpoint_list.getCellRenderer().invalidate_cache()
     )
@@ -968,9 +971,52 @@ def _endpoint_matches_recon_regex(self, entries, regex_obj, scope_label):
             return True
     return False
 
+def _sync_noise_filter_checkboxes(self, source="recon"):
+    """Keep Recon and Logger noise toggles aligned in both directions."""
+    if getattr(self, "_syncing_noise_filter_controls", False):
+        return False
+
+    recon_box = getattr(self, "recon_noise_filter_checkbox", None)
+    logger_box = getattr(self, "logger_noise_filter_checkbox", None)
+    if (recon_box is None) and (logger_box is None):
+        return False
+
+    source_key = self._ascii_safe(source or "recon", lower=True).strip()
+    selected = bool(getattr(self, "recon_noise_filter_enabled", True))
+    if source_key == "logger":
+        if logger_box is not None:
+            selected = bool(logger_box.isSelected())
+        elif recon_box is not None:
+            selected = bool(recon_box.isSelected())
+    else:
+        if recon_box is not None:
+            selected = bool(recon_box.isSelected())
+        elif logger_box is not None:
+            selected = bool(logger_box.isSelected())
+
+    changed = False
+    self._syncing_noise_filter_controls = True
+    try:
+        if (recon_box is not None) and (recon_box.isSelected() != selected):
+            recon_box.setSelected(selected)
+            changed = True
+        if (logger_box is not None) and (logger_box.isSelected() != selected):
+            logger_box.setSelected(selected)
+            changed = True
+    finally:
+        self._syncing_noise_filter_controls = False
+
+    recon_before = bool(getattr(self, "recon_noise_filter_enabled", True))
+    logger_before = bool(getattr(self, "logger_noise_filter_enabled", True))
+    self.recon_noise_filter_enabled = selected
+    self.logger_noise_filter_enabled = selected
+    if (recon_before != selected) or (logger_before != selected):
+        changed = True
+    return changed
+
 def _has_high_signal_tags(self, tags):
     """Return True when tags include high-signal security findings."""
-    keep_tags = set(["idor_risk", "sensitive", "admin_debug", "error", "reflected"])
+    keep_tags = set(["admin_debug", "jwt"])
     for raw in list(tags or []):
         safe_tag = self._ascii_safe(raw, lower=True).strip()
         if safe_tag and safe_tag in keep_tags:
@@ -1003,6 +1049,23 @@ def _recon_entry_is_noise(self, entry, endpoint_tags=None):
         host_noise = bool(self._ffuf_is_noise_host(host))
     if hasattr(self, "_is_wayback_noise_host"):
         host_noise = bool(host_noise or self._is_wayback_noise_host(host))
+    extra_noise_host_markers = (
+        "googletagmanager.com",
+        "googleadservices.com",
+        "googlesyndication.com",
+        "doubleclick.net",
+        "ad4m.at",
+        "batch.com",
+        "ampproject.org",
+        "acuityplatform.com",
+        "33across.com",
+        "indexww.com",
+        "liadm.com",
+        "deepintent.com",
+        "onetag-sys.com",
+    )
+    if any(marker in host for marker in extra_noise_host_markers):
+        host_noise = True
 
     path_noise = False
     if hasattr(self, "_path_contains_noise_marker"):
@@ -1041,7 +1104,7 @@ def _recon_entry_is_noise(self, entry, endpoint_tags=None):
         return False
     if api_signal and (not host_noise):
         return False
-    if api_signal and method in ["POST", "PUT", "PATCH", "DELETE"]:
+    if api_signal and method in ["POST", "PUT", "PATCH", "DELETE"] and (not host_noise):
         return False
     return True
 
@@ -1060,18 +1123,64 @@ def _endpoint_is_recon_noise(self, endpoint_key, entries):
             return False
     return has_sample
 
+def _logger_extract_tag_tokens(self, raw_text):
+    """Parse logger tags safely from plain CSV or legacy HTML-tagged strings."""
+    text = self._ascii_safe(raw_text or "", lower=True).strip()
+    if not text:
+        return []
+    text = (
+        text.replace("\r", " ")
+        .replace("\n", " ")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+    )
+    if "<" in text or ">" in text:
+        text = re.sub(r"<[^>]*>", " ", text)
+    text = re.sub(r"(?i)\b(tags|primary)\s*:\s*", " ", text)
+    text = re.sub(r"[^a-z0-9_-]+", " ", text)
+    stop_tokens = set(
+        [
+            "html",
+            "span",
+            "style",
+            "color",
+            "background",
+            "background-color",
+            "padding",
+            "border",
+            "radius",
+            "nbsp",
+            "tags",
+            "primary",
+            "none",
+        ]
+    )
+    tokens = []
+    seen = set()
+    for raw_piece in text.split():
+        token = self._ascii_safe(raw_piece or "", lower=True).strip(" \t\r\n'\"()[]{}")
+        if not token:
+            continue
+        if token in stop_tokens:
+            continue
+        if re.match(r"^[0-9a-f]{3,8}$", token):
+            continue
+        if token.isdigit():
+            continue
+        if token not in seen:
+            seen.add(token)
+            tokens.append(token)
+        if len(tokens) >= 30:
+            break
+    return tokens
+
 def _logger_event_is_noise(self, event):
     """Logger-event wrapper for shared Recon noise heuristics."""
     if not isinstance(event, dict):
         return False
-    tags_text = self._ascii_safe(
-        event.get("tags") or event.get("base_tags") or "", lower=True
-    )
-    tags = [
-        self._ascii_safe(token, lower=True).strip()
-        for token in tags_text.split(",")
-        if self._ascii_safe(token).strip()
-    ]
+    tags = self._logger_extract_tag_tokens(event.get("tags") or event.get("base_tags") or "")
     pseudo_entry = {
         "method": self._ascii_safe(event.get("method") or "GET").upper().strip(),
         "host": self._ascii_safe(event.get("host") or "", lower=True).strip(),
@@ -1140,7 +1249,12 @@ def _filter_endpoints(self):
     return filtered
 
 def _on_filter_change(self):
+    if getattr(self, "_syncing_noise_filter_controls", False):
+        return
+    noise_toggle_changed = self._sync_noise_filter_checkboxes(source="recon")
     self.refresh_view()
+    if noise_toggle_changed:
+        self._refresh_logger_view()
 
 def _on_group_change(self):
     group = str(self.group_by.getSelectedItem())
@@ -1535,7 +1649,13 @@ def _sync_recon_entry_from_logger(self, endpoint_key, entry, tags=None):
         entry.get("content_type") or entry.get("inferred_type") or ""
     )
 
-    tag_values = [self._ascii_safe(x, lower=True).strip() for x in (tags or []) if self._ascii_safe(x).strip()]
+    tag_values = []
+    seen_tag_values = set()
+    for raw_tag in list(tags or []):
+        for clean_tag in self._logger_extract_tag_tokens(raw_tag):
+            if clean_tag and (clean_tag not in seen_tag_values):
+                seen_tag_values.add(clean_tag)
+                tag_values.append(clean_tag)
     sample_limit = 3
     sample_combo = getattr(self, "sample_limit", None)
     if sample_combo is not None:
@@ -1584,8 +1704,15 @@ def _sync_recon_entry_from_logger(self, endpoint_key, entry, tags=None):
             self.endpoint_times[endpoint_key].append(response_time_ms)
             added = True
 
-        merged_tags = set(self.endpoint_tags.get(endpoint_key, []) or [])
-        merged_tags.update(self._auto_tag(entry_copy))
+        merged_tags = set()
+        for raw_tag in list(self.endpoint_tags.get(endpoint_key, []) or []):
+            for clean_tag in self._logger_extract_tag_tokens(raw_tag):
+                if clean_tag:
+                    merged_tags.add(clean_tag)
+        for auto_tag in list(self._auto_tag(entry_copy) or []):
+            for clean_tag in self._logger_extract_tag_tokens(auto_tag):
+                if clean_tag:
+                    merged_tags.add(clean_tag)
         merged_tags.update(tag_values)
         self.endpoint_tags[endpoint_key] = sorted(merged_tags)
     return added
@@ -1619,11 +1746,16 @@ def _logger_capture_event(
     except (TypeError, ValueError):
         response_len = 0
 
-    tag_values = tags if isinstance(tags, list) else []
-    tag_values = [self._ascii_safe(x, lower=True).strip() for x in tag_values if self._ascii_safe(x).strip()]
+    tag_values = []
+    seen_tag_values = set()
+    for raw_tag in list(tags or []):
+        for clean_tag in self._logger_extract_tag_tokens(raw_tag):
+            if clean_tag and (clean_tag not in seen_tag_values):
+                seen_tag_values.add(clean_tag)
+                tag_values.append(clean_tag)
     if sync_recon:
         self._sync_recon_entry_from_logger(endpoint_key, entry, tags=tag_values)
-    tag_text = ",".join(tag_values[:4])
+    tag_text = ",".join(tag_values[:8])
 
     query_suffix = "?{}".format(query) if query else ""
     request_line = "{} {}{} HTTP/1.1".format(method, path, query_suffix)
@@ -2777,12 +2909,13 @@ def _logger_rule_scope_text(self, event, scope):
 
 def _logger_apply_tag_rules(self, event, compiled_rules):
     """Apply compiled tag rules and merge with baseline event tags."""
-    base_text = self._ascii_safe(event.get("base_tags") or event.get("tags") or "", lower=True)
     merged = []
     seen = set()
     style_map = {}
-    for part in base_text.split(","):
-        tag = self._ascii_safe(part or "", lower=True).strip()
+    base_tokens = self._logger_extract_tag_tokens(
+        event.get("base_tags") or event.get("tags") or ""
+    )
+    for tag in base_tokens:
         if tag and tag not in seen:
             seen.add(tag)
             merged.append(tag)
@@ -2862,6 +2995,7 @@ def _logger_event_matches_filters(
     if noise_filter_enabled and self._logger_event_is_noise(event):
         return False
 
+    tags_for_search = ", ".join(self._logger_extract_tag_tokens(event.get("tags") or ""))
     search = self._ascii_safe(filter_text, lower=True).strip()
     haystack = " ".join(
         [
@@ -2870,7 +3004,7 @@ def _logger_event_matches_filters(
             self._ascii_safe(event.get("host") or "", lower=True),
             self._ascii_safe(event.get("path") or "", lower=True),
             self._ascii_safe(event.get("query") or "", lower=True),
-            self._ascii_safe(event.get("tags") or "", lower=True),
+            self._ascii_safe(tags_for_search, lower=True),
             self._ascii_safe(event.get("inferred_type") or "", lower=True),
             self._ascii_safe(event.get("status") or "", lower=True),
         ]
@@ -2900,6 +3034,10 @@ def _refresh_logger_view(self):
     """Rebuild Logger++ table from snapshot with active filters."""
     if getattr(self, "_syncing_logger_controls", False):
         return
+    if getattr(self, "_syncing_noise_filter_controls", False):
+        return
+
+    noise_toggle_changed = self._sync_noise_filter_checkboxes(source="logger")
 
     self._logger_apply_runtime_settings(schedule_refresh=False)
     self._refresh_logger_tool_filter()
@@ -3030,16 +3168,14 @@ def _refresh_logger_view(self):
         if not self._ascii_safe(event_view.get("base_tags") or "").strip():
             event_view["base_tags"] = event_view["tags"]
         endpoint_key = self._ascii_safe(event_view.get("endpoint_key") or "").strip()
-        tags_text = self._ascii_safe(event_view.get("tags") or "", lower=True)
-        if endpoint_key and tags_text:
+        tag_tokens = self._logger_extract_tag_tokens(event_view.get("tags") or "")
+        if endpoint_key and tag_tokens:
             collected = endpoint_tag_map.get(endpoint_key)
             if collected is None:
                 collected = set()
                 endpoint_tag_map[endpoint_key] = collected
-            for token in tags_text.split(","):
-                safe_token = self._ascii_safe(token, lower=True).strip()
-                if safe_token:
-                    collected.add(safe_token)
+            for safe_token in tag_tokens:
+                collected.add(safe_token)
         if self._logger_event_matches_filters(
             event_view,
             filter_text,
@@ -3083,14 +3219,7 @@ def _refresh_logger_view(self):
     model = getattr(self, "logger_table_model", None)
     if model is not None:
         def _tag_cell_text(event_obj):
-            tags_text = self._ascii_safe(event_obj.get("tags") or "", lower=True)
-            if not tags_text:
-                return ""
-            tokens = [
-                self._ascii_safe(x, lower=True).strip()
-                for x in tags_text.split(",")
-                if self._ascii_safe(x).strip()
-            ]
+            tokens = self._logger_extract_tag_tokens(event_obj.get("tags") or "")
             if not tokens:
                 return ""
             return ", ".join(tokens[:8])
@@ -3151,6 +3280,8 @@ def _refresh_logger_view(self):
                 logging_text,
             )
         )
+    if noise_toggle_changed:
+        self.refresh_view()
 
 def _logger_show_selected(self):
     """Render selected logger row request/response previews."""
@@ -3270,7 +3401,7 @@ def _logger_copy_selected_rows(self):
                 self._ascii_safe(self._logger_event_full_url(event)),
                 self._ascii_safe(event.get("status") or ""),
                 self._ascii_safe(event.get("response_length") or ""),
-                self._ascii_safe(event.get("tags") or ""),
+                ", ".join(self._logger_extract_tag_tokens(event.get("tags") or "")),
             ]
         )
         lines.append(line)
@@ -3304,12 +3435,7 @@ def _logger_show_endpoint_detail(self):
     with self.lock:
         exists = endpoint_key in self.api_data
     if not exists:
-        tags_text = self._ascii_safe(event.get("tags") or "", lower=True)
-        event_tags = [
-            self._ascii_safe(token, lower=True).strip()
-            for token in tags_text.split(",")
-            if self._ascii_safe(token).strip()
-        ]
+        event_tags = self._logger_extract_tag_tokens(event.get("tags") or "")
         recovered_entry = {
             "method": self._ascii_safe(event.get("method") or "GET").upper().strip(),
             "path": self._ascii_safe(event.get("path") or "/"),
@@ -3392,9 +3518,11 @@ def _logger_send_selected_to_repeater(self):
         "[+] Logger: sent {} selected endpoints to Repeater".format(sent)
     )
 
-def _clear_logger_logs(self):
+def _clear_logger_logs(self, emit_log=True):
     """Clear in-memory logger events and table output."""
+    cleared = 0
     with self.logger_lock:
+        cleared = int(len(self.logger_events or []))
         self.logger_events = []
         self.logger_view_events = []
         self.logger_dropped_count = 0
@@ -3407,7 +3535,9 @@ def _clear_logger_logs(self):
         self.logger_response_area.setText("")
     if getattr(self, "logger_stats_label", None) is not None:
         self.logger_stats_label.setText("Events: 0 | Showing: 0 | Dropped: 0")
-    self.log_to_ui("[*] Logger++ events cleared")
+    if emit_log:
+        self.log_to_ui("[*] Logger++ events cleared")
+    return cleared
 
 def _export_logger_view(self):
     """Export current Logger++ filtered view as JSONL/JSON/CSV."""
@@ -6158,9 +6288,11 @@ __all__ = [
     "_get_recon_entry_tool",
     "_entry_matches_recon_regex",
     "_endpoint_matches_recon_regex",
+    "_sync_noise_filter_checkboxes",
     "_has_high_signal_tags",
     "_recon_entry_is_noise",
     "_endpoint_is_recon_noise",
+    "_logger_extract_tag_tokens",
     "_logger_event_is_noise",
     "_filter_endpoints",
     "_on_filter_change",
