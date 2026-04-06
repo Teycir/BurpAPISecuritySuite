@@ -229,7 +229,7 @@ def test_passive_snapshot_filters_noise_to_api_like_scope():
 def test_fuzzer_uses_api_like_scope_noise_filtering():
     text = _source_text()
     required_tokens = [
-        'self.fuzzer_lenient_checkbox = JCheckBox("Lenient JSON GET", False)',
+        'self.fuzzer_lenient_checkbox = JCheckBox("Lenient JSON GET", True)',
         "FUZZER_STATIC_PATH_PARTS = PASSIVE_STATIC_PATH_PARTS + (",
         "FUZZER_STRICT_NOISE_PATH_MARKERS = (",
         "def _fuzzer_endpoint_is_api_like(",
@@ -264,8 +264,8 @@ def test_fuzzer_uses_api_like_scope_noise_filtering():
 def test_param_and_version_collectors_scope_out_noise():
     text = _source_text()
     required_tokens = [
-        'self.param_lenient_checkbox = JCheckBox("Lenient JSON GET", False)',
-        'self.version_lenient_checkbox = JCheckBox("Lenient JSON GET", False)',
+        'self.param_lenient_checkbox = JCheckBox("Lenient JSON GET", True)',
+        'self.version_lenient_checkbox = JCheckBox("Lenient JSON GET", True)',
         "lenient_mode = bool(",
         "api_endpoints, filter_meta = self._collect_param_targets(",
         "strict_base=not lenient_mode",
@@ -446,6 +446,20 @@ def test_recon_autopopulate_and_layout_wiring():
         "backfill_now_btn.addActionListener(",
         "backfill_now_btn: \"Clear current Recon/Logger data, then refill both from Burp Proxy history\"",
         'btn_panel = JPanel(GridLayout(2, 0, 5, 5))',
+        "self.endpoint_list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)",
+        "self.recon_view_keys = []",
+        "def _get_recon_view_key(self, index):",
+        "def _recon_selected_indices(self):",
+        "def _extract_endpoint_key_from_recon_value(self, raw_value):",
+        "def _get_recon_selected_index(self, event=None):",
+        "def _recon_show_selected_endpoint_detail(self):",
+        "def _show_selected_recon_endpoint_details(self, event=None):",
+        "self._recon_selected_endpoint_key = endpoint_key",
+        "rows_to_add = []",
+        "self.recon_view_keys = list(view_keys)",
+        "endpoint_key = self.extender._get_recon_view_key(index)",
+        "self.extender._recon_show_selected_endpoint_detail()",
+        "self.extender._show_selected_recon_endpoint_details(event=event)",
     ]
     for token in required_tokens:
         assert token in text, "Missing Recon autopopulate/layout token: {}".format(token)
@@ -556,7 +570,6 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         '"Backfill History"',
         '"Select All Rows"',
         '"Copy Selected Rows"',
-        '"Show Endpoint Detail"',
         '"Send Selected To Repeater"',
         '"Tag Rules (Regex)..."',
         '"Save Filter"',
@@ -565,8 +578,13 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         '"Search"',
         '"Reset"',
         '"Clear"',
+        '"Endpoint Detail"',
         "def _logger_apply_runtime_settings(",
         "def _show_logger_help_popup(",
+        "class _LoggerSelectionListener(ListSelectionListener):",
+        "class _LoggerRowActionMouseListener(MouseAdapter):",
+        "self.logger_table.addMouseListener(_LoggerRowActionMouseListener(self))",
+        "selection_model.addListSelectionListener(_LoggerSelectionListener(self))",
         "def _logger_trim_if_needed(",
         "def _sync_recon_entry_from_logger(",
         "def _logger_capture_event(",
@@ -617,8 +635,14 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         "table.convertRowIndexToModel(",
         "def _logger_select_all_rows(",
         "def _logger_copy_selected_rows(",
+        "def _resolve_recon_endpoint_key(",
+        "candidate_key = self._resolve_recon_endpoint_key(",
         "def _logger_show_endpoint_detail(",
         "recovered = self._sync_recon_entry_from_logger(",
+        "def _show_recon_missing_detail_message(",
+        "Recon does not currently have cached data for this endpoint.",
+        "Recon Endpoint Details Unavailable",
+        "Requested endpoint key is not present in Recon cache.",
         "def _logger_send_selected_to_repeater(",
         "def _clear_logger_logs(",
         "def _export_logger_view(",

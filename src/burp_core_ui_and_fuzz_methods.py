@@ -475,6 +475,74 @@ class _LoggerPopupMouseListener(MouseAdapter):
                 "Logger popup row selection error: {}".format(str(selection_err))
             )
 
+
+class _LoggerSelectionListener(ListSelectionListener):
+    """Render request/response previews whenever logger row selection changes."""
+
+    def __init__(self, extender):
+        self.extender = extender
+
+    def valueChanged(self, event):
+        if event is None:
+            return
+        try:
+            if event.getValueIsAdjusting():
+                return
+        except Exception as adjusting_err:
+            self.extender._callbacks.printError(
+                "Logger selection adjust-state check error: {}".format(
+                    str(adjusting_err)
+                )
+            )
+        try:
+            self.extender._logger_show_selected()
+        except Exception as selection_err:
+            self.extender._callbacks.printError(
+                "Logger selection preview error: {}".format(str(selection_err))
+            )
+
+
+class _LoggerRowActionMouseListener(MouseAdapter):
+    """Allow double-click on logger rows to open matching Recon endpoint detail."""
+
+    def __init__(self, extender):
+        MouseAdapter.__init__(self)
+        self.extender = extender
+
+    def mouseClicked(self, event):
+        if event is None:
+            return
+        if event.isPopupTrigger():
+            return
+        try:
+            if int(event.getClickCount() or 0) < 2:
+                return
+        except (TypeError, ValueError):
+            return
+        table = getattr(self.extender, "logger_table", None)
+        if table is None:
+            return
+        try:
+            row = int(table.rowAtPoint(event.getPoint()))
+        except (TypeError, ValueError):
+            row = -1
+        if row < 0:
+            return
+        try:
+            if not table.isRowSelected(row):
+                table.setRowSelectionInterval(row, row)
+        except Exception as selection_err:
+            self.extender._callbacks.printError(
+                "Logger double-click selection error: {}".format(str(selection_err))
+            )
+            return
+        try:
+            self.extender._logger_show_endpoint_detail()
+        except Exception as detail_err:
+            self.extender._callbacks.printError(
+                "Logger double-click detail error: {}".format(str(detail_err))
+            )
+
 def registerExtenderCallbacks(self, callbacks):
     self._callbacks = callbacks
     self._helpers = callbacks.getHelpers()
@@ -541,6 +609,8 @@ def _initialize_runtime_state(self):
     self._capture_ui_refresh_min_interval_ms = 250
     self._recon_last_regex_error = ""
     self._recon_filter_endpoint_tags_snapshot = None
+    self.recon_view_keys = []
+    self._recon_selected_endpoint_key = None
     self.recon_hidden_param_results = []
     self.recon_param_intel_snapshot = None
     self.logger_events = []
@@ -872,6 +942,7 @@ def _build_recon_center_split(self):
     self.list_model = DefaultListModel()
     self.endpoint_list = JList(self.list_model)
     self.endpoint_list.setFont(Font("Monospaced", Font.PLAIN, 12))
+    self.endpoint_list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
     self.endpoint_list.setCellRenderer(EndpointRenderer(self))
     self.endpoint_list.addMouseListener(EndpointClickListener(self))
     self.endpoint_list.addListSelectionListener(EndpointSelectionListener(self))
@@ -1288,6 +1359,15 @@ def _create_logger_tab(self):
             lambda e: self._logger_show_selected(),
         )
     )
+    endpoint_detail_btn = self._create_action_button(
+        "Endpoint Detail",
+        Color(23, 162, 184),
+        lambda e: self._logger_show_endpoint_detail(),
+    )
+    endpoint_detail_btn.setToolTipText(
+        "Open Recon endpoint details for the selected Logger row (double-click also works)."
+    )
+    controls.add(endpoint_detail_btn)
     controls.add(
         self._create_action_button(
             "To Repeater",
@@ -1377,9 +1457,6 @@ def _create_logger_tab(self):
     item_copy_selected = JMenuItem("Copy Selected Rows")
     item_copy_selected.addActionListener(lambda e: self._logger_copy_selected_rows())
     logger_popup.add(item_copy_selected)
-    item_show_detail = JMenuItem("Show Endpoint Detail")
-    item_show_detail.addActionListener(lambda e: self._logger_show_endpoint_detail())
-    logger_popup.add(item_show_detail)
     item_send_selected = JMenuItem("Send Selected To Repeater")
     item_send_selected.addActionListener(lambda e: self._logger_send_selected_to_repeater())
     logger_popup.add(item_send_selected)
@@ -1391,6 +1468,10 @@ def _create_logger_tab(self):
     logger_popup.add(item_tag_rules)
     self.logger_table.setComponentPopupMenu(logger_popup)
     self.logger_table.addMouseListener(_LoggerPopupMouseListener(self))
+    self.logger_table.addMouseListener(_LoggerRowActionMouseListener(self))
+    selection_model = self.logger_table.getSelectionModel()
+    if selection_model is not None:
+        selection_model.addListSelectionListener(_LoggerSelectionListener(self))
     table_scroll = JScrollPane(self.logger_table)
     table_scroll.setBorder(BorderFactory.createTitledBorder("Logger Events"))
 
@@ -2458,7 +2539,7 @@ def _create_version_tab(self):
 
     # Action buttons
     action_row = JPanel(FlowLayout(FlowLayout.LEFT))
-    self.version_lenient_checkbox = JCheckBox("Lenient JSON GET", False)
+    self.version_lenient_checkbox = JCheckBox("Lenient JSON GET", True)
     self.version_lenient_checkbox.setToolTipText(
         "Include JSON/XML GET routes without explicit /api/ marker"
     )
@@ -2727,7 +2808,7 @@ def _create_param_tab(self):
 
     # Action buttons
     action_row = JPanel(FlowLayout(FlowLayout.LEFT))
-    self.param_lenient_checkbox = JCheckBox("Lenient JSON GET", False)
+    self.param_lenient_checkbox = JCheckBox("Lenient JSON GET", True)
     self.param_lenient_checkbox.setToolTipText(
         "Include structured GET routes even without explicit /api/ marker"
     )
@@ -2960,7 +3041,7 @@ def _create_fuzzer_tab(self):
         ]
     )
     controls.add(self.attack_type_combo)
-    self.fuzzer_lenient_checkbox = JCheckBox("Lenient JSON GET", False)
+    self.fuzzer_lenient_checkbox = JCheckBox("Lenient JSON GET", True)
     self.fuzzer_lenient_checkbox.setToolTipText(
         "Broaden endpoint selection to include structured GET routes"
     )

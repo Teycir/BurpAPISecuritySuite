@@ -1019,14 +1019,19 @@ class EndpointClickListener(MouseAdapter):
         return None
 
     def mouseClicked(self, event):
-        if event.getClickCount() == 2:
-            list = event.getSource()
-            index = list.locationToIndex(event.getPoint())
-            if index >= 0:
-                value = str(list.getModel().getElementAt(index))
-                endpoint_key = self._extract_endpoint_key(value)
-                if endpoint_key:
-                    self.extender.show_endpoint_details(endpoint_key)
+        if event is None or event.isPopupTrigger():
+            return
+        endpoint_list = event.getSource()
+        index = endpoint_list.locationToIndex(event.getPoint())
+        if index >= 0:
+            try:
+                if not endpoint_list.isSelectedIndex(index):
+                    endpoint_list.setSelectedIndex(index)
+            except Exception as selection_err:
+                self.extender._callbacks.printError(
+                    "Recon click selection sync error: {}".format(str(selection_err))
+                )
+                endpoint_list.setSelectedIndex(index)
 
     def mousePressed(self, event):
         self._show_popup(event)
@@ -1036,14 +1041,28 @@ class EndpointClickListener(MouseAdapter):
 
     def _show_popup(self, event):
         if event.isPopupTrigger():
-            list = event.getSource()
-            index = list.locationToIndex(event.getPoint())
+            endpoint_list = event.getSource()
+            index = endpoint_list.locationToIndex(event.getPoint())
             if index >= 0:
-                list.setSelectedIndex(index)
-                value = str(list.getModel().getElementAt(index))
-                endpoint_key = self._extract_endpoint_key(value)
+                endpoint_list.setSelectedIndex(index)
+                endpoint_key = None
+                if hasattr(self.extender, "_get_recon_view_key"):
+                    endpoint_key = self.extender._get_recon_view_key(index)
+                if not endpoint_key:
+                    value = str(endpoint_list.getModel().getElementAt(index))
+                    if hasattr(self.extender, "_extract_endpoint_key_from_recon_value"):
+                        endpoint_key = self.extender._extract_endpoint_key_from_recon_value(
+                            value
+                        )
+                    else:
+                        endpoint_key = self._extract_endpoint_key(value)
                 if endpoint_key:
                     popup = JPopupMenu()
+                    detail_item = JMenuItem("Show Detail (Logger)")
+                    detail_item.addActionListener(
+                        lambda e: self.extender._recon_show_selected_in_logger()
+                    )
+                    popup.add(detail_item)
                     repeater_item = JMenuItem("Send to Repeater")
                     repeater_item.addActionListener(
                         lambda e: self.extender._send_endpoint_to_repeater(endpoint_key)
@@ -1076,14 +1095,25 @@ class EndpointSelectionListener(ListSelectionListener):
         self.extender = extender
 
     def valueChanged(self, event):
-        if not event.getValueIsAdjusting():
-            list = event.getSource()
-            index = list.getSelectedIndex()
-            if index >= 0:
-                value = str(list.getModel().getElementAt(index))
-                endpoint_key = EndpointClickListener._extract_endpoint_key(value)
-                if endpoint_key:
-                    self.extender.show_endpoint_details(endpoint_key)
+        if event is None:
+            return
+        try:
+            if event.getValueIsAdjusting():
+                return
+        except Exception as adjust_err:
+            self.extender._callbacks.printError(
+                "Recon selection adjust-state check error: {}".format(str(adjust_err))
+            )
+            return
+        try:
+            if hasattr(self.extender, "_recon_show_selected_endpoint_detail"):
+                self.extender._recon_show_selected_endpoint_detail()
+            elif hasattr(self.extender, "_show_selected_recon_endpoint_details"):
+                self.extender._show_selected_recon_endpoint_details(event=event)
+        except Exception as selection_err:
+            self.extender._callbacks.printError(
+                "Recon endpoint detail refresh error: {}".format(str(selection_err))
+            )
 
 
 class EndpointRenderer(ListCellRenderer):

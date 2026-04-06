@@ -89,12 +89,359 @@ def _get_auth_profile_field(self, profile_key):
     }
     return mapping.get(profile_key)
 
-def _get_selected_endpoint_key(self):
-    """Get currently selected endpoint key from Recon list."""
-    selected_value = self.endpoint_list.getSelectedValue()
-    if selected_value is None:
+def _extract_endpoint_key_from_recon_value(self, raw_value):
+    """Parse one Recon list row label into canonical endpoint key."""
+    text = self._ascii_safe(raw_value or "").strip()
+    if not text:
         return None
-    return EndpointClickListener._extract_endpoint_key(str(selected_value))
+    if text.startswith("==="):
+        return None
+
+    # Canonical list rows look like: "[3x] METHOD:/path/{id} @ host [tags]"
+    if "] " in text:
+        parts = text.split("] ", 1)
+        if len(parts) > 1:
+            text = self._ascii_safe(parts[1] or "").strip()
+    if " @ " in text:
+        text = self._ascii_safe(text.split(" @ ", 1)[0] or "").strip()
+    if text and ":" in text:
+        return text
+    return None
+
+def _get_recon_view_key(self, index):
+    """Return endpoint key for one Recon list row index using backend mapping."""
+    try:
+        idx = int(index)
+    except (TypeError, ValueError):
+        return None
+    if idx < 0:
+        return None
+
+    endpoint_list = getattr(self, "endpoint_list", None)
+    if endpoint_list is None:
+        return None
+    try:
+        model = endpoint_list.getModel()
+        size = int(model.getSize() or 0)
+        if idx >= size:
+            return None
+        raw_value = model.getElementAt(idx)
+    except Exception as read_err:
+        self._callbacks.printError(
+            "Recon view-key fallback read error: {}".format(str(read_err))
+        )
+        raw_value = None
+
+    key_from_model = self._extract_endpoint_key_from_recon_value(raw_value)
+    if key_from_model:
+        return key_from_model
+
+    with self.lock:
+        keys_snapshot = list(getattr(self, "recon_view_keys", []) or [])
+    if idx < len(keys_snapshot):
+        key = self._ascii_safe(keys_snapshot[idx] or "").strip()
+        if key:
+            return key
+    return None
+
+def _recon_selected_indices(self):
+    """Return selected row indices from Recon list using backend view mapping."""
+    endpoint_list = getattr(self, "endpoint_list", None)
+    if endpoint_list is None:
+        return []
+
+    selected_index = -1
+    try:
+        selected_index = int(endpoint_list.getSelectedIndex())
+    except Exception as read_err:
+        self._callbacks.printError(
+            "Recon selection read error: {}".format(str(read_err))
+        )
+    if selected_index < 0:
+        return []
+    return [selected_index]
+
+def _get_recon_selected_index(self, event=None):
+    """Resolve selected Recon list index using lead selection first, then fallback."""
+    endpoint_list = getattr(self, "endpoint_list", None)
+    if endpoint_list is None:
+        return -1
+
+    index = -1
+    if event is not None:
+        try:
+            selection_model = event.getSource()
+            if selection_model is not None and hasattr(
+                selection_model, "getMinSelectionIndex"
+            ):
+                candidate = int(selection_model.getMinSelectionIndex())
+                if candidate >= 0:
+                    if hasattr(selection_model, "isSelectedIndex"):
+                        if selection_model.isSelectedIndex(candidate):
+                            index = candidate
+                    else:
+                        index = candidate
+        except (TypeError, ValueError):
+            index = -1
+        except Exception as lead_err:
+            self._callbacks.printError(
+                "Recon lead selection index read error: {}".format(str(lead_err))
+            )
+            index = -1
+
+    if index < 0:
+        try:
+            index = int(endpoint_list.getSelectedIndex())
+        except (TypeError, ValueError):
+            index = -1
+        except Exception as selected_err:
+            self._callbacks.printError(
+                "Recon selected index read error: {}".format(str(selected_err))
+            )
+            index = -1
+
+    if index < 0:
+        return -1
+    try:
+        size = int(endpoint_list.getModel().getSize() or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if index >= size:
+        return -1
+    return index
+
+def _get_selected_endpoint_key(self, event=None):
+    """Get currently selected endpoint key from Recon list."""
+    index = self._get_recon_selected_index(event=event)
+    if index >= 0:
+        return self._get_recon_view_key(index)
+    return None
+
+def _recon_set_detail_redirect_text(self, endpoint_key=None):
+    """Render a lightweight Recon endpoint summary and next-step guidance."""
+    details_area = getattr(self, "details_area", None)
+    if details_area is None:
+        return
+    key_text = self._ascii_safe(endpoint_key or "").strip()
+
+    lines = ["Endpoint Detail", "=" * 60]
+    if not key_text:
+        lines.append("Selected: (none)")
+        lines.append("")
+        lines.append("Select an endpoint to view Recon summary.")
+        lines.append("")
+        lines.append("To view full request/response:")
+        lines.append("1) Right-click selected endpoint in Recon.")
+        lines.append("2) Click 'Show Detail (Logger)'.")
+        details_area.setText("\n".join(lines))
+        details_area.setCaretPosition(0)
+        return
+
+    with self.lock:
+        entries = self.api_data.get(key_text)
+        tags_snapshot = list(self.endpoint_tags.get(key_text, []) or [])
+        times_snapshot = list(self.endpoint_times.get(key_text, []) or [])
+
+    if entries is None:
+        lines.append("Selected: {}".format(key_text))
+        lines.append("Status: Not found in Recon cache")
+        lines.append("")
+        lines.append("To view full request/response:")
+        lines.append("1) Right-click selected endpoint in Recon.")
+        lines.append("2) Click 'Show Detail (Logger)'.")
+        details_area.setText("\n".join(lines))
+        details_area.setCaretPosition(0)
+        return
+
+    entries_list = entries if isinstance(entries, list) else [entries]
+    sample = self._get_entry(entries_list)
+
+    method = self._ascii_safe(sample.get("method") or "").upper().strip()
+    path = self._ascii_safe(
+        sample.get("normalized_path") or sample.get("path") or "/"
+    ).strip() or "/"
+    host = self._ascii_safe(sample.get("host") or "", lower=True).strip() or "-"
+    severity = self._ascii_safe(self._get_severity(key_text, entries_list) or "info").upper()
+
+    status_codes = []
+    seen_codes = set()
+    auth_signals = set()
+    content_types = set()
+    derived_times = []
+    response_sizes = []
+    error_count = 0
+    first_seen = ""
+    last_seen = ""
+
+    def _extract_seen_value(row_obj):
+        if not isinstance(row_obj, dict):
+            return ""
+        for field in [
+            "captured_at",
+            "timestamp",
+            "time",
+            "seen_at",
+            "created_at",
+            "updated_at",
+        ]:
+            value = self._ascii_safe(row_obj.get(field) or "").strip()
+            if value:
+                return value
+        return ""
+
+    for row in entries_list:
+        code = int(row.get("response_status", 0) or 0)
+        if code > 0 and code not in seen_codes:
+            seen_codes.add(code)
+            status_codes.append(code)
+        if code >= 400:
+            error_count += 1
+        for auth_value in list(row.get("auth_detected", []) or []):
+            token = self._ascii_safe(auth_value or "").strip()
+            if token:
+                auth_signals.add(token)
+        ctype = self._ascii_safe(row.get("content_type") or "").strip()
+        if ctype:
+            content_types.add(ctype.split(";", 1)[0].strip())
+        try:
+            resp_len = int(row.get("response_length", 0) or 0)
+        except (TypeError, ValueError):
+            resp_len = 0
+        if resp_len >= 0:
+            response_sizes.append(resp_len)
+        try:
+            rt = int(row.get("response_time_ms", 0) or 0)
+        except (TypeError, ValueError):
+            rt = 0
+        if rt > 0:
+            derived_times.append(rt)
+        seen_value = _extract_seen_value(row)
+        if seen_value:
+            if not first_seen:
+                first_seen = seen_value
+            last_seen = seen_value
+
+    if not times_snapshot:
+        times_snapshot = list(derived_times)
+
+    if (not first_seen) or (not last_seen):
+        with self.logger_lock:
+            logger_snapshot = list(getattr(self, "logger_events", []) or [])
+        first_logger_time = ""
+        last_logger_time = ""
+        for event in logger_snapshot:
+            event_key = self._ascii_safe(event.get("endpoint_key") or "").strip()
+            if event_key != key_text:
+                continue
+            event_time = self._ascii_safe(event.get("time") or "").strip()
+            if not event_time:
+                continue
+            if not first_logger_time:
+                first_logger_time = event_time
+            last_logger_time = event_time
+        if not first_seen:
+            first_seen = first_logger_time
+        if not last_seen:
+            last_seen = last_logger_time
+
+    status_text = ", ".join([str(code) for code in sorted(status_codes)]) if status_codes else "-"
+    auth_text = ", ".join(sorted(auth_signals)) if auth_signals else "-"
+    ctype_text = ", ".join(sorted(content_types)) if content_types else "-"
+    tags_text = ", ".join(tags_snapshot[:8]) if tags_snapshot else "-"
+    first_seen_text = first_seen if first_seen else "-"
+    last_seen_text = last_seen if last_seen else "-"
+
+    sample_count = len(entries_list)
+    if sample_count > 0:
+        error_rate = (100.0 * float(error_count)) / float(sample_count)
+        error_rate_text = "{}/{} ({:.1f}%)".format(error_count, sample_count, error_rate)
+    else:
+        error_rate_text = "-"
+
+    lower_auth = set([self._ascii_safe(item, lower=True).strip() for item in auth_signals if self._ascii_safe(item).strip()])
+    if len(lower_auth) <= 1:
+        auth_drift_text = "No"
+    elif ("none" in lower_auth) and (len(lower_auth) > 1):
+        auth_drift_text = "YES (none + authenticated variants)"
+    else:
+        auth_drift_text = "YES ({} variants)".format(len(lower_auth))
+
+    if response_sizes:
+        avg_size = int(float(sum(response_sizes)) / float(len(response_sizes)))
+        size_text = "avg={} min={} max={}".format(
+            avg_size, int(min(response_sizes)), int(max(response_sizes))
+        )
+    else:
+        size_text = "-"
+
+    param_text = "-"
+    try:
+        merged_params = self._merge_params(entries_list)
+        top_params = []
+        for ptype in ["url", "body", "cookie", "json"]:
+            for pname in sorted(list(merged_params.get(ptype, []) or [])):
+                safe_name = self._ascii_safe(pname or "").strip()
+                if safe_name and (safe_name not in top_params):
+                    top_params.append(safe_name)
+                if len(top_params) >= 8:
+                    break
+            if len(top_params) >= 8:
+                break
+        if top_params:
+            param_text = ", ".join(top_params)
+    except Exception as param_err:
+        self._callbacks.printError(
+            "Recon detail param summary error: {}".format(str(param_err))
+        )
+
+    lines.append("Selected: {}".format(key_text))
+    lines.append("Host: {} | Method: {} | Path: {}".format(host, method or "-", path))
+    lines.append("Severity: {} | Samples: {}".format(severity, len(entries_list)))
+    lines.append("First Seen: {} | Last Seen: {}".format(first_seen_text, last_seen_text))
+    lines.append("Status Codes: {}".format(status_text))
+    lines.append("Error Rate (4xx/5xx): {}".format(error_rate_text))
+    lines.append("Auth Drift: {}".format(auth_drift_text))
+    if times_snapshot:
+        avg_time = int(float(sum(times_snapshot)) / float(len(times_snapshot)))
+        lines.append(
+            "Response Time (ms): avg={} min={} max={}".format(
+                avg_time, int(min(times_snapshot)), int(max(times_snapshot))
+            )
+        )
+    else:
+        lines.append("Response Time (ms): -")
+    lines.append("Response Size (bytes): {}".format(size_text))
+    lines.append("Auth Signals: {}".format(auth_text))
+    lines.append("Content Types: {}".format(ctype_text))
+    lines.append("Tags: {}".format(tags_text))
+    lines.append("Top Params: {}".format(param_text))
+    lines.append("")
+    lines.append("To view full request/response:")
+    lines.append("1) Right-click selected endpoint in Recon.")
+    lines.append("2) Click 'Show Detail (Logger)'.")
+    details_area.setText("\n".join(lines))
+    details_area.setCaretPosition(0)
+
+def _recon_show_selected_endpoint_detail(self):
+    """Track selected Recon row and show redirect text (details now live in Logger)."""
+    endpoint_key = self._get_selected_endpoint_key()
+    if not endpoint_key:
+        self._recon_set_detail_redirect_text(None)
+        return False
+    self._recon_selected_endpoint_key = endpoint_key
+    self._recon_set_detail_redirect_text(endpoint_key)
+    return True
+
+def _show_selected_recon_endpoint_details(self, event=None):
+    """Compat wrapper for Recon selection refresh (redirect text only)."""
+    if self._recon_show_selected_endpoint_detail():
+        return
+    endpoint_key = self._get_selected_endpoint_key(event=event)
+    if endpoint_key:
+        self._recon_selected_endpoint_key = endpoint_key
+        self._recon_set_detail_redirect_text(endpoint_key)
+    else:
+        self._recon_set_detail_redirect_text(None)
 
 def _entry_matches_profile_hint(self, entry, profile_key):
     """Heuristic to prefer entries that likely match chosen profile."""
@@ -5197,7 +5544,14 @@ __all__ = [
     "_stop_auth_replay",
     "_parse_auth_profile_header",
     "_get_auth_profile_field",
+    "_extract_endpoint_key_from_recon_value",
+    "_get_recon_view_key",
+    "_recon_selected_indices",
+    "_get_recon_selected_index",
     "_get_selected_endpoint_key",
+    "_recon_set_detail_redirect_text",
+    "_recon_show_selected_endpoint_detail",
+    "_show_selected_recon_endpoint_details",
     "_entry_matches_profile_hint",
     "_extract_profile_header_candidates_from_headers",
     "_extract_profile_header_from_headers",

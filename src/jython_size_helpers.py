@@ -749,19 +749,43 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
 def show_endpoint_details(extender, endpoint_key):
     self = extender
     """Show detailed information for selected endpoint"""
+    resolved_key = self._ascii_safe(endpoint_key or "").strip()
     with self.lock:
-        if endpoint_key not in self.api_data:
-            return
-        entries = self.api_data[endpoint_key]
-        times = self.endpoint_times.get(endpoint_key, [])
+        if resolved_key in self.api_data:
+            entries = self.api_data[resolved_key]
+            times = self.endpoint_times.get(resolved_key, [])
+        else:
+            entries = None
+            times = None
+
+    if entries is None:
+        if hasattr(self, "_resolve_recon_endpoint_key"):
+            try:
+                candidate_key = self._resolve_recon_endpoint_key(resolved_key)
+                if candidate_key:
+                    resolved_key = candidate_key
+            except Exception as resolve_err:
+                self._callbacks.printError(
+                    "Endpoint detail key resolution error: {}".format(str(resolve_err))
+                )
+        with self.lock:
+            if resolved_key not in self.api_data:
+                if hasattr(self, "_show_recon_missing_detail_message"):
+                    self._show_recon_missing_detail_message(
+                        resolved_key,
+                        reason="Requested endpoint key is not present in Recon cache.",
+                    )
+                return
+            entries = self.api_data[resolved_key]
+            times = self.endpoint_times.get(resolved_key, [])
 
     entries_list = entries if isinstance(entries, list) else [entries]
     times_list = times if isinstance(times, list) else [times]
-    severity = self._get_severity(endpoint_key, entries)
+    severity = self._get_severity(resolved_key, entries)
 
     details = []
     details.append("=" * 80)
-    details.append("ENDPOINT: {}".format(endpoint_key))
+    details.append("ENDPOINT: {}".format(resolved_key))
     details.append("Host: {}".format(self._get_entry(entries)["host"]))
     details.append("Severity: {}".format(severity.upper()))
     details.append("Samples: {}".format(len(entries_list)))

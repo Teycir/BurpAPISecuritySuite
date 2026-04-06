@@ -816,7 +816,10 @@ def clear_data(self):
         self.recon_param_intel_snapshot = None
     logger_cleared = int(self._clear_logger_logs(emit_log=False) or 0)
     self.list_model.clear()
-    self.details_area.setText("")
+    if hasattr(self, "_recon_set_detail_redirect_text"):
+        self._recon_set_detail_redirect_text(None)
+    else:
+        self.details_area.setText("")
     self._callbacks.setExtensionName("API Recon")
     self.log_to_ui(
         "[+] Cleared {} endpoints and {} logger events".format(count, logger_cleared)
@@ -1317,8 +1320,8 @@ def refresh_view(self):
         self.prev_page_btn.setEnabled(self.current_page > 0)
         self.next_page_btn.setEnabled(self.current_page < self.total_pages - 1)
 
-        # Batch UI updates - build all items first, then update UI once
-        items_to_add = []
+        # Batch UI updates - build all rows first, then update UI once
+        rows_to_add = []
         group_by = str(self.group_by.getSelectedItem())
 
         if group_by == "None":
@@ -1330,8 +1333,11 @@ def refresh_view(self):
                 entries = filtered[key]
                 entry = self._get_entry(entries)
                 count = len(entries) if isinstance(entries, list) else 1
-                items_to_add.append(
-                    "[{}x] {} @ {}{}".format(count, key, entry["host"], tag_str)
+                rows_to_add.append(
+                    (
+                        "[{}x] {} @ {}{}".format(count, key, entry["host"], tag_str),
+                        key,
+                    )
                 )
         else:
             groups = self._group_endpoints(filtered, group_by)
@@ -1340,7 +1346,7 @@ def refresh_view(self):
                 if item_count >= end_idx:
                     break
                 if item_count >= start_idx:
-                    items_to_add.append("=== {} ===".format(group_name))
+                    rows_to_add.append(("=== {} ===".format(group_name), None))
                 item_count += 1
                 for key in sorted(groups[group_name]):
                     if item_count >= end_idx:
@@ -1351,17 +1357,29 @@ def refresh_view(self):
                         entries = filtered[key]
                         entry = self._get_entry(entries)
                         count = len(entries) if isinstance(entries, list) else 1
-                        items_to_add.append(
-                            "  [{}x] {} @ {}{}".format(
-                                count, key, entry["host"], tag_str
+                        rows_to_add.append(
+                            (
+                                "  [{}x] {} @ {}{}".format(
+                                    count, key, entry["host"], tag_str
+                                ),
+                                key,
                             )
                         )
                     item_count += 1
 
         # Single UI update
         self.list_model.clear()
-        for item in items_to_add:
-            self.list_model.addElement(item)
+        view_keys = []
+        for item_text, endpoint_key in rows_to_add:
+            self.list_model.addElement(item_text)
+            view_keys.append(endpoint_key)
+        with self.lock:
+            self.recon_view_keys = list(view_keys)
+
+        if int(self.list_model.getSize() or 0) <= 0:
+            endpoint_list = getattr(self, "endpoint_list", None)
+            if endpoint_list is not None:
+                endpoint_list.clearSelection()
 
     except Exception as e:
         self._callbacks.printError("Refresh view error: " + str(e))
@@ -3962,6 +3980,280 @@ def _logger_copy_selected_rows(self):
     self._copy_to_clipboard("\n".join(lines) + "\n")
     self.log_to_ui("[+] Logger: copied {} selected rows".format(copied))
 
+def _resolve_recon_endpoint_key(
+    self, endpoint_key, method_hint=None, path_hint=None, host_hint=None
+):
+    """Resolve equivalent endpoint key variants to the canonical Recon cache key."""
+
+    def _clean_key(raw_key):
+        key_text = self._ascii_safe(raw_key or "").strip()
+        if not key_text:
+            return ""
+        if " [" in key_text:
+            key_text = key_text.split(" [", 1)[0].strip()
+        if " @ " in key_text:
+            key_text = key_text.split(" @ ", 1)[0].strip()
+        return key_text
+
+    def _split_key(raw_key):
+        key_text = _clean_key(raw_key)
+        if ":" not in key_text:
+            return "", ""
+        method_text, path_text = key_text.split(":", 1)
+        method_text = self._ascii_safe(method_text or "", lower=False).upper().strip()
+        path_text = self._ascii_safe(path_text or "").strip() or "/"
+        if not path_text.startswith("/"):
+            path_text = "/" + path_text
+        return method_text, self._normalize_path(path_text)
+
+    def _path_variants(raw_path):
+        path_text = self._ascii_safe(raw_path or "").strip()
+        if not path_text:
+            return set()
+        if not path_text.startswith("/"):
+            path_text = "/" + path_text
+        normalized = self._normalize_path(path_text)
+        variants = set([normalized])
+        if normalized != "/":
+            if normalized.endswith("/"):
+                variants.add(normalized[:-1] or "/")
+            else:
+                variants.add(normalized + "/")
+        return variants
+
+    cleaned_key = _clean_key(endpoint_key)
+    key_method, key_path = _split_key(cleaned_key)
+    hint_method = self._ascii_safe(method_hint or key_method or "", lower=False).upper().strip()
+    hint_host = self._ascii_safe(host_hint or "", lower=True).strip()
+    path_candidates = set()
+    path_candidates.update(_path_variants(path_hint))
+    path_candidates.update(_path_variants(key_path))
+    if (not path_candidates) and key_path:
+        path_candidates.add(key_path)
+
+    if hint_method and path_candidates:
+        for candidate_path in list(path_candidates):
+            if candidate_path and (not candidate_path.startswith("/")):
+                path_candidates.add("/" + candidate_path)
+
+    with self.lock:
+        if cleaned_key and cleaned_key in self.api_data:
+            return cleaned_key
+        if hint_method and path_candidates:
+            preferred_path = self._normalize_path(
+                self._ascii_safe(path_hint or key_path or "/")
+            )
+            preferred_key = "{}:{}".format(hint_method, preferred_path)
+            if preferred_key in self.api_data:
+                return preferred_key
+            for candidate_path in list(path_candidates):
+                candidate_key = "{}:{}".format(hint_method, candidate_path)
+                if candidate_key in self.api_data:
+                    return candidate_key
+
+        if (not hint_method) and (not path_candidates):
+            return cleaned_key
+
+        best_match = ""
+        best_score = 0
+        for candidate_key in list(self.api_data.keys()):
+            cand_method, cand_path = _split_key(candidate_key)
+            if hint_method and cand_method and cand_method != hint_method:
+                continue
+            if path_candidates and cand_path not in path_candidates:
+                continue
+            score = 0
+            if cleaned_key and candidate_key == cleaned_key:
+                score += 100
+            if path_candidates and cand_path in path_candidates:
+                score += 50
+            if hint_method and cand_method == hint_method:
+                score += 20
+            if hint_host:
+                entries = self.api_data.get(candidate_key, [])
+                sample = None
+                if isinstance(entries, list) and entries:
+                    sample = entries[-1]
+                elif isinstance(entries, dict):
+                    sample = entries
+                sample_host = ""
+                if isinstance(sample, dict):
+                    sample_host = self._ascii_safe(sample.get("host") or "", lower=True).strip()
+                if sample_host and sample_host == hint_host:
+                    score += 10
+            if score > best_score:
+                best_score = score
+                best_match = candidate_key
+        if best_match and best_score > 0:
+            return best_match
+    return cleaned_key
+
+def _show_recon_missing_detail_message(self, endpoint_key, reason=None):
+    """Render explicit detail message when Recon cache has no data for selected endpoint."""
+    key_text = self._ascii_safe(endpoint_key or "").strip() or "<unknown>"
+    reason_text = self._ascii_safe(reason or "").strip()
+    lines = []
+    lines.append("=" * 80)
+    lines.append("ENDPOINT DETAILS UNAVAILABLE")
+    lines.append("=" * 80)
+    lines.append("Endpoint: {}".format(key_text))
+    lines.append("")
+    lines.append("Recon does not currently have cached data for this endpoint.")
+    if reason_text:
+        lines.append("Reason: {}".format(reason_text))
+    lines.append("")
+    lines.append("Suggested recovery:")
+    lines.append("1) Run Recon: Clear + Refill (or keep Autopopulate enabled).")
+    lines.append("2) Run Logger: Backfill History.")
+    lines.append("3) Retry: Endpoint Detail (button or double-click).")
+    message = "\n".join(lines)
+
+    details_area = getattr(self, "details_area", None)
+    if details_area is not None:
+        details_area.setText(message)
+        details_area.setCaretPosition(0)
+    request_area = getattr(self, "logger_request_area", None)
+    if request_area is not None:
+        request_area.setText(message)
+        request_area.setCaretPosition(0)
+    response_area = getattr(self, "logger_response_area", None)
+    if response_area is not None:
+        response_area.setText(message)
+        response_area.setCaretPosition(0)
+
+    def show_popup():
+        try:
+            JOptionPane.showMessageDialog(
+                getattr(self, "_panel", None),
+                message,
+                "Recon Endpoint Details Unavailable",
+                JOptionPane.WARNING_MESSAGE,
+            )
+        except Exception as popup_err:
+            self._callbacks.printError(
+                "Recon missing-detail popup error: {}".format(str(popup_err))
+            )
+
+    try:
+        if SwingUtilities.isEventDispatchThread():
+            show_popup()
+        else:
+            SwingUtilities.invokeLater(show_popup)
+    except Exception as popup_schedule_err:
+        self._callbacks.printError(
+            "Recon missing-detail popup schedule error: {}".format(
+                str(popup_schedule_err)
+            )
+        )
+        show_popup()
+
+    self.log_to_ui("[!] Recon has no data for endpoint: {}".format(key_text))
+
+def _recon_show_selected_in_logger(self):
+    """Open Logger tab and show request/response preview for selected Recon endpoint."""
+    endpoint_key = self._ascii_safe(self._get_selected_endpoint_key() or "").strip()
+    if not endpoint_key:
+        if hasattr(self, "_recon_set_detail_redirect_text"):
+            self._recon_set_detail_redirect_text(None)
+        self.log_to_ui("[!] Recon: select an endpoint first")
+        return
+
+    self._recon_selected_endpoint_key = endpoint_key
+    if hasattr(self, "_recon_set_detail_redirect_text"):
+        self._recon_set_detail_redirect_text(endpoint_key)
+
+    def _focus_logger_tab():
+        tabbed = getattr(self, "tabbed_pane", None)
+        if tabbed is None:
+            return
+        try:
+            for idx in range(int(tabbed.getTabCount() or 0)):
+                title = self._ascii_safe(tabbed.getTitleAt(idx) or "", lower=True)
+                if title == "logger":
+                    tabbed.setSelectedIndex(idx)
+                    break
+        except Exception as tab_err:
+            self._callbacks.printError(
+                "Recon->Logger tab focus error: {}".format(str(tab_err))
+            )
+
+    def _select_logger_row_for_endpoint(target_key):
+        table = getattr(self, "logger_table", None)
+        if table is None:
+            return False
+        with self.logger_lock:
+            snapshot = list(self.logger_view_events or [])
+        model_idx = -1
+        for idx, event in enumerate(snapshot):
+            candidate = self._ascii_safe(event.get("endpoint_key") or "").strip()
+            if candidate == target_key:
+                model_idx = idx
+                break
+        if model_idx < 0:
+            return False
+        try:
+            view_idx = int(table.convertRowIndexToView(model_idx))
+        except (TypeError, ValueError):
+            view_idx = model_idx
+        if view_idx < 0:
+            return False
+        try:
+            table.setRowSelectionInterval(view_idx, view_idx)
+            table.scrollRectToVisible(table.getCellRect(view_idx, 0, True))
+        except Exception as select_err:
+            self._callbacks.printError(
+                "Recon->Logger row select error: {}".format(str(select_err))
+            )
+            return False
+        self._logger_show_selected()
+        return True
+
+    try:
+        self._refresh_logger_view()
+    except Exception as refresh_err:
+        self._callbacks.printError(
+            "Recon->Logger refresh error: {}".format(str(refresh_err))
+        )
+
+    if _select_logger_row_for_endpoint(endpoint_key):
+        _focus_logger_tab()
+        self.log_to_ui("[+] Recon->Logger detail: {}".format(endpoint_key))
+        return
+
+    # If filtered/no matching logger row, seed one lightweight logger event from Recon.
+    with self.lock:
+        entries = list(self.api_data.get(endpoint_key) or [])
+        tags = list(self.endpoint_tags.get(endpoint_key) or [])
+    if entries:
+        seed_entry = self._get_entry(entries)
+        self._logger_capture_event(
+            endpoint_key,
+            seed_entry,
+            tags=tags,
+            bypass_capture=True,
+            sync_recon=False,
+        )
+        self._refresh_logger_view()
+        if _select_logger_row_for_endpoint(endpoint_key):
+            _focus_logger_tab()
+            self.log_to_ui("[*] Recon->Logger: seeded logger row for {}".format(endpoint_key))
+            return
+
+    _focus_logger_tab()
+    message = (
+        "No Logger row matched selected Recon endpoint.\n"
+        "Try Logger 'Backfill History' or relax Logger filters."
+    )
+    request_area = getattr(self, "logger_request_area", None)
+    response_area = getattr(self, "logger_response_area", None)
+    if request_area is not None:
+        request_area.setText(message)
+        request_area.setCaretPosition(0)
+    if response_area is not None:
+        response_area.setText(message)
+        response_area.setCaretPosition(0)
+    self.log_to_ui("[!] Recon->Logger: no matching logger detail for {}".format(endpoint_key))
+
 def _logger_show_endpoint_detail(self):
     """Open Recon endpoint detail view for selected logger row."""
     indices = self._logger_selected_indices()
@@ -3976,11 +4268,21 @@ def _logger_show_endpoint_detail(self):
         self.log_to_ui("[!] Logger: selected row unavailable")
         return
 
-    event = view_snapshot[first_idx]
+    event = dict(view_snapshot[first_idx] or {})
     endpoint_key = self._ascii_safe(event.get("endpoint_key") or "").strip()
+    event_method = self._ascii_safe(event.get("method") or "GET").upper().strip() or "GET"
+    event_path = self._ascii_safe(event.get("path") or "/").strip() or "/"
+    event_host = self._ascii_safe(event.get("host") or "", lower=True).strip()
     if not endpoint_key:
-        self.log_to_ui("[!] Logger: endpoint key missing for selected row")
-        return
+        endpoint_key = "{}:{}".format(event_method, self._normalize_path(event_path))
+    resolved_key = self._resolve_recon_endpoint_key(
+        endpoint_key,
+        method_hint=event_method,
+        path_hint=event_path,
+        host_hint=event_host,
+    )
+    if resolved_key:
+        endpoint_key = resolved_key
 
     with self.lock:
         exists = endpoint_key in self.api_data
@@ -4011,11 +4313,18 @@ def _logger_show_endpoint_detail(self):
         recovered = self._sync_recon_entry_from_logger(
             endpoint_key, recovered_entry, tags=event_tags
         )
+        endpoint_key = self._resolve_recon_endpoint_key(
+            endpoint_key,
+            method_hint=event_method,
+            path_hint=event_path,
+            host_hint=event_host,
+        )
         with self.lock:
             exists = endpoint_key in self.api_data
         if not exists:
-            self.log_to_ui(
-                "[!] Logger: endpoint not found in Recon cache ({})".format(endpoint_key)
+            self._show_recon_missing_detail_message(
+                endpoint_key,
+                reason="Selected Logger row could not be synced into Recon cache.",
             )
             return
         if recovered:
@@ -7365,6 +7674,9 @@ __all__ = [
     "_build_ai_request_analysis_prompt",
     "_build_ai_request_export",
     "_logger_copy_selected_rows",
+    "_resolve_recon_endpoint_key",
+    "_show_recon_missing_detail_message",
+    "_recon_show_selected_in_logger",
     "_logger_show_endpoint_detail",
     "_logger_send_selected_to_ai",
     "_logger_send_selected_to_repeater",
