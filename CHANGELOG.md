@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Burp startup profile configuration updates:
+  - Removed Logger++ from auto-load extensions list
+  - Removed Param Miner from auto-load extensions list
+  - Removed Autorize from auto-load extensions list
+  - Changed default theme from Dark to Light
+
 ## [1.4.1] - 2026-04-06
 
 ### Added

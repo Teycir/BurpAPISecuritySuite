@@ -4,6 +4,13 @@
 
 import json
 import os
+import sys
+
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+src_dir = os.path.join(base_dir, "src")
+sys.path.insert(0, base_dir)
+if os.path.isdir(src_dir):
+    sys.path.insert(0, src_dir)
 
 import behavior_analysis
 

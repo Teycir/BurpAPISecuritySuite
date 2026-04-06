@@ -5,7 +5,11 @@ import sys
 import os
 
 # Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+src_dir = os.path.join(base_dir, "src")
+sys.path.insert(0, base_dir)
+if os.path.isdir(src_dir):
+    sys.path.insert(0, src_dir)
 
 def run_tests():
     print("=" * 80)

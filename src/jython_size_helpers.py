@@ -68,6 +68,15 @@ def create_auth_replay_tab(extender):
             lambda e: self._copy_to_clipboard(self.auth_replay_area.getText()),
         )
     )
+    top_controls.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Auth Replay", self.auth_replay_area.getText()
+            ),
+        )
+    )
     panel.add(top_controls, BorderLayout.NORTH)
 
     config_container = JPanel()
@@ -678,15 +687,16 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
 
         is_new = False
         logger_tags = []
+        auto_tags = list(self._auto_tag(api_entry) or [])
         with self.lock:
             if endpoint_key not in self.api_data:
                 self.api_data[endpoint_key] = []
-                self.endpoint_tags[endpoint_key] = list(self._auto_tag(api_entry))
+                self.endpoint_tags[endpoint_key] = list(auto_tags)
                 self.endpoint_times[endpoint_key] = []
                 is_new = True
             self.api_data[endpoint_key].append(api_entry)
             merged_tags = set(self.endpoint_tags.get(endpoint_key, []) or [])
-            merged_tags.update(self._auto_tag(api_entry))
+            merged_tags.update(auto_tags)
             self.endpoint_tags[endpoint_key] = sorted(merged_tags)
             self.endpoint_times[endpoint_key].append(response_time)
             logger_tags = list(self.endpoint_tags.get(endpoint_key, []) or [])

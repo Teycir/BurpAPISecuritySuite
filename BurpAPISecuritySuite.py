@@ -1,10 +1,58 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=import-error
 import json
+import os
 import re
 import shlex
+import sys
 import threading
 import time
+
+def _discover_root_dir():
+    """Resolve extension root dir even when __file__ is missing in Burp/Jython."""
+    candidates = []
+    file_value = globals().get("__file__")
+    if file_value:
+        candidates.append(file_value)
+
+    frame_getter = getattr(sys, "_getframe", None)
+    if frame_getter is not None:
+        frame_file = frame_getter(0).f_code.co_filename
+        if frame_file:
+            candidates.append(frame_file)
+
+    argv = getattr(sys, "argv", None) or []
+    if len(argv) > 0 and argv[0]:
+        candidates.append(argv[0])
+
+    for entry in (getattr(sys, "path", None) or []):
+        if entry:
+            candidates.append(entry)
+
+    seen = set()
+    for candidate in candidates:
+        abs_path = os.path.abspath(candidate)
+        root = abs_path if os.path.isdir(abs_path) else os.path.dirname(abs_path)
+        root = os.path.abspath(root or ".")
+        if (not root) or (root in seen):
+            continue
+        seen.add(root)
+        if os.path.isfile(os.path.join(root, "BurpAPISecuritySuite.py")):
+            return root
+        if os.path.isdir(os.path.join(root, "src")):
+            return root
+
+    raise RuntimeError(
+        "Could not resolve extension root directory from candidates: {}".format(
+            repr(candidates[:12])
+        )
+    )
+
+_ROOT_DIR = _discover_root_dir()
+_SRC_DIR = os.path.join(_ROOT_DIR, "src")
+if os.path.isdir(_SRC_DIR) and (_SRC_DIR not in sys.path):
+    sys.path.insert(0, _SRC_DIR)
+
 import ai_prep_layer
 import behavior_analysis
 import heavy_runners
@@ -1015,6 +1063,11 @@ class EndpointClickListener(MouseAdapter):
                         )
                     )
                     popup.add(hidden_param_item)
+                    ai_item = JMenuItem("Send to AI Analysis")
+                    ai_item.addActionListener(
+                        lambda e: self.extender._send_endpoint_to_ai(endpoint_key)
+                    )
+                    popup.add(ai_item)
                     popup.show(event.getComponent(), event.getX(), event.getY())
 
 
