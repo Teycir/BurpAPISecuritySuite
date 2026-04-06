@@ -18,6 +18,7 @@ def _source_text():
     source_paths = [
         os.path.join(base_dir, "BurpAPISecuritySuite.py"),
         _pick_path("burp_core_ui_and_fuzz_methods.py"),
+        _pick_path("burp_recon_logger_sync_methods.py"),
         _pick_path("burp_fuzz_detection_and_capture_methods.py"),
         _pick_path("burp_capture_export_and_tooling_methods.py"),
         _pick_path("burp_auth_passive_and_scanner_methods.py"),
@@ -432,7 +433,8 @@ def test_recon_autopopulate_and_layout_wiring():
         "def _refresh_recon_and_logger_views(",
         "refresh_btn.addActionListener(lambda e: self._refresh_recon_and_logger_views())",
         "def _backfill_recon_and_logger(",
-        "self._logger_backfill_history(force=force)",
+        "self._run_recon_logger_backfill_pipeline(force=force)",
+        "def _run_recon_logger_backfill_pipeline(",
         "def _clear_and_refill_recon_logger(",
         "self.clear_data()",
         "def _on_recon_autopopulate_toggle(",
@@ -452,6 +454,17 @@ def test_recon_autopopulate_and_layout_wiring():
     diff_idx = text.index('self.tabbed_pane.addTab("Diff", diff_panel)')
     assert recon_idx < logger_idx < diff_idx, "Expected Logger tab immediately after Recon"
     print("[PASS] test_recon_autopopulate_and_layout_wiring")
+
+
+def test_backfill_uses_memory_safe_proxy_history_window():
+    text = _source_text()
+    required_tokens = [
+        "def _proxy_history_tail_window(",
+        "messages = self._proxy_history_tail_window(max_seed)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing memory-safe backfill token: {}".format(token)
+    print("[PASS] test_backfill_uses_memory_safe_proxy_history_window")
 
 def test_import_syncs_recon_and_logger_views():
     text = _source_text()

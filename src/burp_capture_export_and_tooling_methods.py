@@ -4195,12 +4195,9 @@ def _recon_backfill_history(self, force=False):
         )
         setattr(self, "_suspend_logger_capture_during_recon_backfill", True)
         try:
-            history = self._callbacks.getProxyHistory()
-            messages = list(history or [])
             max_seed = int(getattr(self, "max_endpoints", 800) or 800) * 6
             max_seed = max(1000, min(120000, max_seed))
-            if len(messages) > max_seed:
-                messages = messages[-max_seed:]
+            messages = self._proxy_history_tail_window(max_seed)
             scanned = len(messages)
 
             for message_info in messages:
@@ -4281,12 +4278,9 @@ def _logger_backfill_history(self, force=False):
         skipped = 0
         errors = 0
         try:
-            history = self._callbacks.getProxyHistory()
-            messages = list(history or [])
             max_seed = int(getattr(self, "logger_max_rows", 5000) or 5000)
             max_seed = max(500, min(40000, max_seed * 3))
-            if len(messages) > max_seed:
-                messages = messages[-max_seed:]
+            messages = self._proxy_history_tail_window(max_seed)
             scanned = len(messages)
 
             for message_info in messages:

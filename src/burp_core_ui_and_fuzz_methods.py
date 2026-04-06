@@ -565,6 +565,8 @@ def _initialize_runtime_state(self):
     self.logger_backfilled_once = False
     self.recon_backfill_running = False
     self.recon_backfilled_once = False
+    self.recon_logger_backfill_pipeline_running = False
+    self.recon_logger_backfill_pipeline_force_pending = False
     self.recon_autopopulate_on_open = True
     self.recon_noise_filter_enabled = True
     self._suspend_logger_capture_during_recon_backfill = False
@@ -1056,32 +1058,6 @@ def _build_recon_tab(self):
         SwingUtilities.invokeLater(lambda: self._backfill_recon_and_logger(force=False))
     return recon_panel
 
-def _refresh_recon_and_logger_views(self):
-    """Refresh Recon and Logger views together to keep UI state aligned."""
-    self.refresh_view()
-    if hasattr(self, "_refresh_logger_view"):
-        self._refresh_logger_view()
-
-def _backfill_recon_and_logger(self, force=False):
-    """Run Recon and Logger backfill together to keep both views in sync."""
-    self._recon_backfill_history(force=force)
-    self._logger_backfill_history(force=force)
-
-def _clear_and_refill_recon_logger(self):
-    """Clear Recon/Logger data, then backfill both from Proxy history."""
-    self.clear_data()
-    self._backfill_recon_and_logger(force=True)
-
-def _on_recon_autopopulate_toggle(self):
-    """Handle Recon history-autopopulate checkbox changes."""
-    box = getattr(self, "recon_autopopulate_checkbox", None)
-    enabled = True if box is None else bool(box.isSelected())
-    self.recon_autopopulate_on_open = enabled
-    if enabled:
-        self._backfill_recon_and_logger(force=True)
-    else:
-        self.log_to_ui("[*] Recon autopopulate disabled")
-
 def _create_tabs(self, recon_panel):
     diff_panel = self._create_diff_tab()
     version_panel = self._create_version_tab()
@@ -1463,7 +1439,7 @@ def _create_logger_tab(self):
     self._logger_apply_runtime_settings()
     self._refresh_logger_view()
     if self.logger_import_on_open_checkbox.isSelected():
-        self._logger_backfill_history(force=False)
+        self._maybe_backfill_logger_on_open()
     return panel
 
 def _initialize_output_dir(self):
@@ -6149,10 +6125,6 @@ __all__ = [
     "_build_recon_center_split",
     "_build_recon_button_panel",
     "_build_recon_tab",
-    "_refresh_recon_and_logger_views",
-    "_backfill_recon_and_logger",
-    "_clear_and_refill_recon_logger",
-    "_on_recon_autopopulate_toggle",
     "_create_tabs",
     "_initialize_output_dir",
     "_register_extension_callbacks",

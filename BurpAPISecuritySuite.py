@@ -1173,6 +1173,7 @@ class EndpointRenderer(ListCellRenderer):
 
 # BurpExtender methods are loaded from split helper modules for Jython compile-size safety.
 import burp_core_ui_and_fuzz_methods
+import burp_recon_logger_sync_methods
 import burp_fuzz_detection_and_capture_methods
 import burp_capture_export_and_tooling_methods
 import burp_auth_passive_and_scanner_methods
@@ -1180,6 +1181,7 @@ import burp_wayback_import_and_logging_methods
 
 _BURP_METHOD_MODULES = [
     burp_core_ui_and_fuzz_methods,
+    burp_recon_logger_sync_methods,
     burp_fuzz_detection_and_capture_methods,
     burp_capture_export_and_tooling_methods,
     burp_auth_passive_and_scanner_methods,

@@ -10,6 +10,10 @@ All notable changes to this project are documented in this file.
   - Removed Param Miner from auto-load extensions list
   - Removed Autorize from auto-load extensions list
   - Changed default theme from Dark to Light
+- Recon/Logger refill flow performance hardening:
+  - Moved dual-tab refill orchestration into dedicated module `src/burp_recon_logger_sync_methods.py`.
+  - Coordinated Recon+Logger refill through one pipeline to avoid concurrent heavy backfill scans.
+  - Backfill history seeding now uses bounded tail-window snapshots instead of full-history list copies.
 
 ## [1.4.1] - 2026-04-06
 
