@@ -279,7 +279,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 1. **Capture**: Browse/scan target API with auto-capture enabled
 2. **Review**: Check the `Recon` tab to inspect captured endpoints and findings
 3. **Deep Logic (Optional)**: In `Passive Discovery`, click `Run Invariants` to find multi-step logic and token misuse issues from captured traffic
-4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to refresh Sequence + Golden results before export
+4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to refresh Sequence + Golden + State Matrix results before export
 5. **Export**: In `Recon`, click `Export AI Bundle` to generate all-tab AI context
 6. **Generate**: Feed exported JSON to an LLM (ChatGPT, Claude, etc.) for triage/payload planning
 
@@ -299,8 +299,8 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Insomnia**: Export scoped endpoints to Insomnia import JSON
 - **Tool Health**: One-click diagnostics for Nuclei/HTTPX/Katana/FFUF/Wayback/SQLMap/Dalfox/Subfinder/DNSX binary compatibility
 - **Button Help**: Quick guide for Recon buttons and expected outputs
-- **Refresh Invariants**: Refresh Sequence + Golden analysis from captured endpoints before AI export
-- **Invariant Status Line**: Shows Sequence count, Golden count, confidence, source, and last update time
+- **Refresh Invariants**: Refresh Sequence + Golden + State Matrix analysis from captured endpoints before AI export
+- **Invariant Status Line**: Shows Sequence, Golden, and State Matrix counts with confidence/source/update time
 - **Clear Data**: Reset all captured endpoints
 
 #### 2. Diff Tab
@@ -341,10 +341,10 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Passive Only**: Analyzes captured/replayed proxy traffic without active requests
 - **Mode Selector**: Run `All` or per-category checks (`API3`, `API4`, `API5`, `API6`, `API9`, `API10`)
 - **Scope Selector**: Analyze `All Endpoints`, `Filtered View`, or current host scope
-- **Run Invariants**: Run non-destructive checks for workflow logic issues and token-overreach patterns
+- **Run Invariants**: Run non-destructive checks for workflow logic, token-overreach patterns, and state-transition drift
 - **Run / Stop / Clear**: Execute discovery, cancel safely, and reset output quickly
 - **Export / Copy**: Save findings or copy report text
-- **Export Ledger**: Save Sequence + Golden findings and confidence ledgers as JSON files
+- **Export Ledger**: Save Sequence + Golden + State Matrix findings and confidence ledgers as JSON files
 - **Output**: Severity/categorical summary plus top findings for triage
 
 #### 8. Nuclei Tab
@@ -689,6 +689,8 @@ vulnerability type. Focus on:
 │   ├── ai_sequence_evidence_ledger.json
 │   ├── ai_golden_ticket_findings.json
 │   ├── ai_golden_ticket_ledger.json
+│   ├── ai_state_transition_findings.json
+│   ├── ai_state_transition_ledger.json
 │   ├── ai_openai_request.json
 │   ├── ai_anthropic_request.json
 │   └── ai_ollama_request.json
@@ -696,7 +698,9 @@ vulnerability type. Focus on:
 │   ├── sequence_invariant_findings.json
 │   ├── sequence_evidence_ledger.json
 │   ├── golden_ticket_findings.json
-│   └── golden_ticket_ledger.json
+│   ├── golden_ticket_ledger.json
+│   ├── state_transition_findings.json
+│   └── state_transition_ledger.json
 ├── TurboIntruder_TIMESTAMP/
 │   ├── race_condition.py
 │   ├── bola_enum.py
@@ -725,7 +729,7 @@ vulnerability type. Focus on:
 
 ### AI Integration
 - **Export Context Early**: Generate AI context after initial capture
-- **Run + Refresh Invariants Before Export**: Add fresh deep-logic evidence before sending data to AI
+- **Run + Refresh Invariants Before Export**: Add fresh deep-logic evidence (Sequence + Golden + State Matrix) before sending data to AI
 - **Iterate Payloads**: Use AI-generated payloads, test, refine prompt
 - **Combine Techniques**: Merge AI payloads with built-in payload library
 
@@ -896,7 +900,7 @@ A:
 2. (Optional) In the `Recon` tab, click `Refresh Invariants`
 3. In the `Recon` tab, click `Export AI Bundle`
 4. Feed `ai_bundle.json` (or `ai_all_tabs_context.json`) to ChatGPT/Claude
-5. Use `ai_sequence_evidence_ledger.json` and `ai_golden_ticket_ledger.json` to prioritize what to test first
+5. Use `ai_sequence_evidence_ledger.json`, `ai_golden_ticket_ledger.json`, and `ai_state_transition_ledger.json` to prioritize what to test first
 
 **Q: Can I import previously exported data?**
 
@@ -1060,6 +1064,10 @@ What is already shipped:
 
 - ✅ **Golden Ticket checks shipped**:
   - Detects possible "master-key token" behavior from captured traffic.
+  - Included in `Run Invariants`, `Refresh Invariants`, `Export Ledger`, and `Export AI Bundle`.
+
+- ✅ **State Transition Matrix checks shipped**:
+  - Detects workflow/state drift patterns (write/read overlap, auth variance, transition inconsistencies).
   - Included in `Run Invariants`, `Refresh Invariants`, `Export Ledger`, and `Export AI Bundle`.
 
 ### v1.3.5 - AI Export + Invariants + Tooltip UX

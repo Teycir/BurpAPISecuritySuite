@@ -480,6 +480,10 @@ class BurpExtender(
         self.golden_ticket_ledger = {}
         self.golden_ticket_meta = {}
         self.golden_ticket_lock = threading.Lock()
+        self.state_transition_findings = []
+        self.state_transition_ledger = {}
+        self.state_transition_meta = {}
+        self.state_transition_lock = threading.Lock()
         self.recon_invariant_status_label = None
         self._capture_ui_refresh_timer = None
         self._capture_ui_refresh_last_ts = 0.0
@@ -693,7 +697,7 @@ class BurpExtender(
         recon_footer_panel.setLayout(BoxLayout(recon_footer_panel, BoxLayout.Y_AXIS))
         recon_footer_panel.add(btn_panel)
         invariant_status_row = JPanel(FlowLayout(FlowLayout.LEFT))
-        invariant_status_row.add(JLabel("Invariants + Golden:"))
+        invariant_status_row.add(JLabel("Invariants + Golden + State:"))
         self.recon_invariant_status_label = JLabel("")
         self.recon_invariant_status_label.setFont(Font("Monospaced", Font.PLAIN, 11))
         invariant_status_row.add(self.recon_invariant_status_label)
@@ -939,8 +943,10 @@ class BurpExtender(
             ledger = dict(self.sequence_invariant_ledger or {})
         with self.golden_ticket_lock:
             golden_count = len(self.golden_ticket_findings or [])
+        with self.state_transition_lock:
+            state_count = len(self.state_transition_findings or [])
 
-        if not meta and sequence_count <= 0 and golden_count <= 0:
+        if not meta and sequence_count <= 0 and golden_count <= 0 and state_count <= 0:
             return "Not generated yet (AI export computes this automatically)."
 
         source = self._ascii_safe(meta.get("source") or "unknown")
@@ -948,9 +954,10 @@ class BurpExtender(
         generated_at = self._ascii_safe(meta.get("generated_at") or "unknown")
         confidence_dist = dict(ledger.get("confidence_distribution", {}) or {})
         high_conf = int(confidence_dist.get("high", 0) or 0)
-        return "Seq={} | Golden={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
+        return "Seq={} | Golden={} | State={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
             sequence_count,
             golden_count,
+            state_count,
             high_conf,
             source,
             scope,
@@ -985,7 +992,7 @@ class BurpExtender(
             data_snapshot = dict(self.api_data)
 
         self.log_to_ui(
-            "[*] Refreshing sequence invariants from Recon snapshot ({} endpoints)".format(
+            "[*] Refreshing deep-logic analysis from Recon snapshot ({} endpoints)".format(
                 len(data_snapshot)
             )
         )
@@ -994,6 +1001,7 @@ class BurpExtender(
             try:
                 package = self._build_sequence_invariant_package(data_snapshot)
                 golden_package = self._build_golden_ticket_package(data_snapshot)
+                state_package = self._build_state_transition_package(data_snapshot)
                 self._sort_and_store_sequence_invariant_payload(
                     package,
                     source_label="recon_refresh",
@@ -1006,11 +1014,20 @@ class BurpExtender(
                     scope_label="All Endpoints",
                     target_count=len(data_snapshot),
                 )
+                self._sort_and_store_state_transition_payload(
+                    state_package,
+                    source_label="recon_refresh",
+                    scope_label="All Endpoints",
+                    target_count=len(data_snapshot),
+                )
                 finding_count = int(package.get("finding_count", 0) or 0)
                 golden_count = int(golden_package.get("finding_count", 0) or 0)
+                state_count = int(state_package.get("finding_count", 0) or 0)
                 SwingUtilities.invokeLater(
-                    lambda c=finding_count, g=golden_count: self.log_to_ui(
-                        "[+] Recon invariants refreshed (seq={} golden={})".format(c, g)
+                    lambda c=finding_count, g=golden_count, s=state_count: self.log_to_ui(
+                        "[+] Recon invariants refreshed (seq={} golden={} state={})".format(
+                            c, g, s
+                        )
                     )
                 )
             except Exception as e:
@@ -1408,7 +1425,7 @@ class BurpExtender(
         lines.append("Export Host:")
         lines.append("  Export only endpoints matching the selected host filter.")
         lines.append("Export AI Bundle:")
-        lines.append("  Export all-tab AI bundle (includes invariants + Golden Ticket findings).")
+        lines.append("  Export all-tab AI bundle (includes Sequence, Golden, and State Matrix findings).")
         lines.append("Import:")
         lines.append("  Import a previous Recon JSON export.")
         lines.append("Postman:")
@@ -1424,7 +1441,7 @@ class BurpExtender(
         lines.append("Refresh:")
         lines.append("  Recompute and redraw Recon list/stats from current state.")
         lines.append("Refresh Invariants:")
-        lines.append("  Recompute sequence + Golden Ticket analysis from captured endpoints.")
+        lines.append("  Recompute Sequence + Golden + State Matrix analysis from captured endpoints.")
         lines.append("")
         lines.append("Tip: hover any Recon button to see a quick tooltip.")
         JOptionPane.showMessageDialog(
@@ -2741,7 +2758,7 @@ class BurpExtender(
         )
         deep_logic_row.add(
             JLabel(
-                "Sequence/state checks with confidence scoring (non-destructive). Includes Golden Ticket token-overreach analysis."
+                "Sequence/state checks with confidence scoring (non-destructive). Includes Golden Ticket and State Matrix analysis."
             )
         )
 
@@ -2767,6 +2784,9 @@ class BurpExtender(
         self.golden_ticket_findings = []
         self.golden_ticket_ledger = {}
         self.golden_ticket_meta = {}
+        self.state_transition_findings = []
+        self.state_transition_ledger = {}
+        self.state_transition_meta = {}
         return panel
 
     def _create_nuclei_tab(self):
@@ -5422,6 +5442,14 @@ class BurpExtender(
                 "ai_golden_ticket_ledger.json",
                 bundle.get("golden_tickets", {}).get("ledger", {}),
             ),
+            (
+                "ai_state_transition_findings.json",
+                bundle.get("state_transitions", {}).get("findings", []),
+            ),
+            (
+                "ai_state_transition_ledger.json",
+                bundle.get("state_transitions", {}).get("ledger", {}),
+            ),
             ("ai_feedback_template.json", bundle.get("feedback_template", {})),
             ("ai_openai_request.json", bundle.get("llm_exports", {}).get("openai", {})),
             (
@@ -5492,6 +5520,7 @@ class BurpExtender(
         behavioral_analysis = self._export_behavioral_analysis(data_snapshot)
         sequence_invariants = self._build_sequence_invariant_package(data_snapshot)
         golden_tickets = self._build_golden_ticket_package(data_snapshot)
+        state_transitions = self._build_state_transition_package(data_snapshot)
         self._sort_and_store_sequence_invariant_payload(
             sequence_invariants,
             source_label="ai_export",
@@ -5500,6 +5529,12 @@ class BurpExtender(
         )
         self._sort_and_store_golden_ticket_payload(
             golden_tickets,
+            source_label="ai_export",
+            scope_label="All Endpoints",
+            target_count=len(data_snapshot),
+        )
+        self._sort_and_store_state_transition_payload(
+            state_transitions,
             source_label="ai_export",
             scope_label="All Endpoints",
             target_count=len(data_snapshot),
@@ -5556,6 +5591,7 @@ class BurpExtender(
             "behavioral_analysis": behavioral_analysis,
             "sequence_invariants": sequence_invariants,
             "golden_tickets": golden_tickets,
+            "state_transitions": state_transitions,
             "all_tabs_context": all_tabs_context,
         }
         llm_exports = {
@@ -5583,6 +5619,9 @@ class BurpExtender(
                 "golden_ticket_count": int(
                     golden_tickets.get("finding_count", 0) or 0
                 ),
+                "state_transition_count": int(
+                    state_transitions.get("finding_count", 0) or 0
+                ),
             },
             "legacy_context": legacy_context,
             "vulnerability_context": vulnerability_context,
@@ -5594,6 +5633,7 @@ class BurpExtender(
             "ai_prep_layer": ai_prep_layer,
             "sequence_invariants": sequence_invariants,
             "golden_tickets": golden_tickets,
+            "state_transitions": state_transitions,
         }
 
     def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
@@ -5701,6 +5741,20 @@ class BurpExtender(
                 ),
                 "meta": self._snapshot_dict_attr(
                     "golden_ticket_meta", lock_attr="golden_ticket_lock"
+                ),
+            },
+            "state_transitions": {
+                "finding_count": len(getattr(self, "state_transition_findings", []) or []),
+                "findings": self._snapshot_list_attr(
+                    "state_transition_findings",
+                    limit=300,
+                    lock_attr="state_transition_lock",
+                ),
+                "ledger": self._snapshot_dict_attr(
+                    "state_transition_ledger", lock_attr="state_transition_lock"
+                ),
+                "meta": self._snapshot_dict_attr(
+                    "state_transition_meta", lock_attr="state_transition_lock"
                 ),
             },
             "nuclei": {
@@ -6976,7 +7030,7 @@ You are analyzing real API capture data with vulnerability findings, response pa
 ## Tasks
 1. Generate baseline, context-aware, evasion, and chained payloads per vulnerability.
 2. Define success indicators (status/body/header/timing) and false-positive guards.
-3. Propose exploitation chains and verification steps (automated + manual), including token-overreach (Golden Ticket) hypotheses.
+3. Propose exploitation chains and verification steps (automated + manual), including token-overreach (Golden Ticket) and state-transition matrix hypotheses.
 4. Prioritize by severity, confidence, authentication context, and business impact.
 
 ## Output Requirements
@@ -12154,7 +12208,7 @@ Generate a complete Burp extension that:
             )
             return
 
-        self.passive_area.setText("[*] Starting sequence invariant analysis...\n")
+        self.passive_area.setText("[*] Starting deep-logic analysis (Sequence + Golden + State)...\n")
         self.passive_area.append(
             "[*] Scope: {} | Targets: {} of {}\n\n".format(
                 scope, len(endpoint_keys), total_available
@@ -12166,6 +12220,7 @@ Generate a complete Burp extension that:
                 snapshot = self._collect_passive_snapshot(endpoint_keys)
                 package = self._build_sequence_invariant_package(snapshot)
                 golden_package = self._build_golden_ticket_package(snapshot)
+                state_package = self._build_state_transition_package(snapshot)
                 self._sort_and_store_sequence_invariant_payload(
                     package,
                     source_label="passive_run",
@@ -12178,16 +12233,26 @@ Generate a complete Burp extension that:
                     scope_label=scope,
                     target_count=len(snapshot),
                 )
+                self._sort_and_store_state_transition_payload(
+                    state_package,
+                    source_label="passive_run",
+                    scope_label=scope,
+                    target_count=len(snapshot),
+                )
                 text = self._format_sequence_invariant_output(
                     package, len(snapshot), total_available, scope
                 )
                 text += self._format_golden_ticket_output(golden_package)
+                text += self._format_state_transition_output(state_package)
                 SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
                 finding_count = int(package.get("finding_count", 0) or 0)
                 golden_count = int(golden_package.get("finding_count", 0) or 0)
+                state_count = int(state_package.get("finding_count", 0) or 0)
                 SwingUtilities.invokeLater(
-                    lambda c=finding_count, g=golden_count: self.log_to_ui(
-                        "[+] Invariant analysis complete (seq={} golden={})".format(c, g)
+                    lambda c=finding_count, g=golden_count, s=state_count: self.log_to_ui(
+                        "[+] Invariant analysis complete (seq={} golden={} state={})".format(
+                            c, g, s
+                        )
                     )
                 )
             except Exception as e:
@@ -12216,6 +12281,14 @@ Generate a complete Burp extension that:
     def _build_golden_ticket_package(self, data_snapshot):
         """Build Golden Ticket package from captured token behavior."""
         payload = behavior_analysis.build_golden_ticket_package(
+            data_snapshot,
+            get_entry=self._get_entry,
+        )
+        return self._sanitize_for_ai_payload(payload)
+
+    def _build_state_transition_package(self, data_snapshot):
+        """Build State Transition package from captured workflow/state behavior."""
+        payload = behavior_analysis.build_state_transition_package(
             data_snapshot,
             get_entry=self._get_entry,
         )
@@ -12285,6 +12358,41 @@ Generate a complete Burp extension that:
                 "scope": self._ascii_safe(scope_label),
                 "target_count": count_value,
                 "observed_token_count": observed_token_count,
+                "finding_count": len(findings),
+            }
+        self._refresh_recon_invariant_status_label_async()
+
+    def _sort_and_store_state_transition_payload(
+        self, package, source_label="passive", scope_label="Filtered Scope", target_count=None
+    ):
+        """Sort/store State Transition findings and associated ledger."""
+        findings = list((package or {}).get("findings", []) or [])
+        findings.sort(
+            key=lambda item: (
+                -float(item.get("confidence_score", 0.0) or 0.0),
+                self._ascii_safe(item.get("severity"), lower=True),
+                self._ascii_safe(item.get("resource"), lower=True),
+            )
+        )
+        ledger = dict((package or {}).get("ledger", {}) or {})
+        generated_at = self._ascii_safe(
+            (package or {}).get("generated_at") or time.strftime("%Y-%m-%d %H:%M:%S")
+        )
+        count_value = (
+            int(target_count)
+            if isinstance(target_count, int) and target_count >= 0
+            else None
+        )
+        transition_edge_count = int((package or {}).get("transition_edge_count", 0) or 0)
+        with self.state_transition_lock:
+            self.state_transition_findings = list(findings)
+            self.state_transition_ledger = ledger
+            self.state_transition_meta = {
+                "generated_at": generated_at,
+                "source": self._ascii_safe(source_label),
+                "scope": self._ascii_safe(scope_label),
+                "target_count": count_value,
+                "transition_edge_count": transition_edge_count,
                 "finding_count": len(findings),
             }
         self._refresh_recon_invariant_status_label_async()
@@ -12404,6 +12512,66 @@ Generate a complete Burp extension that:
             lines.append(
                 "[*] Capture multiple roles/sessions/logout flows for stronger coverage."
             )
+            return "\n".join(lines) + "\n"
+
+        lines.append("TOP FINDINGS")
+        lines.append("-" * 80)
+        for finding in findings[:80]:
+            severity = self._ascii_safe(finding.get("severity", "info"), lower=True).upper()
+            title = self._ascii_safe(finding.get("title", ""))
+            invariant = self._ascii_safe(finding.get("invariant", ""))
+            score = float(finding.get("confidence_score", 0.0) or 0.0)
+            label = self._ascii_safe(finding.get("confidence_label", ""))
+            lines.append("[{}][{} {:.2f}] {}".format(severity, label.upper(), score, title))
+            lines.append("  Pattern: {}".format(invariant))
+            evidence_lines = finding.get("evidence", []) or []
+            for evidence in evidence_lines[:2]:
+                lines.append("  Evidence: {}".format(self._ascii_safe(evidence)))
+            suggested = finding.get("suggested_checks", []) or []
+            if suggested:
+                lines.append("  Next: {}".format(self._ascii_safe(suggested[0])))
+            lines.append("")
+
+        if len(findings) > 80:
+            lines.append("[*] {} more findings not shown".format(len(findings) - 80))
+        return "\n".join(lines) + "\n"
+
+    def _format_state_transition_output(self, package):
+        """Format State Transition findings for Passive tab output area."""
+        findings = list((package or {}).get("findings", []) or [])
+        ledger = dict((package or {}).get("ledger", {}) or {})
+        resources = int((package or {}).get("resource_count", 0) or 0)
+        edges = int((package or {}).get("transition_edge_count", 0) or 0)
+        severity_distribution = ledger.get("severity_distribution", {}) or {}
+        confidence_distribution = ledger.get("confidence_distribution", {}) or {}
+
+        lines = []
+        lines.append("")
+        lines.append("=" * 80)
+        lines.append("STATE TRANSITION MATRIX RESULTS")
+        lines.append("=" * 80)
+        lines.append("[*] Resources: {} | Transition Edges: {}".format(resources, edges))
+        lines.append("[*] Findings: {}".format(len(findings)))
+        lines.append(
+            "[*] Severity: Critical={} High={} Medium={} Info={}".format(
+                int(severity_distribution.get("critical", 0) or 0),
+                int(severity_distribution.get("high", 0) or 0),
+                int(severity_distribution.get("medium", 0) or 0),
+                int(severity_distribution.get("info", 0) or 0),
+            )
+        )
+        lines.append(
+            "[*] Confidence: High={} Medium={} Low={}".format(
+                int(confidence_distribution.get("high", 0) or 0),
+                int(confidence_distribution.get("medium", 0) or 0),
+                int(confidence_distribution.get("low", 0) or 0),
+            )
+        )
+        lines.append("")
+
+        if not findings:
+            lines.append("[+] No state-transition drift patterns flagged in current scope.")
+            lines.append("[*] Capture more complete user workflows and rerun.")
             return "\n".join(lines) + "\n"
 
         lines.append("TOP FINDINGS")
@@ -13631,8 +13799,12 @@ Generate a complete Burp extension that:
             golden_findings = list(self.golden_ticket_findings or [])
             golden_ledger = dict(self.golden_ticket_ledger or {})
             golden_meta = dict(self.golden_ticket_meta or {})
+        with self.state_transition_lock:
+            state_findings = list(self.state_transition_findings or [])
+            state_ledger = dict(self.state_transition_ledger or {})
+            state_meta = dict(self.state_transition_meta or {})
 
-        if (not findings) and (not golden_findings):
+        if (not findings) and (not golden_findings) and (not state_findings):
             self.passive_area.append(
                 "\n[!] No invariant findings to export. Run 'Run Invariants' first.\n"
             )
@@ -13657,6 +13829,13 @@ Generate a complete Burp extension that:
                 [
                     ("golden_ticket_findings.json", {"metadata": golden_meta, "findings": golden_findings}),
                     ("golden_ticket_ledger.json", {"metadata": golden_meta, "ledger": golden_ledger}),
+                ]
+            )
+        if state_findings:
+            files_to_write.extend(
+                [
+                    ("state_transition_findings.json", {"metadata": state_meta, "findings": state_findings}),
+                    ("state_transition_ledger.json", {"metadata": state_meta, "ledger": state_ledger}),
                 ]
             )
         written = []

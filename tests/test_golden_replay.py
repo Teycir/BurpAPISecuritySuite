@@ -76,3 +76,27 @@ def test_golden_replay_detects_golden_ticket_patterns():
     assert "coverage" in ledger
     assert isinstance(ledger.get("findings", []), list)
     print("[PASS] test_golden_replay_detects_golden_ticket_patterns")
+
+
+def test_golden_replay_detects_state_transition_patterns():
+    payload = _fixture_payload()
+    package = behavior_analysis.build_state_transition_package(payload)
+    findings = list(package.get("findings", []) or [])
+    assert package.get("resource_count", 0) >= 1
+    assert package.get("transition_edge_count", 0) >= 1
+    assert findings, "Expected state transition findings from replay corpus"
+
+    names = set([str(item.get("invariant")) for item in findings])
+    expected = set(
+        [
+            "state_transition_public_read_after_authenticated_write",
+            "state_transition_delete_read_overlap",
+            "state_transition_write_auth_variance",
+        ]
+    )
+    assert names.intersection(expected), "Missing expected state transition invariant families"
+    ledger = dict(package.get("ledger", {}) or {})
+    assert ledger.get("analysis_type") == "state_transition_matrix"
+    assert "coverage" in ledger
+    assert isinstance(ledger.get("findings", []), list)
+    print("[PASS] test_golden_replay_detects_state_transition_patterns")

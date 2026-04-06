@@ -4,6 +4,7 @@
 import re
 import time
 import golden_ticket_analysis
+import state_transition_analysis
 
 
 WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
@@ -425,5 +426,19 @@ def build_sequence_invariant_package(data_snapshot, get_entry=None, extract_para
 def build_golden_ticket_package(data_snapshot, get_entry=None):
     """Compatibility wrapper: delegate Golden Ticket package build to extracted module."""
     return golden_ticket_analysis.build_golden_ticket_package(
+        data_snapshot, get_entry=get_entry
+    )
+
+
+def build_state_transition_findings(data_snapshot, get_entry=None):
+    """Compatibility wrapper: delegate State Transition logic to extracted module."""
+    return state_transition_analysis.build_state_transition_findings(
+        data_snapshot, get_entry=get_entry
+    )
+
+
+def build_state_transition_package(data_snapshot, get_entry=None):
+    """Compatibility wrapper: delegate State Transition package build to extracted module."""
+    return state_transition_analysis.build_state_transition_package(
         data_snapshot, get_entry=get_entry
     )
