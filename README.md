@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.3.10-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.4.0-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -129,7 +129,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
   - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
-    - [v1.3.10 - Logger/Recon Parity + Stability + Sorting](#v1310---loggerrecon-parity--stability--sorting)
+    - [v1.4.0 - Logger/Recon Parity + Stability + Sorting](#v140---loggerrecon-parity--stability--sorting)
     - [v1.3.9 - Logger Tab + Recon Hidden Params + Param Intel](#v139---logger-tab--recon-hidden-params--param-intel)
     - [v1.3.5 - AI Export + Invariants + Tooltip UX](#v135---ai-export--invariants--tooltip-ux)
     - [v1.3.1 - Tab Order and External Tool UX Alignment](#v131---tab-order-and-external-tool-ux-alignment)
@@ -1046,7 +1046,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ### Recent Updates
 
-### v1.3.10 - Logger/Recon Parity + Stability + Sorting
+### v1.4.0 - Logger/Recon Parity + Stability + Sorting
 - ✅ Added Logger/Recon parity flow so Logger-selected rows consistently resolve endpoint details in Recon.
 - ✅ Improved `Show Endpoint Detail` with recovery path for rows not yet materialized in Recon cache.
 - ✅ `ReqM` and `RespM` now show meaningful default marker metrics even without active regex.

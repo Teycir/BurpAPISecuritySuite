@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.3.10] - 2026-04-06
+## [1.4.0] - 2026-04-06
 
 ### Added
 - Shared Recon/Logger noise filtering workflow:
