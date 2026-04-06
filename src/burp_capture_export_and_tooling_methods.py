@@ -5395,6 +5395,105 @@ def _export_recon_turbo_pack_selected(self, endpoint_key):
         dataset = {endpoint_key: list(self.api_data.get(endpoint_key) or [])}
     self._build_recon_turbo_pack_from_data("Selected Endpoint", dataset)
 
+def _sync_logger_from_recon_snapshot(self, data_snapshot, source_tool_label="ReconSync"):
+    """Seed Logger rows from a Recon snapshot to keep both tabs aligned."""
+    if not isinstance(data_snapshot, dict) or (not data_snapshot):
+        return 0
+
+    with self.lock:
+        endpoint_tags_snapshot = {
+            self._ascii_safe(key): list(value or [])
+            for key, value in (self.endpoint_tags or {}).items()
+        }
+
+    with self.logger_lock:
+        before_count = len(getattr(self, "logger_events", []) or [])
+
+    max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+    max_seed = max(500, min(40000, max_rows))
+    seeded = 0
+    truncated = False
+
+    for endpoint_key in sorted(data_snapshot.keys()):
+        if seeded >= max_seed:
+            truncated = True
+            break
+        entries = data_snapshot.get(endpoint_key, [])
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for sample in entries_list:
+            if seeded >= max_seed:
+                truncated = True
+                break
+            if not isinstance(sample, dict):
+                continue
+            try:
+                method = self._ascii_safe(sample.get("method") or "GET").upper()
+                path = self._ascii_safe(
+                    sample.get("path") or sample.get("normalized_path") or "/"
+                )
+                if not path.startswith("/"):
+                    path = "/" + path
+                normalized_path = self._ascii_safe(
+                    sample.get("normalized_path") or ""
+                ).strip()
+                if not normalized_path:
+                    normalized_path = self._normalize_path(path)
+                host = self._ascii_safe(sample.get("host") or "", lower=True).strip()
+                query = self._ascii_safe(sample.get("query_string") or "")
+                endpoint_key_value = self._ascii_safe(endpoint_key).strip()
+                if not endpoint_key_value:
+                    endpoint_key_value = "{}:{}".format(method, normalized_path)
+                entry = {
+                    "method": method,
+                    "path": path,
+                    "normalized_path": normalized_path,
+                    "host": host,
+                    "protocol": self._ascii_safe(
+                        sample.get("protocol") or "https", lower=True
+                    ),
+                    "port": int(sample.get("port", 443) or 443),
+                    "query_string": query,
+                    "headers": dict(sample.get("headers") or {}),
+                    "request_body": self._ascii_safe(sample.get("request_body") or ""),
+                    "response_status": int(sample.get("response_status", 0) or 0),
+                    "response_headers": dict(sample.get("response_headers") or {}),
+                    "response_body": self._ascii_safe(sample.get("response_body") or ""),
+                    "response_length": int(sample.get("response_length", 0) or 0),
+                    "response_time_ms": int(sample.get("response_time_ms", 0) or 0),
+                    "source_tool": self._ascii_safe(
+                        sample.get("source_tool") or source_tool_label
+                    ),
+                    "content_type": self._ascii_safe(
+                        sample.get("content_type") or "unknown"
+                    ),
+                }
+                tags = list(endpoint_tags_snapshot.get(endpoint_key_value, []) or [])
+                self._logger_capture_event(
+                    endpoint_key_value,
+                    entry,
+                    tags=tags,
+                    bypass_capture=True,
+                    sync_recon=False,
+                )
+                seeded += 1
+            except Exception as row_err:
+                self._callbacks.printError(
+                    "Logger sync from Recon row error: {}".format(str(row_err))
+                )
+
+    self._logger_trim_if_needed(force=True)
+    self._schedule_logger_ui_refresh(force=True)
+    with self.logger_lock:
+        after_count = len(getattr(self, "logger_events", []) or [])
+    added = max(0, after_count - before_count)
+    if truncated:
+        self.log_to_ui(
+            "[*] Logger sync from Recon truncated at {} rows (max logger seed)".format(
+                max_seed
+            )
+        )
+    return added
+
 def import_data(self):
     """Import previously exported JSON"""
     chooser = JFileChooser()
@@ -5406,6 +5505,7 @@ def import_data(self):
                 data = json.load(f)
 
             imported = 0
+            imported_snapshot = {}
             for endpoint in data.get("endpoints", []):
                 key = endpoint["endpoint"]
                 with self.lock:
@@ -5465,6 +5565,7 @@ def import_data(self):
                         self.api_data[key] = [entry]
                         self.endpoint_tags[key] = self._auto_tag(entry)
                         self.endpoint_times[key] = [0]
+                        imported_snapshot[key] = [dict(entry)]
                         imported += 1
 
             self.log_to_ui(
@@ -5476,6 +5577,16 @@ def import_data(self):
             SwingUtilities.invokeLater(lambda: self._update_host_filter())
             SwingUtilities.invokeLater(lambda: self._update_stats())
             SwingUtilities.invokeLater(lambda: self.refresh_view())
+            if imported_snapshot:
+                logger_added = int(
+                    self._sync_logger_from_recon_snapshot(
+                        imported_snapshot, source_tool_label="Import"
+                    )
+                    or 0
+                )
+                self.log_to_ui(
+                    "[+] Logger sync from import: {} rows added".format(logger_added)
+                )
         except Exception as e:
             self.log_to_ui("[!] Import failed: {}".format(str(e)))
             import traceback
@@ -5576,6 +5687,348 @@ def _export_data(self, data_to_export, suffix=""):
                 writer.close()
             except Exception as e:
                 self._callbacks.printError("Error closing writer: " + str(e))
+
+def _openapi_schema_from_inferred_type(self, inferred_type):
+    """Map inferred parameter type hints to OpenAPI schema fragments."""
+    hint = self._ascii_safe(inferred_type or "string", lower=True).strip()
+    if hint == "boolean":
+        return {"type": "boolean"}
+    if hint == "integer":
+        return {"type": "integer"}
+    if hint == "float":
+        return {"type": "number", "format": "float"}
+    if hint == "uuid":
+        return {"type": "string", "format": "uuid"}
+    if hint == "email":
+        return {"type": "string", "format": "email"}
+    if hint == "json":
+        return {"type": "object"}
+    return {"type": "string"}
+
+def _build_openapi_spec_from_capture(self, data_snapshot, scope_label="All"):
+    """Generate OpenAPI 3.0.3 document from captured endpoint snapshots."""
+    if not isinstance(data_snapshot, dict):
+        data_snapshot = {}
+
+    paths = {}
+    host_counts = {}
+    auth_schemes = set()
+    method_order = ["get", "post", "put", "patch", "delete", "options", "head"]
+
+    for endpoint_key in sorted(data_snapshot.keys()):
+        entries = data_snapshot.get(endpoint_key, [])
+        entries_list = entries if isinstance(entries, list) else [entries]
+        if not entries_list:
+            continue
+        entry = self._get_entry(entries_list)
+
+        method = self._ascii_safe(entry.get("method") or "GET").upper()
+        path = self._ascii_safe(entry.get("normalized_path") or entry.get("path") or "/")
+        if not path.startswith("/"):
+            path = "/" + path
+        method_key = self._ascii_safe(method, lower=True)
+        if method_key not in method_order:
+            method_key = "get"
+
+        host = self._ascii_safe(entry.get("host") or "", lower=True).strip()
+        if host:
+            host_counts[host] = host_counts.get(host, 0) + 1
+
+        path_item = paths.get(path)
+        if not isinstance(path_item, dict):
+            path_item = {}
+            paths[path] = path_item
+
+        op_suffix = re.sub(r"[^a-zA-Z0-9]+", "_", path).strip("_")
+        if not op_suffix:
+            op_suffix = "root"
+        operation = {
+            "summary": "Observed {} {}".format(method, path),
+            "operationId": "{}_{}".format(method_key, op_suffix),
+            "tags": [self._split_path_segments(path)[0] if self._split_path_segments(path) else "root"],
+            "parameters": [],
+            "responses": {},
+        }
+
+        path_param_names = []
+        for holder in re.findall(r"\{([^}]+)\}", path):
+            safe_holder = self._ascii_safe(holder).strip()
+            if safe_holder and safe_holder not in path_param_names:
+                path_param_names.append(safe_holder)
+                operation["parameters"].append(
+                    {
+                        "name": safe_holder,
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                )
+
+        inferred_types = self._infer_param_types(entry)
+        merged_params = self._merge_params(entries_list)
+        url_params = merged_params.get("url", {})
+        if isinstance(url_params, dict):
+            for name in sorted(url_params.keys()):
+                safe_name = self._ascii_safe(name).strip()
+                if (not safe_name) or (safe_name in path_param_names):
+                    continue
+                operation["parameters"].append(
+                    {
+                        "name": safe_name,
+                        "in": "query",
+                        "required": False,
+                        "schema": self._openapi_schema_from_inferred_type(
+                            inferred_types.get(safe_name, "string")
+                        ),
+                    }
+                )
+
+        request_properties = {}
+        for source_name in ["body", "json"]:
+            source_params = merged_params.get(source_name, {})
+            if not isinstance(source_params, dict):
+                continue
+            for name in sorted(source_params.keys()):
+                safe_name = self._ascii_safe(name).strip()
+                if not safe_name:
+                    continue
+                request_properties[safe_name] = self._openapi_schema_from_inferred_type(
+                    inferred_types.get(safe_name, "string")
+                )
+        if request_properties:
+            operation["requestBody"] = {
+                "required": method in ["POST", "PUT", "PATCH"],
+                "content": {
+                    "application/json": {
+                        "schema": {"type": "object", "properties": request_properties}
+                    }
+                },
+            }
+
+        response_statuses = {}
+        response_types = {}
+        auth_seen = set()
+        source_tools = set()
+        for sample in entries_list[:80]:
+            status = int(sample.get("response_status", 0) or 0)
+            status_key = "default" if status <= 0 else str(status)
+            response_statuses[status_key] = response_statuses.get(status_key, 0) + 1
+
+            content_type = self._ascii_safe(sample.get("content_type") or "", lower=True)
+            if status_key not in response_types:
+                response_types[status_key] = set()
+            if "json" in content_type:
+                response_types[status_key].add("application/json")
+            elif "xml" in content_type:
+                response_types[status_key].add("application/xml")
+            elif content_type:
+                response_types[status_key].add("text/plain")
+
+            for auth_item in sample.get("auth_detected", []) or []:
+                safe_auth = self._ascii_safe(auth_item, lower=True)
+                if safe_auth:
+                    auth_seen.add(safe_auth)
+            tool_name = self._ascii_safe(sample.get("source_tool") or "")
+            if tool_name:
+                source_tools.add(tool_name)
+
+        for status_key in sorted(
+            response_statuses.keys(),
+            key=lambda x: (999 if x == "default" else int(x), x),
+        ):
+            description = "Captured response"
+            if status_key != "default":
+                status_int = int(status_key)
+                if status_int == 200:
+                    description = "Successful response"
+                elif status_int == 201:
+                    description = "Created"
+                elif status_int == 204:
+                    description = "No content"
+                elif status_int in [400, 422]:
+                    description = "Validation/client error"
+                elif status_int in [401, 403]:
+                    description = "Authorization error"
+                elif status_int == 404:
+                    description = "Not found"
+                elif status_int >= 500:
+                    description = "Server error"
+            response_obj = {"description": description}
+            media_types = sorted(list(response_types.get(status_key, set()) or []))
+            if media_types:
+                content_obj = {}
+                for media_type in media_types:
+                    schema_obj = {"type": "object"} if "json" in media_type else {"type": "string"}
+                    content_obj[media_type] = {"schema": schema_obj}
+                response_obj["content"] = content_obj
+            operation["responses"][status_key] = response_obj
+        if not operation["responses"]:
+            operation["responses"] = {"default": {"description": "Captured response"}}
+
+        security = []
+        if any("bearer" in item for item in auth_seen):
+            security.append({"bearerAuth": []})
+            auth_schemes.add("bearerAuth")
+        if any("api key" in item for item in auth_seen):
+            security.append({"apiKeyAuth": []})
+            auth_schemes.add("apiKeyAuth")
+        if any("cookie" in item for item in auth_seen):
+            security.append({"cookieAuth": []})
+            auth_schemes.add("cookieAuth")
+        if security:
+            operation["security"] = security
+
+        operation["x-burp-capture"] = {
+            "endpoint_key": self._ascii_safe(endpoint_key),
+            "sample_count": len(entries_list),
+            "source_tools": sorted(list(source_tools)),
+            "observed_auth_types": sorted(list(auth_seen)),
+        }
+        path_item[method_key] = operation
+
+    top_host = ""
+    if host_counts:
+        top_host = sorted(host_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+    server_url = "https://{}".format(top_host) if top_host else "https://example.com"
+
+    components = {"securitySchemes": {}}
+    if "bearerAuth" in auth_schemes:
+        components["securitySchemes"]["bearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    if "apiKeyAuth" in auth_schemes:
+        components["securitySchemes"]["apiKeyAuth"] = {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+        }
+    if "cookieAuth" in auth_schemes:
+        components["securitySchemes"]["cookieAuth"] = {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": "session",
+        }
+
+    spec = {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "Captured API (Generated)",
+            "version": "1.0.0",
+            "description": "Auto-generated from BurpAPISecuritySuite captured traffic (scope: {}).".format(
+                self._ascii_safe(scope_label)
+            ),
+        },
+        "servers": [{"url": server_url}],
+        "paths": paths,
+        "x-generated-by": "BurpAPISecuritySuite",
+        "x-generated-at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    if components["securitySchemes"]:
+        spec["components"] = components
+    return self._sanitize_for_ai_payload(spec)
+
+def _generate_openapi_from_capture(self, event=None):
+    """One-click OpenAPI generation from captured Recon traffic."""
+    with self.lock:
+        snapshot = dict(self.api_data)
+    if not snapshot:
+        self.log_to_ui("[!] OpenAPI generation: no captured endpoints")
+        if hasattr(self, "openapi_area") and self.openapi_area is not None:
+            self.openapi_area.setText("[!] OpenAPI generation: no captured endpoints\n")
+        return
+
+    scope_label = "All Endpoints"
+    selected_host = ""
+    try:
+        if hasattr(self, "host_filter") and self.host_filter is not None:
+            selected_host = self._ascii_safe(
+                str(self.host_filter.getSelectedItem()) if self.host_filter.getSelectedItem() is not None else "",
+                lower=True,
+            ).strip()
+    except Exception as e:
+        self._callbacks.printError(
+            "OpenAPI generation host-filter read error: {}".format(str(e))
+        )
+        selected_host = ""
+
+    scoped_data = {}
+    if selected_host and selected_host != "all":
+        for endpoint_key, entries in snapshot.items():
+            host = self._ascii_safe(
+                self._get_entry(entries).get("host") or "", lower=True
+            ).strip()
+            if host == selected_host:
+                scoped_data[endpoint_key] = entries
+        scope_label = "Host: {}".format(selected_host)
+    else:
+        scoped_data = snapshot
+
+    if not scoped_data:
+        self.log_to_ui("[!] OpenAPI generation: no endpoints in current scope")
+        if hasattr(self, "openapi_area") and self.openapi_area is not None:
+            self.openapi_area.setText(
+                "[!] OpenAPI generation: no endpoints in current scope\n"
+            )
+        return
+
+    spec = self._build_openapi_spec_from_capture(scoped_data, scope_label=scope_label)
+    export_dir = self._get_export_dir("OpenAPI_Generated")
+    if not export_dir:
+        self.log_to_ui("[!] OpenAPI generation: cannot create export directory")
+        return
+
+    filepath = os.path.join(export_dir, "openapi_generated.json")
+    writer = None
+    try:
+        writer = FileWriter(filepath)
+        writer.write(json.dumps(spec, indent=2))
+    except Exception as e:
+        self.log_to_ui("[!] OpenAPI generation failed: {}".format(str(e)))
+        return
+    finally:
+        if writer:
+            try:
+                writer.close()
+            except Exception as close_err:
+                self._callbacks.printError(
+                    "OpenAPI generation writer close error: {}".format(str(close_err))
+                )
+
+    path_count = len((spec.get("paths", {}) or {}).keys())
+    operation_count = 0
+    for path_item in (spec.get("paths", {}) or {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for key in path_item.keys():
+            if key in ["get", "post", "put", "patch", "delete", "options", "head"]:
+                operation_count += 1
+
+    self.log_to_ui(
+        "[+] OpenAPI generated: {} paths / {} operations ({})".format(
+            path_count, operation_count, scope_label
+        )
+    )
+    self.log_to_ui("[+] OpenAPI file: {}".format(filepath))
+
+    if hasattr(self, "openapi_spec_field") and self.openapi_spec_field is not None:
+        self.openapi_spec_field.setText(filepath)
+    if hasattr(self, "openapi_area") and self.openapi_area is not None:
+        self.openapi_area.setText(
+            "\n".join(
+                [
+                    "[+] Generated OpenAPI from captured traffic",
+                    "[*] Scope: {}".format(scope_label),
+                    "[*] Paths: {}".format(path_count),
+                    "[*] Operations: {}".format(operation_count),
+                    "[*] File: {}".format(filepath),
+                    "",
+                    "[*] Tip: click 'Run Drift' to compare this generated spec against future captured traffic.",
+                ]
+            )
+            + "\n"
+        )
 
 def _analyze_structure_for(self, data):
     """Analyze structure for specific dataset"""
@@ -6962,8 +7415,12 @@ __all__ = [
     "_build_recon_turbo_pack_from_data",
     "_export_recon_turbo_pack",
     "_export_recon_turbo_pack_selected",
+    "_sync_logger_from_recon_snapshot",
     "import_data",
     "_export_data",
+    "_openapi_schema_from_inferred_type",
+    "_build_openapi_spec_from_capture",
+    "_generate_openapi_from_capture",
     "_analyze_structure_for",
     "_analyze_security_for",
     "show_endpoint_details",

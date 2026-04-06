@@ -14,6 +14,7 @@
 
 ### Reference
 - **[loggerpp_tags.md](loggerpp_tags.md)** - Logger++ tags reference
+- **[Architecture.md](Architecture.md)** - One-page architecture for State Matrix, Golden Ticket, and AI evidence graph
 
 ## Documentation Structure
 
@@ -23,6 +24,7 @@ BurpAPISecuritySuite/
 ├── CHANGELOG.md                       # Version history
 └── docs/
     ├── DOCUMENTATION-INDEX.md         # This file
+    ├── Architecture.md                # Core architecture overview
     ├── NUCLEI_OPTIMIZATION.md         # Nuclei performance guide
     ├── NUCLEI_OPTIMIZATION_SUMMARY.md # Technical optimization summary
     ├── DEPLOYMENT_CHECKLIST.md        # v1.2.1 deployment checklist
@@ -84,6 +86,13 @@ BurpAPISecuritySuite/
 - Logger++ integration tags
 - Custom tag definitions
 - Usage examples
+
+### Architecture.md
+- High-level capture-to-analysis pipeline
+- State Transition Matrix model
+- Golden Ticket model
+- AI evidence graph model
+- Code ownership map for deep-logic components
 
 ## Quick Links
 

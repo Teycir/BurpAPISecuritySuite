@@ -555,9 +555,33 @@ def _export_ai_context(self):
         return
 
     bundle = self._build_ai_export_bundle(data_snapshot, attacks_snapshot)
+    bundle, schema_validation = self._validate_ai_bundle_schema(bundle)
+    schema_contract = self._build_ai_bundle_schema_contract()
+    validation_warnings = list(schema_validation.get("warnings", []) or [])
+    validation_errors = list(schema_validation.get("errors", []) or [])
+    if validation_warnings:
+        self.fuzzer_area.append(
+            "[*] AI schema validation warnings: {}\n".format(len(validation_warnings))
+        )
+    if validation_errors:
+        self.fuzzer_area.append(
+            "[!] AI schema validation errors: {} (defaults applied)\n".format(
+                len(validation_errors)
+            )
+        )
+    if validation_warnings or validation_errors:
+        summary = " | ".join(
+            [
+                "{} warning(s)".format(len(validation_warnings)),
+                "{} error(s)".format(len(validation_errors)),
+            ]
+        )
+        self.log_to_ui("[*] AI bundle schema validation: {}".format(summary))
     files_to_write = [
         ("ai_context.json", bundle.get("legacy_context", {})),
         ("ai_bundle.json", bundle),
+        ("ai_bundle_schema_contract.json", schema_contract),
+        ("ai_bundle_schema_validation.json", schema_validation),
         ("ai_vulnerability_context.json", bundle.get("vulnerability_context", {})),
         ("ai_all_tabs_context.json", bundle.get("all_tabs_context", {})),
         ("ai_behavioral_analysis.json", bundle.get("behavioral_analysis", {})),
@@ -770,6 +794,180 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
         "golden_tickets": golden_tickets,
         "state_transitions": state_transitions,
     }
+
+def _build_ai_bundle_schema_contract(self):
+    """Return a lightweight schema contract for AI export bundle structure."""
+    return {
+        "schema_version": "1.0",
+        "type": "object",
+        "required": [
+            "metadata",
+            "legacy_context",
+            "vulnerability_context",
+            "all_tabs_context",
+            "behavioral_analysis",
+            "feedback_template",
+            "enhanced_prompt",
+            "llm_exports",
+            "sequence_invariants",
+            "golden_tickets",
+            "state_transitions",
+            "ai_prep_layer",
+        ],
+        "properties": {
+            "metadata": {"type": "object"},
+            "legacy_context": {"type": "object"},
+            "vulnerability_context": {"type": "object"},
+            "all_tabs_context": {"type": "object"},
+            "behavioral_analysis": {"type": "object"},
+            "feedback_template": {"type": "object"},
+            "enhanced_prompt": {"type": "string"},
+            "llm_exports": {
+                "type": "object",
+                "required": ["openai", "anthropic", "local"],
+            },
+            "sequence_invariants": {
+                "type": "object",
+                "required": ["findings", "ledger"],
+            },
+            "golden_tickets": {
+                "type": "object",
+                "required": ["findings", "ledger"],
+            },
+            "state_transitions": {
+                "type": "object",
+                "required": ["findings", "ledger"],
+            },
+            "ai_prep_layer": {"type": "object"},
+        },
+    }
+
+def _validate_ai_bundle_schema(self, bundle):
+    """Lightweight AI bundle schema validation with safe defaults."""
+    report = {
+        "schema_version": "1.0",
+        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "errors": [],
+        "warnings": [],
+        "applied_defaults": [],
+    }
+    root = bundle if isinstance(bundle, dict) else {}
+    if not isinstance(bundle, dict):
+        report["errors"].append(
+            "bundle_root_type_invalid: expected object, got {}".format(
+                self._ascii_safe(type(bundle).__name__)
+            )
+        )
+
+    def ensure_object(key):
+        value = root.get(key)
+        if isinstance(value, dict):
+            return value
+        if value is None:
+            report["warnings"].append("missing_object: {}".format(key))
+        else:
+            report["errors"].append(
+                "invalid_object: {} ({})".format(
+                    key, self._ascii_safe(type(value).__name__)
+                )
+            )
+        root[key] = {}
+        report["applied_defaults"].append("{}={{}}".format(key))
+        return root[key]
+
+    metadata = ensure_object("metadata")
+    ensure_object("legacy_context")
+    ensure_object("vulnerability_context")
+    ensure_object("all_tabs_context")
+    ensure_object("behavioral_analysis")
+    ensure_object("feedback_template")
+    ensure_object("ai_prep_layer")
+
+    try:
+        string_types = (basestring,)
+    except NameError:
+        string_types = (str,)
+    if not isinstance(root.get("enhanced_prompt"), string_types):
+        root["enhanced_prompt"] = self._ascii_safe(
+            root.get("enhanced_prompt") or self._generate_enhanced_ai_prompt()
+        )
+        report["applied_defaults"].append("enhanced_prompt=<generated>")
+        report["warnings"].append("enhanced_prompt_not_string")
+
+    def to_int(value, fallback=0):
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        text = self._ascii_safe(value).strip()
+        if text and re.match(r"^-?\d+$", text):
+            return int(text)
+        return int(fallback)
+
+    if not metadata.get("generated_at"):
+        metadata["generated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        report["applied_defaults"].append("metadata.generated_at=<now>")
+    for count_key in [
+        "total_endpoints",
+        "total_attacks",
+        "vulnerability_count",
+        "sequence_invariant_count",
+        "golden_ticket_count",
+        "state_transition_count",
+    ]:
+        if count_key not in metadata:
+            metadata[count_key] = 0
+            report["applied_defaults"].append("metadata.{}=0".format(count_key))
+        else:
+            parsed = to_int(metadata.get(count_key), fallback=0)
+            if parsed != metadata.get(count_key):
+                report["warnings"].append(
+                    "metadata_non_numeric_counter: {}".format(count_key)
+                )
+                metadata[count_key] = parsed
+
+    llm_exports = ensure_object("llm_exports")
+    for provider in ["openai", "anthropic", "local"]:
+        value = llm_exports.get(provider)
+        if not isinstance(value, dict):
+            llm_exports[provider] = {}
+            report["applied_defaults"].append("llm_exports.{}={{}}".format(provider))
+            report["warnings"].append("llm_exports_missing_provider: {}".format(provider))
+
+    def ensure_findings_block(key):
+        block = ensure_object(key)
+        findings = block.get("findings")
+        ledger = block.get("ledger")
+        if not isinstance(findings, list):
+            block["findings"] = []
+            report["applied_defaults"].append("{}.findings=[]".format(key))
+            report["warnings"].append("invalid_findings_array: {}".format(key))
+        if not isinstance(ledger, dict):
+            block["ledger"] = {}
+            report["applied_defaults"].append("{}.ledger={{}}".format(key))
+            report["warnings"].append("invalid_ledger_object: {}".format(key))
+        block["finding_count"] = to_int(
+            block.get("finding_count"), fallback=len(block.get("findings", []))
+        )
+        return block
+
+    sequence = ensure_findings_block("sequence_invariants")
+    golden = ensure_findings_block("golden_tickets")
+    state = ensure_findings_block("state_transitions")
+    metadata["sequence_invariant_count"] = len(sequence.get("findings", []))
+    metadata["golden_ticket_count"] = len(golden.get("findings", []))
+    metadata["state_transition_count"] = len(state.get("findings", []))
+
+    prep_layer = ensure_object("ai_prep_layer")
+    if self._ai_prep_layer_enabled():
+        for key in ["invariant_hints", "sequence_candidates", "evidence_graph"]:
+            if not isinstance(prep_layer.get(key), dict):
+                prep_layer[key] = {}
+                report["applied_defaults"].append("ai_prep_layer.{}={{}}".format(key))
+                report["warnings"].append("ai_prep_layer_missing_block: {}".format(key))
+
+    report["ok"] = len(report.get("errors", [])) == 0
+    return self._sanitize_for_ai_payload(root), self._sanitize_for_ai_payload(report)
 
 def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
     """Aggregate AI-ready context from all tabs (not only fuzzer)."""
@@ -3696,6 +3894,8 @@ __all__ = [
     "_export_payloads",
     "_export_ai_context",
     "_build_ai_export_bundle",
+    "_build_ai_bundle_schema_contract",
+    "_validate_ai_bundle_schema",
     "_collect_all_tabs_ai_context",
     "_ai_prep_layer_enabled",
     "_build_ai_prep_layer",

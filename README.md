@@ -453,6 +453,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 
 #### 16. OpenAPI Drift Tab
 - **Spec Source**: Load OpenAPI/Swagger file from local path or URL
+- **Generate OpenAPI**: One-click OpenAPI 3.0.3 generation from captured Recon traffic
 - **Run Drift**: Compare observed traffic vs spec and report endpoint/parameter drift
 - **Findings**: Undocumented observed endpoints, missing observed traffic, parameter mismatches
 - **Stop / PKill Tools**: Cancel active drift analysis safely
@@ -783,6 +784,7 @@ vulnerability type. Focus on:
 ## Documentation
 
 - [Complete Documentation Index](docs/DOCUMENTATION-INDEX.md)
+- [Architecture Overview](docs/Architecture.md)
 - [GraphQL Fuzzing Validation](docs/GRAPHQL_VALIDATION.md)
 - [Logger++ Tags Reference](docs/loggerpp_tags.md)
 
@@ -1186,7 +1188,7 @@ What is already shipped:
 - [ ] WebSocket traffic capture
 - [ ] Real-time AI payload generation (OpenAI/Anthropic API)
 - [ ] Success pattern detection (auto-verify exploits)
-- [ ] OpenAPI/Swagger spec generation
+- [x] OpenAPI/Swagger spec generation from captured traffic
 - [ ] Collaborative data sharing
 - [ ] Custom wordlist integration
 - [ ] CVSS scoring for findings

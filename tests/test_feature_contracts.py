@@ -315,6 +315,32 @@ def test_openapi_drift_autodetects_spec_from_proxy_history():
         assert token in text, "Missing OpenAPI autodetect token: {}".format(token)
     print("[PASS] test_openapi_drift_autodetects_spec_from_proxy_history")
 
+def test_openapi_one_click_generation_wired_from_recon():
+    text = _source_text()
+    required_tokens = [
+        '"Generate OpenAPI"',
+        "lambda e: self._generate_openapi_from_capture(e)",
+        "def _generate_openapi_from_capture(",
+        "def _build_openapi_spec_from_capture(",
+        "openapi_generated.json",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing OpenAPI generation token: {}".format(token)
+    print("[PASS] test_openapi_one_click_generation_wired_from_recon")
+
+def test_ai_bundle_schema_validation_wired_into_export():
+    text = _source_text()
+    required_tokens = [
+        "def _build_ai_bundle_schema_contract(",
+        "def _validate_ai_bundle_schema(",
+        "bundle, schema_validation = self._validate_ai_bundle_schema(bundle)",
+        '"ai_bundle_schema_contract.json"',
+        '"ai_bundle_schema_validation.json"',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing AI schema validation token: {}".format(token)
+    print("[PASS] test_ai_bundle_schema_validation_wired_into_export")
+
 
 def test_api_asset_results_include_copy_ready_urls_block():
     text = _source_text()
@@ -403,10 +429,19 @@ def test_recon_autopopulate_and_layout_wiring():
         '"Filter Noise", bool(getattr(self, "recon_noise_filter_enabled", True))',
         "self.recon_noise_filter_checkbox.addActionListener(lambda e: self._on_filter_change())",
         "self.recon_autopopulate_checkbox.addActionListener(",
+        "def _refresh_recon_and_logger_views(",
+        "refresh_btn.addActionListener(lambda e: self._refresh_recon_and_logger_views())",
+        "def _backfill_recon_and_logger(",
+        "self._logger_backfill_history(force=force)",
+        "def _clear_and_refill_recon_logger(",
+        "self.clear_data()",
         "def _on_recon_autopopulate_toggle(",
-        "self._recon_backfill_history(force=False)",
-        "self._recon_backfill_history(force=True)",
+        "self._backfill_recon_and_logger(force=False)",
+        "self._backfill_recon_and_logger(force=True)",
         "def _recon_backfill_history(",
+        'backfill_now_btn = JButton("Clear + Refill")',
+        "backfill_now_btn.addActionListener(",
+        "backfill_now_btn: \"Clear current Recon/Logger data, then refill both from Burp Proxy history\"",
         'btn_panel = JPanel(GridLayout(2, 0, 5, 5))',
     ]
     for token in required_tokens:
@@ -417,6 +452,18 @@ def test_recon_autopopulate_and_layout_wiring():
     diff_idx = text.index('self.tabbed_pane.addTab("Diff", diff_panel)')
     assert recon_idx < logger_idx < diff_idx, "Expected Logger tab immediately after Recon"
     print("[PASS] test_recon_autopopulate_and_layout_wiring")
+
+def test_import_syncs_recon_and_logger_views():
+    text = _source_text()
+    required_tokens = [
+        "def _sync_logger_from_recon_snapshot(",
+        "logger_added = int(",
+        "self._sync_logger_from_recon_snapshot(",
+        '"[+] Logger sync from import: {} rows added".format(logger_added)',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Recon/Logger import sync token: {}".format(token)
+    print("[PASS] test_import_syncs_recon_and_logger_views")
 
 
 def test_logger_rules_can_enrich_recon_endpoint_tags():
@@ -779,7 +826,7 @@ def test_tooltip_wiring_is_generalized():
         "tooltip_text = text if isinstance(text, text_type) else text_type(text)",
         "component.setToolTipText(tooltip_text if tooltip_text else None)",
         "help_btn: \"Show what each Recon button does\"",
-        "refresh_btn: \"Refresh endpoint list, stats, and details view\"",
+        "refresh_btn: \"Refresh both Recon and Logger views from current in-memory data\"",
     ]
     for token in required_tokens:
         assert token in text, "Missing generalized tooltip token: {}".format(token)

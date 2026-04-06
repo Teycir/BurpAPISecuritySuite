@@ -758,7 +758,7 @@ def _initialize_main_panel(self):
 
 def _build_recon_top_panel(self):
     top_panel = JPanel()
-    top_panel.setLayout(GridLayout(2, 1))
+    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
 
     stats_panel = JPanel(FlowLayout(FlowLayout.LEFT))
     stats_panel.setBorder(BorderFactory.createTitledBorder("Statistics"))
@@ -767,6 +767,7 @@ def _build_recon_top_panel(self):
     )
     self.stats_label.setFont(Font("Monospaced", Font.BOLD, 12))
     stats_panel.add(self.stats_label)
+    stats_panel.setAlignmentX(0.0)
 
     controls_row = JPanel(FlowLayout(FlowLayout.LEFT))
     self.auto_capture = JCheckBox("Auto-Capture", True)
@@ -807,6 +808,7 @@ def _build_recon_top_panel(self):
     self.page_size_combo.setSelectedItem("100")
     self.page_size_combo.addActionListener(lambda e: self._change_page_size())
     controls_row.add(self.page_size_combo)
+    controls_row.setAlignmentX(0.0)
 
     filter_row = JPanel(FlowLayout(FlowLayout.LEFT))
     filter_row.add(JLabel("Search:"))
@@ -855,6 +857,7 @@ def _build_recon_top_panel(self):
     self.group_by = JComboBox(["None", "Host", "Method", "Auth", "Encryption"])
     self.group_by.addActionListener(lambda e: self._on_group_change())
     filter_row.add(self.group_by)
+    filter_row.setAlignmentX(0.0)
 
     top_panel.add(stats_panel)
     top_panel.add(controls_row)
@@ -911,6 +914,11 @@ def _build_recon_button_panel(self):
     ai_export_btn.setBackground(Color(138, 43, 226))
     ai_export_btn.setForeground(Color.WHITE)
     ai_export_btn.addActionListener(lambda e: self._export_ai_context())
+
+    openapi_generate_btn = JButton("Generate OpenAPI")
+    openapi_generate_btn.setBackground(Color(102, 16, 242))
+    openapi_generate_btn.setForeground(Color.WHITE)
+    openapi_generate_btn.addActionListener(lambda e: self._generate_openapi_from_capture(e))
 
     import_btn = JButton("Import")
     import_btn.setBackground(Color(0, 123, 255))
@@ -970,7 +978,14 @@ def _build_recon_button_panel(self):
     refresh_btn = JButton("Refresh")
     refresh_btn.setBackground(Color(108, 117, 125))
     refresh_btn.setForeground(Color.WHITE)
-    refresh_btn.addActionListener(lambda e: self.refresh_view())
+    refresh_btn.addActionListener(lambda e: self._refresh_recon_and_logger_views())
+
+    backfill_now_btn = JButton("Clear + Refill")
+    backfill_now_btn.setBackground(Color(13, 110, 253))
+    backfill_now_btn.setForeground(Color.WHITE)
+    backfill_now_btn.addActionListener(
+        lambda e: self._clear_and_refill_recon_logger()
+    )
 
     refresh_invariants_btn = JButton("Refresh Invariants")
     refresh_invariants_btn.setBackground(Color(106, 90, 205))
@@ -983,6 +998,7 @@ def _build_recon_button_panel(self):
             export_btn: "Export all captured Recon endpoints and analysis to a JSON file",
             export_host_btn: "Export only endpoints for the selected host filter",
             ai_export_btn: "Export all-tab AI context bundle (Recon, scanners, findings, and LLM-ready files)",
+            openapi_generate_btn: "Generate an OpenAPI 3 spec directly from captured Recon traffic in one click",
             import_btn: "Import previously exported Recon JSON data",
             postman_btn: "Export scoped endpoints as a Postman Collection v2.1 file",
             insomnia_btn: "Export scoped endpoints as an Insomnia import JSON file",
@@ -994,7 +1010,8 @@ def _build_recon_button_panel(self):
             export_param_intel_btn: "Export the latest Recon parameter-intelligence snapshot",
             help_btn: "Show what each Recon button does",
             clear_btn: "Clear all captured Recon data and reset views",
-            refresh_btn: "Refresh endpoint list, stats, and details view",
+            refresh_btn: "Refresh both Recon and Logger views from current in-memory data",
+            backfill_now_btn: "Clear current Recon/Logger data, then refill both from Burp Proxy history",
             refresh_invariants_btn: "Recompute invariant checks from captured endpoints",
         }
     )
@@ -1002,6 +1019,7 @@ def _build_recon_button_panel(self):
     btn_panel.add(export_btn)
     btn_panel.add(export_host_btn)
     btn_panel.add(ai_export_btn)
+    btn_panel.add(openapi_generate_btn)
     btn_panel.add(import_btn)
     btn_panel.add(postman_btn)
     btn_panel.add(insomnia_btn)
@@ -1014,6 +1032,7 @@ def _build_recon_button_panel(self):
     btn_panel.add(help_btn)
     btn_panel.add(clear_btn)
     btn_panel.add(refresh_btn)
+    btn_panel.add(backfill_now_btn)
     btn_panel.add(refresh_invariants_btn)
     return btn_panel
 
@@ -1034,8 +1053,24 @@ def _build_recon_tab(self):
     recon_panel.add(recon_footer_panel, BorderLayout.SOUTH)
     self._refresh_recon_invariant_status_label()
     if bool(getattr(self, "recon_autopopulate_on_open", True)):
-        SwingUtilities.invokeLater(lambda: self._recon_backfill_history(force=False))
+        SwingUtilities.invokeLater(lambda: self._backfill_recon_and_logger(force=False))
     return recon_panel
+
+def _refresh_recon_and_logger_views(self):
+    """Refresh Recon and Logger views together to keep UI state aligned."""
+    self.refresh_view()
+    if hasattr(self, "_refresh_logger_view"):
+        self._refresh_logger_view()
+
+def _backfill_recon_and_logger(self, force=False):
+    """Run Recon and Logger backfill together to keep both views in sync."""
+    self._recon_backfill_history(force=force)
+    self._logger_backfill_history(force=force)
+
+def _clear_and_refill_recon_logger(self):
+    """Clear Recon/Logger data, then backfill both from Proxy history."""
+    self.clear_data()
+    self._backfill_recon_and_logger(force=True)
 
 def _on_recon_autopopulate_toggle(self):
     """Handle Recon history-autopopulate checkbox changes."""
@@ -1043,7 +1078,7 @@ def _on_recon_autopopulate_toggle(self):
     enabled = True if box is None else bool(box.isSelected())
     self.recon_autopopulate_on_open = enabled
     if enabled:
-        self._recon_backfill_history(force=True)
+        self._backfill_recon_and_logger(force=True)
     else:
         self.log_to_ui("[*] Recon autopopulate disabled")
 
@@ -1488,6 +1523,7 @@ def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
         "debug": "Load debug/verbose parameter keyword preset into Params input",
         "access": "Load access-control/secret parameter keyword preset into Params input",
         "callback": "Load callback/redirect URL parameter keyword preset into Params input",
+        "generate openapi": "Generate an OpenAPI 3 specification from captured Recon traffic and save it to disk",
         "generate": "Generate fuzz payload candidates from Recon endpoints and selected attack type",
         "send to intruder": "Send generated requests/targets to Burp Intruder for manual exploitation",
         "export payloads": "Export generated fuzz payloads from this tab to disk",
@@ -2191,7 +2227,9 @@ def _show_recon_button_help(self, _event=None):
     lines.append("Clear Data:")
     lines.append("  Clear captured Recon state and UI list/details.")
     lines.append("Refresh:")
-    lines.append("  Recompute and redraw Recon list/stats from current state.")
+    lines.append("  Recompute and redraw both Recon and Logger views from current state.")
+    lines.append("Clear + Refill:")
+    lines.append("  Clear current Recon/Logger data, then refill both from Burp Proxy history.")
     lines.append("Refresh Invariants:")
     lines.append("  Recompute Sequence + Golden + State Matrix analysis from captured endpoints.")
     lines.append("")
@@ -6111,6 +6149,9 @@ __all__ = [
     "_build_recon_center_split",
     "_build_recon_button_panel",
     "_build_recon_tab",
+    "_refresh_recon_and_logger_views",
+    "_backfill_recon_and_logger",
+    "_clear_and_refill_recon_logger",
     "_on_recon_autopopulate_toggle",
     "_create_tabs",
     "_initialize_output_dir",
