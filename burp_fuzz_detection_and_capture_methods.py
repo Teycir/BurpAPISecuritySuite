@@ -145,6 +145,20 @@ def _generate_fuzzing(self, attack_type):
                 len(attacks), len(set([k for k, a in attacks]))
             )
         )
+        high_value_count = len(
+            [1 for _, attack in attacks if int((attack or {}).get("_score", 0) or 0) >= 80]
+        )
+        summary.append(
+            "[*] High-value: {} attacks (score >= 80)".format(high_value_count)
+        )
+        if attacks:
+            top_attack = attacks[0][1] or {}
+            summary.append(
+                "[*] Top-ranked: {} (score {})".format(
+                    self._ascii_safe(top_attack.get("type") or ""),
+                    int(top_attack.get("_score", 0) or 0),
+                )
+            )
         summary.append(
             "[*] Critical: {} | High: {} | Medium: {}".format(
                 critical_count,
