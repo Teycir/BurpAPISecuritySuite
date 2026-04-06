@@ -11,9 +11,16 @@ def _source_text():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     source_paths = [
         os.path.join(base_dir, "BurpAPISecuritySuite.py"),
+        os.path.join(base_dir, "burp_core_ui_and_fuzz_methods.py"),
+        os.path.join(base_dir, "burp_fuzz_detection_and_capture_methods.py"),
+        os.path.join(base_dir, "burp_capture_export_and_tooling_methods.py"),
+        os.path.join(base_dir, "burp_auth_passive_and_scanner_methods.py"),
+        os.path.join(base_dir, "burp_wayback_import_and_logging_methods.py"),
         os.path.join(base_dir, "heavy_runners.py"),
+        os.path.join(base_dir, "jython_size_helpers.py"),
         os.path.join(base_dir, "ai_prep_layer.py"),
         os.path.join(base_dir, "behavior_analysis.py"),
+        os.path.join(base_dir, "recon_param_intel.py"),
         os.path.join(base_dir, "golden_ticket_analysis.py"),
         os.path.join(base_dir, "state_transition_analysis.py"),
     ]
@@ -108,6 +115,13 @@ def test_passive_scope_defaults_to_all_endpoints():
     assert 'self.passive_scope_combo = JComboBox(' in text
     assert 'self.passive_scope_combo.setSelectedItem("All Endpoints")' in text
     print("[PASS] test_passive_scope_defaults_to_all_endpoints")
+
+
+def test_auth_replay_scope_defaults_to_all_endpoints():
+    text = _source_text()
+    assert "self.auth_replay_scope_combo = JComboBox(" in text
+    assert 'self.auth_replay_scope_combo.setSelectedItem("All Endpoints")' in text
+    print("[PASS] test_auth_replay_scope_defaults_to_all_endpoints")
 
 
 def test_passive_output_category_summary_updated():
@@ -211,6 +225,8 @@ def test_fuzzer_uses_api_like_scope_noise_filtering():
         "FUZZER_STATIC_PATH_PARTS = PASSIVE_STATIC_PATH_PARTS + (",
         "FUZZER_STRICT_NOISE_PATH_MARKERS = (",
         "def _fuzzer_endpoint_is_api_like(",
+        "def _fuzzer_sparse_candidate_score(",
+        "def _augment_fuzzer_targets_sparse(",
         "def _fuzzer_has_api_signal(",
         "def _fuzzer_has_object_target(",
         "def _collect_fuzzer_targets(",
@@ -220,6 +236,9 @@ def test_fuzzer_uses_api_like_scope_noise_filtering():
         "path, self.FUZZER_STRICT_NOISE_PATH_MARKERS",
         "if not self._passive_entry_allowed(entry, filter_cfg):",
         "if not self._fuzzer_endpoint_is_api_like(normalized, strict=strict):",
+        "candidate_score = self._fuzzer_sparse_candidate_score(",
+        "sparse_added = self._augment_fuzzer_targets_sparse(",
+        '"sparse_fallback_added": sparse_added,',
         "if not self._fuzzer_has_api_signal(normalized):",
         "if not self._fuzzer_has_object_target(normalized):",
         "FUZZER_SQLI_PARAM_KEYWORDS",
@@ -227,6 +246,7 @@ def test_fuzzer_uses_api_like_scope_noise_filtering():
         "FUZZER_SSTI_PARAM_KEYWORDS",
         '"[*] Mode: {}".format("Lenient JSON GET" if lenient_mode else "Strict")',
         '"[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(',
+        '"[*] Sparse fallback: +{} heuristic endpoints from {} candidates".format(',
     ]
     for token in required_tokens:
         assert token in text, "Missing fuzzer scope/noise filter token: {}".format(token)
@@ -336,15 +356,363 @@ def test_recon_exports_include_postman_and_insomnia():
     print("[PASS] test_recon_exports_include_postman_and_insomnia")
 
 
+def test_recon_logger_and_turbo_intruder_features_are_wired():
+    text = _source_text()
+    required_tokens = [
+        'self.tag_filter = JComboBox(["All"])',
+        'self.tool_filter = JComboBox(["All"])',
+        "self.recon_regex_field = JTextField(12)",
+        'self.recon_regex_scope_combo = JComboBox(["Any", "Request", "Response", "Req+Resp"])',
+        'grep_btn = JButton("Grep")',
+        'turbo_pack_btn = JButton("Turbo Pack")',
+        "grep_btn.addActionListener(lambda e: self._run_recon_grep())",
+        "turbo_pack_btn.addActionListener(lambda e: self._export_recon_turbo_pack())",
+        "def _run_recon_grep(",
+        "def _collect_recon_grep_targets(",
+        "def _export_recon_turbo_pack(",
+        "def _export_recon_turbo_pack_selected(",
+        "def _build_recon_turbo_request_template(",
+        "def _build_recon_turbo_basic_script(",
+        "def _build_recon_turbo_race_script(",
+        '"Export Turbo Pack (Selected Endpoint)"',
+        "def _resolve_tool_name(",
+        '"source_tool": self._ascii_safe(source_tool),',
+        "def _update_tool_filter(",
+        "def _update_tag_filter(",
+        'tags.add("api_endpoint")',
+        'tags.add("idor_risk")',
+        'tags.add("admin_debug")',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Recon Logger++/Turbo token: {}".format(token)
+    print("[PASS] test_recon_logger_and_turbo_intruder_features_are_wired")
+
+
+def test_recon_autopopulate_and_layout_wiring():
+    text = _source_text()
+    required_tokens = [
+        'self.recon_autopopulate_checkbox = JCheckBox(',
+        '"Autopopulate",',
+        'self.recon_noise_filter_checkbox = JCheckBox(',
+        '"Filter Noise", bool(getattr(self, "recon_noise_filter_enabled", True))',
+        "self.recon_noise_filter_checkbox.addActionListener(lambda e: self._on_filter_change())",
+        "self.recon_autopopulate_checkbox.addActionListener(",
+        "def _on_recon_autopopulate_toggle(",
+        "self._recon_backfill_history(force=False)",
+        "self._recon_backfill_history(force=True)",
+        "def _recon_backfill_history(",
+        'btn_panel = JPanel(GridLayout(2, 0, 5, 5))',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Recon autopopulate/layout token: {}".format(token)
+
+    recon_idx = text.index('self.tabbed_pane.addTab("Recon", recon_panel)')
+    logger_idx = text.index('self.tabbed_pane.addTab("Logger", logger_panel)')
+    diff_idx = text.index('self.tabbed_pane.addTab("Diff", diff_panel)')
+    assert recon_idx < logger_idx < diff_idx, "Expected Logger tab immediately after Recon"
+    print("[PASS] test_recon_autopopulate_and_layout_wiring")
+
+
+def test_logger_rules_can_enrich_recon_endpoint_tags():
+    text = _source_text()
+    required_tokens = [
+        "endpoint_tag_map = {}",
+        "endpoint_key = self._ascii_safe(event_view.get(\"endpoint_key\") or \"\").strip()",
+        "with self.lock:",
+        "self.endpoint_tags[endpoint_key] = sorted(merged)",
+        "if recon_tags_changed:",
+        "self._schedule_capture_ui_refresh()",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing logger-to-recon tag inheritance token: {}".format(token)
+    print("[PASS] test_logger_rules_can_enrich_recon_endpoint_tags")
+
+
+def test_logger_table_renderer_supports_colorized_tags_and_rows():
+    text = _source_text()
+    required_tokens = [
+        "class _LoggerTableCellRenderer(DefaultTableCellRenderer):",
+        "TAG_PRIORITY = [",
+        "TAG_COLORS = {",
+        "def _resolve_palette(self, tags, style_map):",
+        "is_tag_column = int(column) == 12",
+        "Tags: {} | Primary: {}",
+        "logger_renderer = _LoggerTableCellRenderer(self)",
+        "column_model.getColumn(col_idx).setCellRenderer(logger_renderer)",
+        "column.setPreferredWidth(safe_width)",
+        "column.setMinWidth(300)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing logger color renderer token: {}".format(token)
+    print("[PASS] test_logger_table_renderer_supports_colorized_tags_and_rows")
+
+
+def test_loggerplusplus_tab_long_session_controls_are_wired():
+    text = _source_text()
+    required_tokens = [
+        "self.logger_events = []",
+        "self.logger_max_rows = 5000",
+        "self.logger_trim_batch = 500",
+        "self._logger_refresh_min_interval_ms = 450",
+        "self.logger_active_regex = \"\"",
+        "self.logger_filter_library = []",
+        "self.logger_tag_rules = []",
+        "self._ensure_logger_default_tag_rules(force=False)",
+        "def _create_logger_tab(",
+        'self.tabbed_pane.addTab("Logger", logger_panel)',
+        "self.logger_table_model = _LoggerTableModel(columns, 0)",
+        "self.logger_row_sorter = TableRowSorter(self.logger_table_model)",
+        "self.logger_table.setRowSorter(self.logger_row_sorter)",
+        "Shift+click adds a second sort key.",
+        'self.logger_max_rows_combo = JComboBox(["2000", "5000", "10000", "20000"])',
+        'self.logger_auto_prune_checkbox = JCheckBox("Auto Prune", True)',
+        'self.logger_logging_off_checkbox = JCheckBox("Logging Off", False)',
+        'self.logger_import_on_open_checkbox = JCheckBox("Import on Open", True)',
+        'self.logger_export_format_combo = JComboBox(["JSONL", "JSON", "CSV"])',
+        'self.logger_regex_field = JTextField("", 14)',
+        'self.logger_search_req_checkbox = JCheckBox("Req", True)',
+        'self.logger_search_resp_checkbox = JCheckBox("Resp", True)',
+        'self.logger_in_scope_checkbox = JCheckBox("In Scope", False)',
+        'self.logger_noise_filter_checkbox = JCheckBox(',
+        '"Filter Noise", bool(getattr(self, "logger_noise_filter_enabled", True))',
+        'self.logger_len_min_field = JTextField("", 6)',
+        'self.logger_len_max_field = JTextField("", 6)',
+        "self.logger_filter_library_combo = JComboBox([\"(No Saved Filters)\"])",
+        '"Grep Values..."',
+        '"Tag Rules..."',
+        'lambda e: self._show_logger_help_popup()',
+        '"Pick FG"',
+        '"Pick BG"',
+        '"Auto Style"',
+        '"Preview Rule"',
+        '"Rule Lab"',
+        '"Backfill History"',
+        '"Select All Rows"',
+        '"Copy Selected Rows"',
+        '"Show Endpoint Detail"',
+        '"Send Selected To Repeater"',
+        '"Tag Rules (Regex)..."',
+        '"Save Filter"',
+        '"Apply Filter"',
+        '"Remove Filter"',
+        '"Search"',
+        '"Reset"',
+        '"Clear"',
+        "def _logger_apply_runtime_settings(",
+        "def _show_logger_help_popup(",
+        "def _logger_trim_if_needed(",
+        "def _sync_recon_entry_from_logger(",
+        "def _logger_capture_event(",
+        "self._sync_recon_entry_from_logger(endpoint_key, entry, tags=tag_values)",
+        "def _logger_count_default_request_markers(",
+        "def _logger_count_default_response_markers(",
+        "def _run_logger_regex_search(",
+        "def _logger_collect_grep_popup_matches(",
+        "def _open_logger_grep_popup(",
+        "def _reset_logger_regex_search(",
+        "def _save_logger_filter(",
+        "def _apply_logger_filter(",
+        "def _remove_logger_filter(",
+        "def _open_logger_tag_rules_popup(",
+        "def _compile_logger_tag_rules(",
+        "def _logger_pick_color(",
+        "def _logger_suggest_tag_palette(",
+        "def _logger_builtin_tag_rules(",
+        "def _ensure_logger_default_tag_rules(",
+        '"tag": "api_endpoint",',
+        '"tag": "auth",',
+        '"tag": "sensitive",',
+        '"tag": "idor_risk",',
+        '"tag": "write_ops",',
+        '"tag": "jwt",',
+        "def _logger_preview_rule_matches(",
+        "JColorChooser",
+        "def _logger_rule_scope_text(",
+        "def _logger_apply_tag_rules(",
+        "tag|scope|regex|fg|bg|enabled",
+        '"fg": fg_text,',
+        '"bg": bg_text,',
+        '"enabled": enabled,',
+        "def _logger_event_matches_filters(",
+        "noise_filter_enabled=False,",
+        "if noise_filter_enabled and self._logger_event_is_noise(event):",
+        "event[\"_grep_req\"] = self._logger_count_default_request_markers(event)",
+        "event[\"_grep_resp\"] = self._logger_count_default_response_markers(event)",
+        "min_len=None,",
+        "max_len=None,",
+        'len_text = " | Len: {}..{}".format(',
+        'noise_text = " | Noise: on" if noise_filter_enabled else " | Noise: off"',
+        "def _logger_event_in_scope(",
+        "def _schedule_logger_ui_refresh(",
+        "def _run_logger_ui_refresh(",
+        "def _refresh_logger_view(",
+        "def _logger_show_selected(",
+        "table.convertRowIndexToModel(",
+        "def _logger_select_all_rows(",
+        "def _logger_copy_selected_rows(",
+        "def _logger_show_endpoint_detail(",
+        "recovered = self._sync_recon_entry_from_logger(",
+        "def _logger_send_selected_to_repeater(",
+        "def _clear_logger_logs(",
+        "def _export_logger_view(",
+        "def _logger_backfill_history(",
+        "self._logger_backfill_history(force=False)",
+        'if self.logger_import_on_open_checkbox.isSelected():',
+        "bypass_capture=True",
+        'selected_method = "ALL"',
+        'selected_method != "ALL"',
+        "self._logger_capture_event(endpoint_key, api_entry, logger_tags)",
+        '" | Logging: on"',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Logger++ token: {}".format(token)
+    print("[PASS] test_loggerplusplus_tab_long_session_controls_are_wired")
+
+
+def test_shared_noise_filter_helpers_are_wired_for_recon_and_logger():
+    text = _source_text()
+    required_tokens = [
+        "self.recon_noise_filter_enabled = True",
+        "self.logger_noise_filter_enabled = True",
+        "def _has_high_signal_tags(",
+        "def _recon_entry_is_noise(",
+        "def _endpoint_is_recon_noise(",
+        "def _logger_event_is_noise(",
+        "noise_filter_enabled = bool(getattr(self, \"recon_noise_filter_enabled\", True))",
+        "noise_box = getattr(self, \"recon_noise_filter_checkbox\", None)",
+        "if noise_filter_enabled and self._endpoint_is_recon_noise(key, entries):",
+        "noise_filter_enabled = bool(getattr(self, \"logger_noise_filter_enabled\", True))",
+        "noise_box = getattr(self, \"logger_noise_filter_checkbox\", None)",
+        "- Filter Noise: hide noisy ad-tech/CDN/static traffic rows.",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing shared noise-filter token: {}".format(token)
+    print("[PASS] test_shared_noise_filter_helpers_are_wired_for_recon_and_logger")
+
+
+def test_recon_param_miner_and_gap_features_are_wired():
+    text = _source_text()
+    required_tokens = [
+        'hidden_params_btn = JButton("Hidden Params")',
+        'param_intel_btn = JButton("Param Intel")',
+        'export_param_intel_btn = JButton("Export Param Intel")',
+        "hidden_params_btn.addActionListener(lambda e: self._run_recon_hidden_params())",
+        "param_intel_btn.addActionListener(lambda e: self._run_recon_param_intel())",
+        "export_param_intel_btn.addActionListener(lambda e: self._export_recon_param_intel())",
+        "self.recon_hidden_param_results = []",
+        "self.recon_param_intel_snapshot = None",
+        "def _iter_recon_param_items(",
+        "def _collect_hidden_param_candidates(",
+        "def _score_hidden_param_candidate(",
+        "def _run_recon_hidden_params(",
+        "def _run_recon_hidden_params_selected(",
+        "def _collect_recon_param_intelligence(",
+        "def _build_recon_param_intel_report(",
+        "def _run_recon_param_intel(",
+        "def _export_recon_param_intel(",
+        "param_intel.json",
+        "param_intel_report.txt",
+        '"Hidden Params (Selected Endpoint)"',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Recon Param Miner/GAP token: {}".format(token)
+    print("[PASS] test_recon_param_miner_and_gap_features_are_wired")
+
+
+def test_autorize_and_inql_features_are_wired():
+    text = _source_text()
+    required_tokens = [
+        'self.auth_replay_check_unauth_checkbox = JCheckBox("Check Unauth", True)',
+        "self.auth_replay_include_regex_field = JTextField(",
+        "self.auth_replay_exclude_regex_field = JTextField(",
+        "self.auth_replay_enforced_status_field = JTextField(",
+        "self.auth_replay_enforced_regex_field = JTextField(",
+        "self.auth_replay_methods_field = JTextField(",
+        "self.auth_replay_guest_status_field = JTextField(",
+        "self.auth_replay_guest_regex_field = JTextField(",
+        "self.auth_replay_user_status_field = JTextField(",
+        "self.auth_replay_user_regex_field = JTextField(",
+        "self.auth_replay_unauth_status_field = JTextField(",
+        "self.auth_replay_unauth_regex_field = JTextField(",
+        "def _parse_auth_replay_status_codes(",
+        "def _compile_optional_regex(",
+        "def _auth_replay_detector_for_role(",
+        "def _auth_replay_response_is_enforced(",
+        '"by_role": by_role_detector_cfg,',
+        "by_role_detector_cfg[\"guest\"]",
+        "by_role_detector_cfg[\"user\"]",
+        "by_role_detector_cfg[\"unauth\"]",
+        "detector_cfg = {",
+        "enforced_statuses",
+        "include_regex=include_regex",
+        "exclude_regex=exclude_regex",
+        "method_allowlist=method_allowlist",
+        "detector_cfg=detector_cfg",
+        "compare_roles = [role for role in [\"unauth\", \"guest\", \"user\"] if role in role_results]",
+        'self.graphql_schema_file_field = JTextField("", 24)',
+        'lambda e: self._browse_graphql_schema_file(e),',
+        'lambda e: self._generate_graphql_raider_operations(e),',
+        'lambda e: self._apply_graphql_profile(e),',
+        'lambda e: self._analyze_graphql_schema_file(e),',
+        'lambda e: self._export_graphql_batch_queries(),',
+        'lambda e: self._send_graphql_operations_to_repeater(),',
+        'lambda e: self._send_graphql_operations_to_intruder(),',
+        'self.graphql_raider_introspection_checkbox = JCheckBox("Introspection", True)',
+        'self.graphql_raider_batching_checkbox = JCheckBox("Batching", True)',
+        'self.graphql_raider_alias_checkbox = JCheckBox("Aliases", True)',
+        'self.graphql_raider_depth_checkbox = JCheckBox("Depth", False)',
+        'self.graphql_raider_mutation_checkbox = JCheckBox("Mutations", False)',
+        'self.graphql_raider_include_schema_ops_checkbox = JCheckBox("Include Schema Ops", True)',
+        'self.graphql_profile_combo = JComboBox(',
+        '"Safe Recon", "Aggressive Raider"',
+        'self.graphql_request_mode_combo = JComboBox(["POST JSON", "GET Query"])',
+        'self.graphql_headers_field = JTextField("", 28)',
+        "self.graphql_profile_combo.addActionListener(",
+        "def _collect_graphql_generated_operations(",
+        "def _graphql_profile_presets(",
+        "def _apply_graphql_profile(",
+        "def _graphql_attack_family_selection(",
+        "def _collect_graphql_raider_operations(",
+        "def _generate_graphql_raider_operations(",
+        "def _parse_graphql_custom_headers(",
+        "def _collect_graphql_delivery_operations(",
+        "def _graphql_build_http_request(",
+        "def _send_graphql_operations_to_repeater(",
+        "def _send_graphql_operations_to_intruder(",
+        'if request_mode == "get query":',
+        '"[+] Sent {} generated operations to Repeater using target {}\\n"',
+        '"[+] Sent {} generated operations to Intruder using target {}\\n"',
+        '"[!] No GraphQL operations available. Run Analyze Schema or Generate Raider first.\\n"',
+        "self.graphql_generated_operations = []",
+        'self.graphql_active_profile = "Balanced"',
+        'self._apply_graphql_profile(profile_name="Balanced", log_output=False)',
+        "def _browse_graphql_schema_file(",
+        "def _extract_graphql_schema_root(",
+        "def _graphql_generate_operations_from_schema(",
+        "def _graphql_schema_points_of_interest(",
+        "def _graphql_detect_circular_references(",
+        "def _analyze_graphql_schema_file(",
+        "def _export_graphql_batch_queries(",
+        "GRAPHQL SCHEMA ANALYSIS (INQL-LIKE)",
+        "graphql_batch_payload.json",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Autorize/InQL token: {}".format(token)
+    print("[PASS] test_autorize_and_inql_features_are_wired")
+
+
 def test_tooltip_wiring_is_generalized():
     text = _source_text()
     required_tokens = [
         "self._configure_tooltips()",
         "def _configure_tooltips(",
+        "self._apply_default_tooltips_recursively(self._panel)",
         "ToolTipManager.sharedInstance()",
         "def _set_component_tooltip(",
         "def _apply_component_tooltips(",
+        "def _apply_default_tooltips_recursively(",
         "def _resolve_action_button_tooltip(",
+        "def _resolve_checkbox_tooltip(",
         "self._set_component_tooltip(",
         "self._resolve_action_button_tooltip(text, tooltip)",
         "self._apply_component_tooltips(",
@@ -723,6 +1091,23 @@ def test_ai_export_bundle_contains_rich_context_and_llm_formats():
     print("[PASS] test_ai_export_bundle_contains_rich_context_and_llm_formats")
 
 
+def test_ai_sanitizer_preserves_numeric_count_fields():
+    text = _source_text()
+    required_tokens = [
+        "def _sanitize_for_ai_payload(",
+        'if key_lower.endswith("_count"):',
+        "if isinstance(val, (int, float)):",
+        'if value_text and re.match(r"^-?\\d+$", value_text):',
+        "sanitized[safe_key] = int(value_text)",
+        'sanitized[safe_key] = "<redacted>"',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing sanitizer count-preservation token: {}".format(
+            token
+        )
+    print("[PASS] test_ai_sanitizer_preserves_numeric_count_fields")
+
+
 def test_ai_prep_layer_exports_are_additive_and_non_destructive():
     text = _source_text()
     required_tokens = [
@@ -758,8 +1143,8 @@ def test_sequence_invariants_and_ledger_are_wired():
         "def _refresh_recon_invariant_status_label(",
         "def _build_recon_invariant_status_text(",
         "self._refresh_recon_invariant_status_label()",
-        'self._create_action_button(\n                "Run Invariants"',
-        'self._create_action_button(\n                "Export Ledger"',
+        '"Run Invariants",',
+        '"Export Ledger",',
         "def _run_sequence_invariants(",
         "def _build_sequence_invariant_package(",
         "def _build_golden_ticket_package(",
