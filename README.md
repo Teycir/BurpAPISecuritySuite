@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.4.2-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.4.3-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -129,6 +129,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
   - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
+    - [v1.4.3 - Token Lineage + Cross-Interface Parity Drift](#v143---token-lineage--cross-interface-parity-drift)
     - [v1.4.2 - Counterfactual Differential Pipeline + Deep-Logic Expansion](#v142---counterfactual-differential-pipeline--deep-logic-expansion)
     - [v1.4.1 - Logger Clear Data + Two-Line Toolbar](#v141---logger-clear-data--two-line-toolbar)
     - [v1.4.0 - Logger/Recon Parity + Stability + Sorting](#v140---loggerrecon-parity--stability--sorting)
@@ -219,6 +220,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Counterfactual Differentials**: Scoreless, non-destructive invariant breaks for representation/auth/identifier drift
 - **Sequence Invariants**: Non-destructive deep-logic checks with confidence/evidence ledger export
 - **Token Lineage Analysis**: Passive token/session lifecycle drift detection for logout/revoke/refresh rotation gaps
+- **Cross-Interface Parity & Drift**: Detects REST/GraphQL/internal auth parity gaps, cache/auth drift, time-window flips, content-type policy drift, and replay-after-delete leakage
 - **Wayback Machine**: Discover historical endpoints and forgotten APIs
 - **Katana Crawler**: Deep web crawling with automatic endpoint discovery
 - **HTTPX Probe**: Fast HTTP probing with technology detection
@@ -287,7 +289,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 1. **Capture**: Browse/scan target API with auto-capture enabled
 2. **Review**: Check the `Recon` tab to inspect captured endpoints and findings
 3. **Deep Logic (Optional)**: In `Passive Discovery`, click `Run Differential` for scoreless counterfactual checks, or `Run Invariants` for the full deep-logic stack
-4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to refresh Differential + Sequence + Golden + State Matrix + Token Lineage results before export
+4. **Refresh Cache (Optional)**: In `Recon`, click `Refresh Invariants` to refresh Differential + Sequence + Golden + State Matrix + Token Lineage + Parity Drift results before export
 5. **Export**: In `Recon`, click `Export AI Bundle` to generate all-tab AI context
 6. **Generate**: Feed exported JSON to an LLM (ChatGPT, Claude, etc.) for triage/payload planning
 
@@ -307,8 +309,8 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Insomnia**: Export scoped endpoints to Insomnia import JSON
 - **Tool Health**: One-click diagnostics for Nuclei/HTTPX/Katana/FFUF/Wayback/SQLMap/Dalfox/Subfinder/DNSX binary compatibility
 - **Button Help**: Quick guide for Recon buttons and expected outputs
-- **Refresh Invariants**: Refresh Differential + Sequence + Golden + State Matrix + Token Lineage analysis from captured endpoints before AI export
-- **Invariant Status Line**: Shows Differential, Sequence, Golden, State Matrix, and Token Lineage cache counts with source/update time
+- **Refresh Invariants**: Refresh Differential + Sequence + Golden + State Matrix + Token Lineage + Parity Drift analysis from captured endpoints before AI export
+- **Invariant Status Line**: Shows Differential, Sequence, Golden, State Matrix, Token Lineage, and Parity Drift cache counts with source/update time
 - **Clear Data**: Reset captured Recon endpoints and Logger events together
 
 #### Logger Tab
@@ -362,7 +364,9 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Mode Selector**: Run `All` or per-category checks (`API3`, `API4`, `API5`, `API6`, `API9`, `API10`)
 - **Scope Selector**: Analyze `All Endpoints`, `Filtered View`, or current host scope
 - **Run Differential**: Run scoreless counterfactual checks for representation/auth/identifier precedence drift (passive-only)
-- **Run Invariants**: Run full non-destructive stack (Differential + Sequence + Golden + State + Token Lineage) for deep workflow/token/state analysis
+- **Run Token Lineage**: Run passive token/session family checks for logout/revoke/refresh invalidation drift
+- **Run Parity Drift**: Run cross-interface parity checks plus cache/auth, time-window, content-type, and replay-after-delete drift heuristics
+- **Run Invariants**: Run full non-destructive stack (Differential + Sequence + Golden + State + Token Lineage + Parity Drift) for deep workflow/token/state analysis
 - **Run All Advanced**: One-click execution of all advanced deep-logic engines
 - **Abuse Chains**: Build shortest graph-to-replay exploit chains (`auth -> object access -> state change`)
 - **Proof Mode**: Generate minimal reproducible packet sets with expected vulnerable vs safe signals
@@ -723,6 +727,8 @@ vulnerability type. Focus on:
 │   ├── ai_state_transition_ledger.json
 │   ├── ai_token_lineage_findings.json
 │   ├── ai_token_lineage_ledger.json
+│   ├── ai_parity_drift_findings.json
+│   ├── ai_parity_drift_ledger.json
 │   ├── ai_openai_request.json
 │   ├── ai_anthropic_request.json
 │   └── ai_ollama_request.json
@@ -736,7 +742,9 @@ vulnerability type. Focus on:
 │   ├── state_transition_findings.json
 │   ├── state_transition_ledger.json
 │   ├── token_lineage_findings.json
-│   └── token_lineage_ledger.json
+│   ├── token_lineage_ledger.json
+│   ├── parity_drift_findings.json
+│   └── parity_drift_ledger.json
 ├── TurboIntruder_TIMESTAMP/
 │   ├── race_condition.py
 │   ├── bola_enum.py
@@ -765,7 +773,7 @@ vulnerability type. Focus on:
 
 ### AI Integration
 - **Export Context Early**: Generate AI context after initial capture
-- **Run + Refresh Invariants Before Export**: Add fresh deep-logic evidence (Differential + Sequence + Golden + State Matrix + Token Lineage) before sending data to AI
+- **Run + Refresh Invariants Before Export**: Add fresh deep-logic evidence (Differential + Sequence + Golden + State Matrix + Token Lineage + Parity Drift) before sending data to AI
 - **Iterate Payloads**: Use AI-generated payloads, test, refine prompt
 - **Combine Techniques**: Merge AI payloads with built-in payload library
 
@@ -1072,6 +1080,29 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ### Recent Updates
 
+### v1.4.3 - Token Lineage + Cross-Interface Parity Drift
+- ✅ Added standalone Passive deep-logic actions:
+  - `Run Token Lineage`
+  - `Run Parity Drift`
+- ✅ Added high-ROI parity/drift checks that many scanners miss:
+  - Cross-interface parity (REST vs GraphQL vs internal),
+  - cache/auth drift,
+  - time-window authorization drift,
+  - workflow state-machine breaking,
+  - cross-tenant identifier collisions,
+  - content-type policy drift,
+  - error-oracle intelligence,
+  - replay-after-delete/deactivate checks.
+- ✅ Added parity/drift artifacts:
+  - `parity_drift_findings.json`
+  - `parity_drift_ledger.json`
+  - `ai_parity_drift_findings.json`
+  - `ai_parity_drift_ledger.json`
+- ✅ Added additive capture timing metadata for drift timing analysis:
+  - `captured_at`
+  - `captured_at_epoch_ms`
+- ✅ Extended `Run Invariants`, `Refresh Invariants`, and Recon status line with `Parity` cache coverage.
+
 ### v1.4.2 - Counterfactual Differential Pipeline + Deep-Logic Expansion
 - ✅ Added scoreless, non-destructive `Run Differential` workflow in `Passive Discovery`.
 - ✅ Added `Token Lineage` analysis to detect logout/revoke/refresh-session drift from captured traffic.
@@ -1114,7 +1145,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 - ✅ Added Recon `Param Intel` workflow for GAP-style parameter intelligence and exports.
 - ✅ Added Recon `Turbo Pack` export helpers and Logger/Recon tag interoperability.
 
-### Plain-Language Summary (v1.3.2 -> v1.4.2)
+### Plain-Language Summary (v1.3.2 -> v1.4.3)
 
 What is already shipped:
 - ✅ **Recon-centered AI export flow**: `Export AI Bundle` is now in Recon (not Fuzzer), because it exports context from all tabs.
@@ -1133,6 +1164,9 @@ What is already shipped:
 - ✅ **Token Lineage checks shipped**:
   - Detects token lifecycle drift (logout/revoke success with continuing protected access, refresh overlap, parallel token sprawl per subject).
   - Included in `Run Invariants`, `Refresh Invariants`, `Export Ledger`, and `Export AI Bundle`.
+- ✅ **Cross-Interface Parity + Drift checks shipped**:
+  - Detects cross-interface auth parity breaks (REST vs GraphQL vs internal), cache/auth drift, time-window auth flips, cross-tenant identifier collisions, parser/content-type policy drift, error-oracle hints, and replay-after-delete/deactivate leaks.
+  - Included in `Run Parity Drift`, `Run Invariants`, `Refresh Invariants`, `Export Ledger`, and `Export AI Bundle`.
 - ✅ **AI bundle expanded with deep-logic evidence**:
   - `ai_sequence_invariant_findings.json`
   - `ai_sequence_evidence_ledger.json`
@@ -1140,6 +1174,8 @@ What is already shipped:
   - `ai_golden_ticket_ledger.json`
   - `ai_token_lineage_findings.json`
   - `ai_token_lineage_ledger.json`
+  - `ai_parity_drift_findings.json`
+  - `ai_parity_drift_ledger.json`
 - ✅ **Non-destructive AI prep layer (optional via `AI_PREP_LAYER`)**:
   - `ai_prep_invariant_hints.json`
   - `ai_prep_sequence_candidates.json`

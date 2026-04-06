@@ -18,11 +18,34 @@ All notable changes to this project are documented in this file.
   - `token_lineage_ledger.json`
   - `ai_token_lineage_findings.json`
   - `ai_token_lineage_ledger.json`
+- Cross-Interface Parity and Drift analysis suite (passive, non-destructive):
+  - Added dedicated module: `src/parity_drift_analysis.py`.
+  - Added standalone Passive actions:
+    - `Run Token Lineage`
+    - `Run Parity Drift`
+  - Added new detection families for high-ROI logic flaws:
+    - cross-interface parity checks (REST vs GraphQL vs internal),
+    - cache/auth drift detection,
+    - time-window auth drift detection,
+    - workflow state-machine breaking heuristics,
+    - cross-tenant identifier collision probes,
+    - content-type policy drift checks,
+    - error-oracle intelligence extraction,
+    - replay-after-delete/deactivate checks.
+- Deep-logic export + AI context artifacts for parity/drift:
+  - `parity_drift_findings.json`
+  - `parity_drift_ledger.json`
+  - `ai_parity_drift_findings.json`
+  - `ai_parity_drift_ledger.json`
 
 ### Changed
 - `Run Invariants` and Recon `Refresh Invariants` now include Token Lineage generation/storage alongside Differential + Sequence + Golden + State flows.
 - Recon invariant footer status now includes `Lineage=` cached count.
 - AI bundle/schema/all-tabs context now include `token_lineage` block and `token_lineage_count` metadata.
+- `Run Invariants` and Recon `Refresh Invariants` now also include Parity Drift generation/storage.
+- Recon invariant footer status now includes `Parity=` cached count.
+- AI bundle/schema/all-tabs context now include `parity_drift` block and `parity_drift_count` metadata.
+- Captured endpoint samples now include additive timing metadata (`captured_at`, `captured_at_epoch_ms`) for time-window drift analysis.
 
 ## [1.4.2] - 2026-04-07
 

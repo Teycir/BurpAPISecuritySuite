@@ -625,6 +625,14 @@ def _export_ai_context(self):
             "ai_token_lineage_ledger.json",
             bundle.get("token_lineage", {}).get("ledger", {}),
         ),
+        (
+            "ai_parity_drift_findings.json",
+            bundle.get("parity_drift", {}).get("findings", []),
+        ),
+        (
+            "ai_parity_drift_ledger.json",
+            bundle.get("parity_drift", {}).get("ledger", {}),
+        ),
         ("ai_feedback_template.json", bundle.get("feedback_template", {})),
         ("ai_openai_request.json", bundle.get("llm_exports", {}).get("openai", {})),
         (
@@ -700,6 +708,7 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
     golden_tickets = self._build_golden_ticket_package(data_snapshot)
     state_transitions = self._build_state_transition_package(data_snapshot)
     token_lineage = self._build_token_lineage_package(data_snapshot)
+    parity_drift = self._build_parity_drift_package(data_snapshot)
     self._sort_and_store_counterfactual_payload(
         counterfactual_differentials,
         source_label="ai_export",
@@ -726,6 +735,12 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
     )
     self._sort_and_store_token_lineage_payload(
         token_lineage,
+        source_label="ai_export",
+        scope_label="All Endpoints",
+        target_count=len(data_snapshot),
+    )
+    self._sort_and_store_parity_drift_payload(
+        parity_drift,
         source_label="ai_export",
         scope_label="All Endpoints",
         target_count=len(data_snapshot),
@@ -785,6 +800,7 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
         "golden_tickets": golden_tickets,
         "state_transitions": state_transitions,
         "token_lineage": token_lineage,
+        "parity_drift": parity_drift,
         "all_tabs_context": all_tabs_context,
     }
     llm_exports = {
@@ -821,6 +837,9 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
             "token_lineage_count": int(
                 token_lineage.get("finding_count", 0) or 0
             ),
+            "parity_drift_count": int(
+                parity_drift.get("finding_count", 0) or 0
+            ),
         },
         "legacy_context": legacy_context,
         "vulnerability_context": vulnerability_context,
@@ -835,6 +854,7 @@ def _build_ai_export_bundle(self, data_snapshot, attacks_snapshot):
         "golden_tickets": golden_tickets,
         "state_transitions": state_transitions,
         "token_lineage": token_lineage,
+        "parity_drift": parity_drift,
     }
 
 def _build_ai_bundle_schema_contract(self):
@@ -856,6 +876,7 @@ def _build_ai_bundle_schema_contract(self):
             "golden_tickets",
             "state_transitions",
             "token_lineage",
+            "parity_drift",
             "ai_prep_layer",
         ],
         "properties": {
@@ -887,6 +908,10 @@ def _build_ai_bundle_schema_contract(self):
                 "required": ["findings", "ledger"],
             },
             "token_lineage": {
+                "type": "object",
+                "required": ["findings", "ledger"],
+            },
+            "parity_drift": {
                 "type": "object",
                 "required": ["findings", "ledger"],
             },
@@ -968,6 +993,7 @@ def _validate_ai_bundle_schema(self, bundle):
         "golden_ticket_count",
         "state_transition_count",
         "token_lineage_count",
+        "parity_drift_count",
     ]:
         if count_key not in metadata:
             metadata[count_key] = 0
@@ -1033,6 +1059,7 @@ def _validate_ai_bundle_schema(self, bundle):
     golden = ensure_findings_block("golden_tickets")
     state = ensure_findings_block("state_transitions")
     token_lineage = ensure_findings_block("token_lineage")
+    parity_drift = ensure_findings_block("parity_drift")
     metadata["counterfactual_differential_count"] = len(
         counterfactual.get("findings", [])
     )
@@ -1040,6 +1067,7 @@ def _validate_ai_bundle_schema(self, bundle):
     metadata["golden_ticket_count"] = len(golden.get("findings", []))
     metadata["state_transition_count"] = len(state.get("findings", []))
     metadata["token_lineage_count"] = len(token_lineage.get("findings", []))
+    metadata["parity_drift_count"] = len(parity_drift.get("findings", []))
 
     prep_layer = ensure_object("ai_prep_layer")
     if self._ai_prep_layer_enabled():
@@ -1199,6 +1227,20 @@ def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
             ),
             "meta": self._snapshot_dict_attr(
                 "token_lineage_meta", lock_attr="token_lineage_lock"
+            ),
+        },
+        "parity_drift": {
+            "finding_count": len(getattr(self, "parity_drift_findings", []) or []),
+            "findings": self._snapshot_list_attr(
+                "parity_drift_findings",
+                limit=300,
+                lock_attr="parity_drift_lock",
+            ),
+            "ledger": self._snapshot_dict_attr(
+                "parity_drift_ledger", lock_attr="parity_drift_lock"
+            ),
+            "meta": self._snapshot_dict_attr(
+                "parity_drift_meta", lock_attr="parity_drift_lock"
             ),
         },
         "nuclei": {

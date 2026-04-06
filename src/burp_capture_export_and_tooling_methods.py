@@ -815,6 +815,32 @@ def clear_data(self):
         self.recon_hidden_param_results = []
         self.recon_param_intel_snapshot = None
     logger_cleared = int(self._clear_logger_logs(emit_log=False) or 0)
+    with self.sequence_invariant_lock:
+        self.sequence_invariant_findings = []
+        self.sequence_invariant_ledger = {}
+        self.sequence_invariant_meta = {}
+    with self.golden_ticket_lock:
+        self.golden_ticket_findings = []
+        self.golden_ticket_ledger = {}
+        self.golden_ticket_meta = {}
+    with self.state_transition_lock:
+        self.state_transition_findings = []
+        self.state_transition_ledger = {}
+        self.state_transition_meta = {}
+    with self.token_lineage_lock:
+        self.token_lineage_findings = []
+        self.token_lineage_ledger = {}
+        self.token_lineage_meta = {}
+    with self.parity_drift_lock:
+        self.parity_drift_findings = []
+        self.parity_drift_ledger = {}
+        self.parity_drift_meta = {}
+    with self.counterfactual_lock:
+        self.counterfactual_findings = []
+        self.counterfactual_summary = {}
+        self.counterfactual_meta = {}
+    with self.advanced_logic_lock:
+        self.advanced_logic_packages = {}
     self.list_model.clear()
     if hasattr(self, "_recon_set_detail_redirect_text"):
         self._recon_set_detail_redirect_text(None)
@@ -830,6 +856,7 @@ def clear_data(self):
     SwingUtilities.invokeLater(lambda: self._update_host_filter())
     SwingUtilities.invokeLater(lambda: self._update_stats())
     SwingUtilities.invokeLater(lambda: self.refresh_view())
+    SwingUtilities.invokeLater(lambda: self._refresh_recon_invariant_status_label())
 
 def _auto_tag(self, entry):
     tags = set()

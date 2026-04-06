@@ -1339,7 +1339,7 @@ def _run_sequence_invariants(self, event):
         return
 
     self.passive_area.setText(
-        "[*] Starting deep-logic analysis (Differential + Sequence + Golden + State + Token Lineage)...\n"
+        "[*] Starting deep-logic analysis (Differential + Sequence + Golden + State + Token Lineage + Parity Drift)...\n"
     )
     self.passive_area.append(
         "[*] Scope: {} | Targets: {} of {}\n\n".format(
@@ -1357,6 +1357,7 @@ def _run_sequence_invariants(self, event):
             golden_package = self._build_golden_ticket_package(snapshot)
             state_package = self._build_state_transition_package(snapshot)
             token_lineage_package = self._build_token_lineage_package(snapshot)
+            parity_package = self._build_parity_drift_package(snapshot)
             advanced_packages = self._build_advanced_logic_packages(
                 snapshot,
                 sequence_package=package,
@@ -1393,6 +1394,12 @@ def _run_sequence_invariants(self, event):
                 scope_label=scope,
                 target_count=len(snapshot),
             )
+            self._sort_and_store_parity_drift_payload(
+                parity_package,
+                source_label="passive_run",
+                scope_label=scope,
+                target_count=len(snapshot),
+            )
             self._store_advanced_logic_packages(
                 advanced_packages,
                 source_label="passive_run",
@@ -1408,6 +1415,7 @@ def _run_sequence_invariants(self, event):
             text += self._format_golden_ticket_output(golden_package)
             text += self._format_state_transition_output(state_package)
             text += self._format_token_lineage_output(token_lineage_package)
+            text += self._format_parity_drift_output(parity_package)
             text += self._format_advanced_logic_output(advanced_packages, mode="all")
             SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
             diff_count = int(counterfactual_package.get("finding_count", 0) or 0)
@@ -1417,6 +1425,7 @@ def _run_sequence_invariants(self, event):
             token_lineage_count = int(
                 token_lineage_package.get("finding_count", 0) or 0
             )
+            parity_count = int(parity_package.get("finding_count", 0) or 0)
             chain_count = int(
                 (advanced_packages.get("abuse_chains", {}) or {}).get(
                     "finding_count", 0
@@ -1442,9 +1451,9 @@ def _run_sequence_invariants(self, event):
                 or 0
             )
             SwingUtilities.invokeLater(
-                lambda d=diff_count, c=finding_count, g=golden_count, s=state_count, tl=token_lineage_count, ac=chain_count, pm=proof_count, sg=guardrail_count, rd=role_count: self.log_to_ui(
-                    "[+] Invariant analysis complete (diff={} seq={} golden={} state={} lineage={} chains={} proof={} guardrails={} role={})".format(
-                        d, c, g, s, tl, ac, pm, sg, rd
+                lambda d=diff_count, c=finding_count, g=golden_count, s=state_count, tl=token_lineage_count, p=parity_count, ac=chain_count, pm=proof_count, sg=guardrail_count, rd=role_count: self.log_to_ui(
+                    "[+] Invariant analysis complete (diff={} seq={} golden={} state={} lineage={} parity={} chains={} proof={} guardrails={} role={})".format(
+                        d, c, g, s, tl, p, ac, pm, sg, rd
                     )
                 )
             )
@@ -1459,6 +1468,110 @@ def _run_sequence_invariants(self, event):
             )
 
     worker = threading.Thread(target=run_invariants)
+    worker.daemon = True
+    worker.start()
+
+def _run_token_lineage_analysis(self, event):
+    """Run passive-only Token Lineage analysis."""
+    context = None
+    if hasattr(self, "_resolve_passive_scope_targets"):
+        context = self._resolve_passive_scope_targets()
+    if not context:
+        return
+
+    scope = context.get("scope")
+    endpoint_keys = list(context.get("endpoint_keys") or [])
+    total_available = int(context.get("total_available", 0) or 0)
+
+    self.passive_area.setText("[*] Starting token lineage analysis...\n")
+    self.passive_area.append(
+        "[*] Scope: {} | Targets: {} of {}\n\n".format(
+            self._ascii_safe(scope), len(endpoint_keys), total_available
+        )
+    )
+
+    def run_worker():
+        try:
+            snapshot = self._collect_passive_snapshot(endpoint_keys)
+            package = self._build_token_lineage_package(snapshot)
+            self._sort_and_store_token_lineage_payload(
+                package,
+                source_label="token_lineage_run",
+                scope_label=scope,
+                target_count=len(snapshot),
+            )
+            text = self._format_token_lineage_output(package)
+            finding_count = int(package.get("finding_count", 0) or 0)
+            SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
+            SwingUtilities.invokeLater(
+                lambda c=finding_count: self.log_to_ui(
+                    "[+] Token lineage complete (findings={})".format(c)
+                )
+            )
+        except Exception as e:
+            err_msg = self._ascii_safe(e)
+            err_text = "[!] Token lineage analysis failed: {}\n".format(err_msg)
+            SwingUtilities.invokeLater(lambda t=err_text: self.passive_area.append(t))
+            SwingUtilities.invokeLater(
+                lambda m=err_msg: self.log_to_ui(
+                    "[!] Token lineage error: {}".format(m)
+                )
+            )
+
+    worker = threading.Thread(target=run_worker)
+    worker.daemon = True
+    worker.start()
+
+def _run_parity_drift_analysis(self, event):
+    """Run passive-only Cross-Interface Parity and Drift analysis."""
+    context = None
+    if hasattr(self, "_resolve_passive_scope_targets"):
+        context = self._resolve_passive_scope_targets()
+    if not context:
+        return
+
+    scope = context.get("scope")
+    endpoint_keys = list(context.get("endpoint_keys") or [])
+    total_available = int(context.get("total_available", 0) or 0)
+
+    self.passive_area.setText(
+        "[*] Starting cross-interface parity and drift analysis...\n"
+    )
+    self.passive_area.append(
+        "[*] Scope: {} | Targets: {} of {}\n\n".format(
+            self._ascii_safe(scope), len(endpoint_keys), total_available
+        )
+    )
+
+    def run_worker():
+        try:
+            snapshot = self._collect_passive_snapshot(endpoint_keys)
+            package = self._build_parity_drift_package(snapshot)
+            self._sort_and_store_parity_drift_payload(
+                package,
+                source_label="parity_drift_run",
+                scope_label=scope,
+                target_count=len(snapshot),
+            )
+            text = self._format_parity_drift_output(package)
+            finding_count = int(package.get("finding_count", 0) or 0)
+            SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
+            SwingUtilities.invokeLater(
+                lambda c=finding_count: self.log_to_ui(
+                    "[+] Parity/drift analysis complete (findings={})".format(c)
+                )
+            )
+        except Exception as e:
+            err_msg = self._ascii_safe(e)
+            err_text = "[!] Parity/drift analysis failed: {}\n".format(err_msg)
+            SwingUtilities.invokeLater(lambda t=err_text: self.passive_area.append(t))
+            SwingUtilities.invokeLater(
+                lambda m=err_msg: self.log_to_ui(
+                    "[!] Parity/drift error: {}".format(m)
+                )
+            )
+
+    worker = threading.Thread(target=run_worker)
     worker.daemon = True
     worker.start()
 
@@ -1490,6 +1603,14 @@ def _build_state_transition_package(self, data_snapshot):
 def _build_token_lineage_package(self, data_snapshot):
     """Build Token Lineage package from captured token/session lifecycle behavior."""
     payload = behavior_analysis.build_token_lineage_package(
+        data_snapshot,
+        get_entry=self._get_entry,
+    )
+    return self._sanitize_for_ai_payload(payload)
+
+def _build_parity_drift_package(self, data_snapshot):
+    """Build cross-interface parity and drift package from captured behavior."""
+    payload = behavior_analysis.build_parity_drift_package(
         data_snapshot,
         get_entry=self._get_entry,
     )
@@ -1631,6 +1752,39 @@ def _sort_and_store_token_lineage_payload(
             "target_count": count_value,
             "observed_token_count": observed_token_count,
             "observed_subject_count": observed_subject_count,
+            "finding_count": len(findings),
+        }
+    self._refresh_recon_invariant_status_label_async()
+
+def _sort_and_store_parity_drift_payload(
+    self, package, source_label="passive", scope_label="Filtered Scope", target_count=None
+):
+    """Sort/store parity-drift findings and associated ledger."""
+    findings = list((package or {}).get("findings", []) or [])
+    findings.sort(
+        key=lambda item: (
+            -float(item.get("confidence_score", 0.0) or 0.0),
+            self._ascii_safe(item.get("severity"), lower=True),
+            self._ascii_safe(item.get("resource"), lower=True),
+        )
+    )
+    ledger = dict((package or {}).get("ledger", {}) or {})
+    generated_at = self._ascii_safe(
+        (package or {}).get("generated_at") or time.strftime("%Y-%m-%d %H:%M:%S")
+    )
+    count_value = (
+        int(target_count)
+        if isinstance(target_count, int) and target_count >= 0
+        else None
+    )
+    with self.parity_drift_lock:
+        self.parity_drift_findings = list(findings)
+        self.parity_drift_ledger = ledger
+        self.parity_drift_meta = {
+            "generated_at": generated_at,
+            "source": self._ascii_safe(source_label),
+            "scope": self._ascii_safe(scope_label),
+            "target_count": count_value,
             "finding_count": len(findings),
         }
     self._refresh_recon_invariant_status_label_async()
@@ -1898,6 +2052,81 @@ def _format_token_lineage_output(self, package):
 
     if len(findings) > 80:
         lines.append("[*] {} more findings not shown".format(len(findings) - 80))
+    return "\n".join(lines) + "\n"
+
+def _format_parity_drift_output(self, package):
+    """Format parity/drift findings for Passive tab output area."""
+    findings = list((package or {}).get("findings", []) or [])
+    ledger = dict((package or {}).get("ledger", {}) or {})
+    severity_distribution = ledger.get("severity_distribution", {}) or {}
+    confidence_distribution = ledger.get("confidence_distribution", {}) or {}
+    category_distribution = ledger.get("category_distribution", {}) or {}
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 80)
+    lines.append("CROSS-INTERFACE PARITY & DRIFT RESULTS")
+    lines.append("=" * 80)
+    lines.append("[*] Findings: {}".format(len(findings)))
+    lines.append(
+        "[*] Severity: Critical={} High={} Medium={} Info={}".format(
+            int(severity_distribution.get("critical", 0) or 0),
+            int(severity_distribution.get("high", 0) or 0),
+            int(severity_distribution.get("medium", 0) or 0),
+            int(severity_distribution.get("info", 0) or 0),
+        )
+    )
+    lines.append(
+        "[*] Confidence: High={} Medium={} Low={}".format(
+            int(confidence_distribution.get("high", 0) or 0),
+            int(confidence_distribution.get("medium", 0) or 0),
+            int(confidence_distribution.get("low", 0) or 0),
+        )
+    )
+    lines.append(
+        "[*] Categories: {}".format(
+            ", ".join(
+                [
+                    "{}={}".format(self._ascii_safe(k), int(v or 0))
+                    for k, v in sorted(category_distribution.items())
+                ][:6]
+            )
+        )
+    )
+    lines.append("")
+
+    if not findings:
+        lines.append("[+] No cross-interface parity/drift anomalies flagged in current scope.")
+        lines.append("[*] Capture mixed REST/GraphQL/internal and role-diverse flows, then rerun.")
+        return "\n".join(lines) + "\n"
+
+    lines.append("TOP FINDINGS")
+    lines.append("-" * 80)
+    for finding in findings[:120]:
+        severity = self._ascii_safe(finding.get("severity", "info"), lower=True).upper()
+        title = self._ascii_safe(finding.get("title", ""))
+        invariant = self._ascii_safe(finding.get("invariant", ""))
+        resource = self._ascii_safe(finding.get("resource", ""))
+        category = self._ascii_safe(finding.get("category", ""))
+        score = float(finding.get("confidence_score", 0.0) or 0.0)
+        label = self._ascii_safe(finding.get("confidence_label", ""))
+        lines.append(
+            "[{}][{} {:.2f}] {} ({})".format(
+                severity, label.upper(), score, title, category
+            )
+        )
+        lines.append("  Invariant: {}".format(invariant))
+        lines.append("  Resource: {}".format(resource))
+        evidence_lines = finding.get("evidence", []) or []
+        for evidence in evidence_lines[:2]:
+            lines.append("  Evidence: {}".format(self._ascii_safe(evidence)))
+        suggested = finding.get("suggested_checks", []) or []
+        if suggested:
+            lines.append("  Next: {}".format(self._ascii_safe(suggested[0])))
+        lines.append("")
+
+    if len(findings) > 120:
+        lines.append("[*] {} more findings not shown".format(len(findings) - 120))
     return "\n".join(lines) + "\n"
 
 def _collect_passive_snapshot(self, endpoint_keys):
@@ -3115,6 +3344,10 @@ def _export_sequence_invariant_ledger(self):
         token_lineage_findings = list(self.token_lineage_findings or [])
         token_lineage_ledger = dict(self.token_lineage_ledger or {})
         token_lineage_meta = dict(self.token_lineage_meta or {})
+    with self.parity_drift_lock:
+        parity_findings = list(self.parity_drift_findings or [])
+        parity_ledger = dict(self.parity_drift_ledger or {})
+        parity_meta = dict(self.parity_drift_meta or {})
     with self.advanced_logic_lock:
         advanced_packages = dict(self.advanced_logic_packages or {})
     abuse_package = dict(advanced_packages.get("abuse_chains", {}) or {})
@@ -3128,6 +3361,7 @@ def _export_sequence_invariant_ledger(self):
         and (not golden_findings)
         and (not state_findings)
         and (not token_lineage_findings)
+        and (not parity_findings)
         and (not abuse_package.get("findings"))
         and (not proof_package.get("packet_sets"))
         and (not spec_package.get("violations"))
@@ -3195,6 +3429,19 @@ def _export_sequence_invariant_ledger(self):
                 (
                     "token_lineage_ledger.json",
                     {"metadata": token_lineage_meta, "ledger": token_lineage_ledger},
+                ),
+            ]
+        )
+    if parity_findings:
+        files_to_write.extend(
+            [
+                (
+                    "parity_drift_findings.json",
+                    {"metadata": parity_meta, "findings": parity_findings},
+                ),
+                (
+                    "parity_drift_ledger.json",
+                    {"metadata": parity_meta, "ledger": parity_ledger},
                 ),
             ]
         )
@@ -5751,18 +5998,23 @@ __all__ = [
     "_run_auth_replay",
     "_run_passive_discovery",
     "_run_sequence_invariants",
+    "_run_token_lineage_analysis",
+    "_run_parity_drift_analysis",
     "_build_sequence_invariant_package",
     "_build_golden_ticket_package",
     "_build_state_transition_package",
     "_build_token_lineage_package",
+    "_build_parity_drift_package",
     "_sort_and_store_sequence_invariant_payload",
     "_sort_and_store_golden_ticket_payload",
     "_sort_and_store_state_transition_payload",
     "_sort_and_store_token_lineage_payload",
+    "_sort_and_store_parity_drift_payload",
     "_format_sequence_invariant_output",
     "_format_golden_ticket_output",
     "_format_state_transition_output",
     "_format_token_lineage_output",
+    "_format_parity_drift_output",
     "_collect_passive_snapshot",
     "_build_passive_filter_config",
     "_passive_entry_is_api_like",

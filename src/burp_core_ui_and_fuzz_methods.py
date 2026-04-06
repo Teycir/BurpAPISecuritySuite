@@ -605,6 +605,10 @@ def _initialize_runtime_state(self):
     self.token_lineage_ledger = {}
     self.token_lineage_meta = {}
     self.token_lineage_lock = threading.Lock()
+    self.parity_drift_findings = []
+    self.parity_drift_ledger = {}
+    self.parity_drift_meta = {}
+    self.parity_drift_lock = threading.Lock()
     self.counterfactual_findings = []
     self.counterfactual_summary = {}
     self.counterfactual_meta = {}
@@ -1605,16 +1609,18 @@ def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
         "run replay": "Replay requests across auth profiles (guest/user/admin) for auth gap checks",
         "extract": "Extract header value from captured traffic into the selected auth profile field",
         "run passive": "Analyze captured traffic only (no active requests) for API risk patterns",
-        "run invariants": "Check captured endpoint flows for hidden logic issues (Sequence/Golden/State/Token Lineage)",
+        "run invariants": "Check captured endpoint flows for hidden logic issues (Differential/Sequence/Golden/State/Token Lineage/Parity Drift)",
         "run differential": "Run scoreless counterfactual differentials (representation/auth/identifier drift) from captured traffic only",
+        "run token lineage": "Run passive token/session lineage checks (logout/revoke/refresh invalidation drift)",
+        "run parity drift": "Run cross-interface parity checks (REST/GraphQL/internal), cache/auth drift, content-type policy drift, and replay-after-delete heuristics",
         "run all advanced": "Run abuse chains, proof mode, spec guardrails, and role delta in one workflow",
         "abuse chains": "Build shortest likely exploit chains (auth -> object access -> state change)",
         "proof mode": "Generate minimal reproducible packet sequences with vulnerable/safe response expectations",
         "spec guardrails": "Derive enforceable auth/param/transition rules from observed traffic and flag violations",
         "role delta": "Compare endpoint behavior across role signals (guest/user/admin) and rank suspicious parity",
-        "refresh invariants": "Recompute Differential + Sequence + Golden + State + Token Lineage checks from Recon data",
+        "refresh invariants": "Recompute Differential + Sequence + Golden + State + Token Lineage + Parity Drift checks from Recon data",
         "export": "Export this tab findings to a timestamped file in the project export folder",
-        "export ledger": "Save deep-logic artifacts (including differential and token-lineage findings) to JSON files",
+        "export ledger": "Save deep-logic artifacts (including differential, token-lineage, and parity-drift findings) to JSON files",
         "run nuclei": "Launch Nuclei with current profile/scope and parse findings back into this tab",
         "export targets": "Export current scoped target URLs prepared for Nuclei execution",
         "probe endpoints": "Run HTTPX on scoped URLs to capture status/title/tech probe output",
@@ -1800,6 +1806,9 @@ def _build_recon_invariant_status_text(self):
     with self.token_lineage_lock:
         token_lineage_count = len(self.token_lineage_findings or [])
         token_lineage_meta = dict(self.token_lineage_meta or {})
+    with self.parity_drift_lock:
+        parity_count = len(self.parity_drift_findings or [])
+        parity_meta = dict(self.parity_drift_meta or {})
 
     if (
         (not meta)
@@ -1807,31 +1816,40 @@ def _build_recon_invariant_status_text(self):
         and golden_count <= 0
         and state_count <= 0
         and token_lineage_count <= 0
+        and parity_count <= 0
         and counterfactual_count <= 0
     ):
         return "Not generated yet (AI export computes this automatically)."
 
     source = self._ascii_safe(
-        meta.get("source") or token_lineage_meta.get("source") or "unknown"
+        meta.get("source")
+        or token_lineage_meta.get("source")
+        or parity_meta.get("source")
+        or "unknown"
     )
     diff_source = self._ascii_safe(counterfactual_meta.get("source") or source)
     scope = self._ascii_safe(
-        meta.get("scope") or token_lineage_meta.get("scope") or "unknown"
+        meta.get("scope")
+        or token_lineage_meta.get("scope")
+        or parity_meta.get("scope")
+        or "unknown"
     )
     generated_at = self._ascii_safe(
         meta.get("generated_at")
         or token_lineage_meta.get("generated_at")
+        or parity_meta.get("generated_at")
         or counterfactual_meta.get("generated_at")
         or "unknown"
     )
     confidence_dist = dict(ledger.get("confidence_distribution", {}) or {})
     high_conf = int(confidence_dist.get("high", 0) or 0)
-    return "Diff={} | Seq={} | Golden={} | State={} | Lineage={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
+    return "Diff={} | Seq={} | Golden={} | State={} | Lineage={} | Parity={} | HighConf={} | Source={} | Scope={} | Updated={}".format(
         counterfactual_count,
         sequence_count,
         golden_count,
         state_count,
         token_lineage_count,
+        parity_count,
         high_conf,
         diff_source,
         scope,
@@ -1880,6 +1898,7 @@ def _refresh_sequence_invariants_from_recon(self, event):
             golden_package = self._build_golden_ticket_package(data_snapshot)
             state_package = self._build_state_transition_package(data_snapshot)
             token_lineage_package = self._build_token_lineage_package(data_snapshot)
+            parity_package = self._build_parity_drift_package(data_snapshot)
             self._sort_and_store_counterfactual_payload(
                 counterfactual_package,
                 source_label="recon_refresh",
@@ -1910,6 +1929,12 @@ def _refresh_sequence_invariants_from_recon(self, event):
                 scope_label="All Endpoints",
                 target_count=len(data_snapshot),
             )
+            self._sort_and_store_parity_drift_payload(
+                parity_package,
+                source_label="recon_refresh",
+                scope_label="All Endpoints",
+                target_count=len(data_snapshot),
+            )
             counterfactual_count = int(
                 counterfactual_package.get("finding_count", 0) or 0
             )
@@ -1919,10 +1944,11 @@ def _refresh_sequence_invariants_from_recon(self, event):
             token_lineage_count = int(
                 token_lineage_package.get("finding_count", 0) or 0
             )
+            parity_count = int(parity_package.get("finding_count", 0) or 0)
             SwingUtilities.invokeLater(
-                lambda d=counterfactual_count, c=finding_count, g=golden_count, s=state_count, tl=token_lineage_count: self.log_to_ui(
-                    "[+] Recon invariants refreshed (diff={} seq={} golden={} state={} lineage={})".format(
-                        d, c, g, s, tl
+                lambda d=counterfactual_count, c=finding_count, g=golden_count, s=state_count, tl=token_lineage_count, p=parity_count: self.log_to_ui(
+                    "[+] Recon invariants refreshed (diff={} seq={} golden={} state={} lineage={} parity={})".format(
+                        d, c, g, s, tl, p
                     )
                 )
             )
@@ -2323,7 +2349,7 @@ def _show_recon_button_help(self, _event=None):
     lines.append("Export Host:")
     lines.append("  Export only endpoints matching the selected host filter.")
     lines.append("Export AI Bundle:")
-    lines.append("  Export all-tab AI bundle (includes Differential, Sequence, Golden, State Matrix, and Token Lineage findings).")
+    lines.append("  Export all-tab AI bundle (includes Differential, Sequence, Golden, State Matrix, Token Lineage, and Parity Drift findings).")
     lines.append("Import:")
     lines.append("  Import a previous Recon JSON export.")
     lines.append("Postman:")
@@ -2351,7 +2377,7 @@ def _show_recon_button_help(self, _event=None):
     lines.append("Clear + Refill:")
     lines.append("  Clear current Recon/Logger data, then refill both from Burp Proxy history.")
     lines.append("Refresh Invariants:")
-    lines.append("  Recompute Differential + Sequence + Golden + State Matrix + Token Lineage analysis from captured endpoints.")
+    lines.append("  Recompute Differential + Sequence + Golden + State Matrix + Token Lineage + Parity Drift analysis from captured endpoints.")
     lines.append("")
     lines.append("Tip: hover any Recon button to see a quick tooltip.")
     JOptionPane.showMessageDialog(
@@ -3686,6 +3712,20 @@ def _create_passive_discovery_tab(self):
     )
     deep_logic_row.add(
         self._create_action_button(
+            "Run Token Lineage",
+            Color(65, 105, 225),
+            lambda e: self._run_token_lineage_analysis(e),
+        )
+    )
+    deep_logic_row.add(
+        self._create_action_button(
+            "Run Parity Drift",
+            Color(72, 61, 139),
+            lambda e: self._run_parity_drift_analysis(e),
+        )
+    )
+    deep_logic_row.add(
+        self._create_action_button(
             "Export Ledger",
             Color(72, 61, 139),
             lambda e: self._export_sequence_invariant_ledger(),
@@ -3693,7 +3733,7 @@ def _create_passive_discovery_tab(self):
     )
     deep_logic_row.add(
         JLabel(
-            "Non-destructive deep logic checks. Includes scoreless differential invariants plus Sequence/Golden/State/Token Lineage analysis."
+            "Non-destructive deep logic checks. Includes scoreless differential invariants plus Sequence/Golden/State/Token Lineage/Parity Drift analysis."
         )
     )
 
@@ -3772,6 +3812,9 @@ def _create_passive_discovery_tab(self):
     self.token_lineage_findings = []
     self.token_lineage_ledger = {}
     self.token_lineage_meta = {}
+    self.parity_drift_findings = []
+    self.parity_drift_ledger = {}
+    self.parity_drift_meta = {}
     self.advanced_logic_packages = {}
     return panel
 

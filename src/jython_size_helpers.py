@@ -653,6 +653,8 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
         content_type = self._get_content_type(resp_info)
 
         response_time = int((time.time() - start_time) * 1000)
+        captured_epoch_ms = int(time.time() * 1000)
+        captured_at = time.strftime("%Y-%m-%d %H:%M:%S")
 
         api_entry = {
             "method": method,
@@ -670,6 +672,8 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
             "response_body": resp_body,
             "response_length": max(0, len(response) - resp_info.getBodyOffset()),
             "response_time_ms": response_time,
+            "captured_at": captured_at,
+            "captured_at_epoch_ms": captured_epoch_ms,
             "source_tool": self._ascii_safe(source_tool),
             "content_type": content_type,
             "auth_detected": self._detect_auth(req_info),
