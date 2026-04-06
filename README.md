@@ -357,9 +357,15 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Mode Selector**: Run `All` or per-category checks (`API3`, `API4`, `API5`, `API6`, `API9`, `API10`)
 - **Scope Selector**: Analyze `All Endpoints`, `Filtered View`, or current host scope
 - **Run Invariants**: Run non-destructive checks for workflow logic, token-overreach patterns, and state-transition drift
+- **Run All Advanced**: One-click execution of all advanced deep-logic engines
+- **Abuse Chains**: Build shortest graph-to-replay exploit chains (`auth -> object access -> state change`)
+- **Proof Mode**: Generate minimal reproducible packet sets with expected vulnerable vs safe signals
+- **Spec Guardrails**: Derive enforceable auth/param/transition rules from observed behavior and flag violations
+- **Role Delta**: Compare role-level behavior (guest/user/admin-like) and rank suspicious parity for BOLA/BFLA triage
 - **Run / Stop / Clear**: Execute discovery, cancel safely, and reset output quickly
 - **Export / Copy**: Save findings or copy report text
 - **Export Ledger**: Save Sequence + Golden + State Matrix findings and confidence ledgers as JSON files
+- **Advanced Exports**: Also writes `abuse_chain_*`, `proof_mode_packet_sets`, `spec_guardrails_*`, and `role_delta_*` JSON artifacts
 - **Output**: Severity/categorical summary plus top findings for triage
 
 #### 8. Nuclei Tab
@@ -1187,8 +1193,12 @@ What is already shipped:
 
 - [ ] WebSocket traffic capture
 - [ ] Real-time AI payload generation (OpenAI/Anthropic API)
-- [ ] Success pattern detection (auto-verify exploits)
+- [x] Success pattern detection (`Proof Mode` auto-PoC packet sets with vulnerable vs safe signals)
 - [x] OpenAPI/Swagger spec generation from captured traffic
 - [ ] Collaborative data sharing
 - [ ] Custom wordlist integration
 - [ ] CVSS scoring for findings
+- [x] Abuse Chain Builder (Graph to Replay)
+- [x] Spec Guardrails from Reality
+- [x] Role Delta Engine
+- [x] One-click `Run All Advanced` (execute all four advanced engines)

@@ -15,6 +15,19 @@ All notable changes to this project are documented in this file.
   - Coordinated Recon+Logger refill through one pipeline to avoid concurrent heavy backfill scans.
   - Backfill history seeding now uses bounded tail-window snapshots instead of full-history list copies.
 
+### Added
+- Advanced deep-logic analysis suite in Passive Discovery:
+  - `Run All Advanced`: one-click execution of all advanced deep-logic engines.
+  - `Abuse Chains`: graph-to-replay shortest chain builder (`auth -> object access -> state change`).
+  - `Proof Mode`: auto-generates minimal reproducible packet sets with expected vulnerable vs safe response signals.
+  - `Spec Guardrails`: derives auth/param/method guardrails from observed traffic and flags baseline violations.
+  - `Role Delta`: ranks suspicious parity across role behaviors (guest/user/admin-like signals) for BOLA/BFLA triage.
+- Advanced artifact export coverage from `Export Ledger`:
+  - `abuse_chain_findings.json`, `abuse_chain_ledger.json`
+  - `proof_mode_packet_sets.json`
+  - `spec_guardrails_rules.json`, `spec_guardrails_violations.json`
+  - `role_delta_findings.json`, `role_delta_ledger.json`
+
 ## [1.4.1] - 2026-04-06
 
 ### Added

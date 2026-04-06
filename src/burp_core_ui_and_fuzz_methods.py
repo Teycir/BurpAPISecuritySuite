@@ -533,6 +533,8 @@ def _initialize_runtime_state(self):
     self.state_transition_ledger = {}
     self.state_transition_meta = {}
     self.state_transition_lock = threading.Lock()
+    self.advanced_logic_packages = {}
+    self.advanced_logic_lock = threading.Lock()
     self.recon_invariant_status_label = None
     self._capture_ui_refresh_timer = None
     self._capture_ui_refresh_last_ts = 0.0
@@ -1515,6 +1517,11 @@ def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
         "extract": "Extract header value from captured traffic into the selected auth profile field",
         "run passive": "Analyze captured traffic only (no active requests) for API risk patterns",
         "run invariants": "Check captured endpoint flows for hidden logic issues",
+        "run all advanced": "Run abuse chains, proof mode, spec guardrails, and role delta in one workflow",
+        "abuse chains": "Build shortest likely exploit chains (auth -> object access -> state change)",
+        "proof mode": "Generate minimal reproducible packet sequences with vulnerable/safe response expectations",
+        "spec guardrails": "Derive enforceable auth/param/transition rules from observed traffic and flag violations",
+        "role delta": "Compare endpoint behavior across role signals (guest/user/admin) and rank suspicious parity",
         "refresh invariants": "Recompute invariant checks from Recon data",
         "export": "Export this tab findings to a timestamped file in the project export folder",
         "export ledger": "Save invariant findings and confidence report",
@@ -3546,6 +3553,49 @@ def _create_passive_discovery_tab(self):
         )
     )
 
+    advanced_logic_row = JPanel(FlowLayout(FlowLayout.LEFT))
+    advanced_logic_row.add(JLabel("Advanced Logic:"))
+    advanced_logic_row.add(
+        self._create_action_button(
+            "Run All Advanced",
+            Color(148, 0, 211),
+            lambda e: self._run_all_advanced_logic(e),
+        )
+    )
+    advanced_logic_row.add(
+        self._create_action_button(
+            "Abuse Chains",
+            Color(139, 0, 139),
+            lambda e: self._run_abuse_chain_builder(e),
+        )
+    )
+    advanced_logic_row.add(
+        self._create_action_button(
+            "Proof Mode",
+            Color(199, 21, 133),
+            lambda e: self._run_proof_mode(e),
+        )
+    )
+    advanced_logic_row.add(
+        self._create_action_button(
+            "Spec Guardrails",
+            Color(72, 61, 139),
+            lambda e: self._run_spec_guardrails(e),
+        )
+    )
+    advanced_logic_row.add(
+        self._create_action_button(
+            "Role Delta",
+            Color(123, 104, 238),
+            lambda e: self._run_role_delta_engine(e),
+        )
+    )
+    advanced_logic_row.add(
+        JLabel(
+            "Graph-to-replay chains, auto-PoC packet sets, behavior guardrails, and role delta ranking."
+        )
+    )
+
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
     help_row.add(
         JLabel(
@@ -3556,6 +3606,7 @@ def _create_passive_discovery_tab(self):
     top_panel.add(controls)
     top_panel.add(actions_row)
     top_panel.add(deep_logic_row)
+    top_panel.add(advanced_logic_row)
     top_panel.add(help_row)
     panel.add(top_panel, BorderLayout.NORTH)
 
@@ -3571,6 +3622,7 @@ def _create_passive_discovery_tab(self):
     self.state_transition_findings = []
     self.state_transition_ledger = {}
     self.state_transition_meta = {}
+    self.advanced_logic_packages = {}
     return panel
 
 def _create_nuclei_tab(self):

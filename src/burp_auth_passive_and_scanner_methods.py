@@ -1004,6 +1004,12 @@ def _run_sequence_invariants(self, event):
             package = self._build_sequence_invariant_package(snapshot)
             golden_package = self._build_golden_ticket_package(snapshot)
             state_package = self._build_state_transition_package(snapshot)
+            advanced_packages = self._build_advanced_logic_packages(
+                snapshot,
+                sequence_package=package,
+                golden_package=golden_package,
+                state_package=state_package,
+            )
             self._sort_and_store_sequence_invariant_payload(
                 package,
                 source_label="passive_run",
@@ -1022,19 +1028,51 @@ def _run_sequence_invariants(self, event):
                 scope_label=scope,
                 target_count=len(snapshot),
             )
+            self._store_advanced_logic_packages(
+                advanced_packages,
+                source_label="passive_run",
+                scope_label=scope,
+                target_count=len(snapshot),
+            )
             text = self._format_sequence_invariant_output(
                 package, len(snapshot), total_available, scope
             )
             text += self._format_golden_ticket_output(golden_package)
             text += self._format_state_transition_output(state_package)
+            text += self._format_advanced_logic_output(advanced_packages, mode="all")
             SwingUtilities.invokeLater(lambda t=text: self.passive_area.setText(t))
             finding_count = int(package.get("finding_count", 0) or 0)
             golden_count = int(golden_package.get("finding_count", 0) or 0)
             state_count = int(state_package.get("finding_count", 0) or 0)
+            chain_count = int(
+                (advanced_packages.get("abuse_chains", {}) or {}).get(
+                    "finding_count", 0
+                )
+                or 0
+            )
+            proof_count = int(
+                (advanced_packages.get("proof_mode", {}) or {}).get(
+                    "packet_set_count", 0
+                )
+                or 0
+            )
+            guardrail_count = int(
+                (advanced_packages.get("spec_guardrails", {}) or {}).get(
+                    "violation_count", 0
+                )
+                or 0
+            )
+            role_count = int(
+                (advanced_packages.get("role_delta", {}) or {}).get(
+                    "finding_count", 0
+                )
+                or 0
+            )
             SwingUtilities.invokeLater(
-                lambda c=finding_count, g=golden_count, s=state_count: self.log_to_ui(
-                    "[+] Invariant analysis complete (seq={} golden={} state={})".format(
+                lambda c=finding_count, g=golden_count, s=state_count, ac=chain_count, pm=proof_count, sg=guardrail_count, rd=role_count: self.log_to_ui(
+                    "[+] Invariant analysis complete (seq={} golden={} state={} chains={} proof={} guardrails={} role={})".format(
                         c, g, s
+                        , ac, pm, sg, rd
                     )
                 )
             )
@@ -2586,8 +2624,22 @@ def _export_sequence_invariant_ledger(self):
         state_findings = list(self.state_transition_findings or [])
         state_ledger = dict(self.state_transition_ledger or {})
         state_meta = dict(self.state_transition_meta or {})
+    with self.advanced_logic_lock:
+        advanced_packages = dict(self.advanced_logic_packages or {})
+    abuse_package = dict(advanced_packages.get("abuse_chains", {}) or {})
+    proof_package = dict(advanced_packages.get("proof_mode", {}) or {})
+    spec_package = dict(advanced_packages.get("spec_guardrails", {}) or {})
+    role_package = dict(advanced_packages.get("role_delta", {}) or {})
 
-    if (not findings) and (not golden_findings) and (not state_findings):
+    if (
+        (not findings)
+        and (not golden_findings)
+        and (not state_findings)
+        and (not abuse_package.get("findings"))
+        and (not proof_package.get("packet_sets"))
+        and (not spec_package.get("violations"))
+        and (not role_package.get("findings"))
+    ):
         self.passive_area.append(
             "\n[!] No invariant findings to export. Run 'Run Invariants' first.\n"
         )
@@ -2619,6 +2671,116 @@ def _export_sequence_invariant_ledger(self):
             [
                 ("state_transition_findings.json", {"metadata": state_meta, "findings": state_findings}),
                 ("state_transition_ledger.json", {"metadata": state_meta, "ledger": state_ledger}),
+            ]
+        )
+    abuse_findings = list(abuse_package.get("findings", []) or [])
+    if abuse_findings:
+        files_to_write.extend(
+            [
+                (
+                    "abuse_chain_findings.json",
+                    {
+                        "metadata": {
+                            "generated_at": abuse_package.get("generated_at"),
+                            "source": advanced_packages.get("source"),
+                            "scope": advanced_packages.get("scope"),
+                            "target_count": advanced_packages.get("target_count"),
+                        },
+                        "findings": abuse_findings,
+                    },
+                ),
+                (
+                    "abuse_chain_ledger.json",
+                    {
+                        "metadata": {
+                            "generated_at": abuse_package.get("generated_at"),
+                            "source": advanced_packages.get("source"),
+                            "scope": advanced_packages.get("scope"),
+                            "target_count": advanced_packages.get("target_count"),
+                        },
+                        "ledger": dict(abuse_package.get("ledger", {}) or {}),
+                    },
+                ),
+            ]
+        )
+    proof_sets = list(proof_package.get("packet_sets", []) or [])
+    if proof_sets:
+        files_to_write.append(
+            (
+                "proof_mode_packet_sets.json",
+                {
+                    "metadata": {
+                        "generated_at": proof_package.get("generated_at"),
+                        "source": advanced_packages.get("source"),
+                        "scope": advanced_packages.get("scope"),
+                        "target_count": advanced_packages.get("target_count"),
+                        "source_finding_count": proof_package.get("source_finding_count", 0),
+                    },
+                    "packet_sets": proof_sets,
+                },
+            )
+        )
+    spec_rules = list(spec_package.get("rules", []) or [])
+    spec_violations = list(spec_package.get("violations", []) or [])
+    if spec_rules:
+        files_to_write.append(
+            (
+                "spec_guardrails_rules.json",
+                {
+                    "metadata": {
+                        "generated_at": spec_package.get("generated_at"),
+                        "source": advanced_packages.get("source"),
+                        "scope": advanced_packages.get("scope"),
+                        "target_count": advanced_packages.get("target_count"),
+                    },
+                    "rules": spec_rules,
+                },
+            )
+        )
+    if spec_violations:
+        files_to_write.append(
+            (
+                "spec_guardrails_violations.json",
+                {
+                    "metadata": {
+                        "generated_at": spec_package.get("generated_at"),
+                        "source": advanced_packages.get("source"),
+                        "scope": advanced_packages.get("scope"),
+                        "target_count": advanced_packages.get("target_count"),
+                    },
+                    "violations": spec_violations,
+                    "ledger": dict(spec_package.get("ledger", {}) or {}),
+                },
+            )
+        )
+    role_findings = list(role_package.get("findings", []) or [])
+    if role_findings:
+        files_to_write.extend(
+            [
+                (
+                    "role_delta_findings.json",
+                    {
+                        "metadata": {
+                            "generated_at": role_package.get("generated_at"),
+                            "source": advanced_packages.get("source"),
+                            "scope": advanced_packages.get("scope"),
+                            "target_count": advanced_packages.get("target_count"),
+                        },
+                        "findings": role_findings,
+                    },
+                ),
+                (
+                    "role_delta_ledger.json",
+                    {
+                        "metadata": {
+                            "generated_at": role_package.get("generated_at"),
+                            "source": advanced_packages.get("source"),
+                            "scope": advanced_packages.get("scope"),
+                            "target_count": advanced_packages.get("target_count"),
+                        },
+                        "ledger": dict(role_package.get("ledger", {}) or {}),
+                    },
+                ),
             ]
         )
     written = []
