@@ -3611,6 +3611,192 @@ def _run_httpx(self, event):
     """Run HTTPX on discovered URLs from Recon tab"""
     return heavy_runners._run_httpx(self, event)
 
+def _apihunter_target_key(self, url_text):
+    """Build canonical dedup key for ApiHunter base URL targets (scheme://host:port only)."""
+    clean = self._ascii_safe(url_text).strip()
+    if not clean:
+        return ""
+    try:
+        parsed = URL(clean)
+        protocol = self._ascii_safe(parsed.getProtocol() or "https", lower=True).strip()
+        host = self._ascii_safe(parsed.getHost() or "", lower=True).strip()
+        if not host:
+            return clean
+        port = parsed.getPort()
+        if port == -1:
+            port = 443 if protocol == "https" else 80
+        # ApiHunter expects base URLs only (scheme://host:port/)
+        # Normalize to canonical form for deduplication
+        if (protocol == "https" and port == 443) or (protocol == "http" and port == 80):
+            return "{}://{}/".format(protocol, host)
+        return "{}://{}:{}/".format(protocol, host, port)
+    except Exception as e:
+        self._callbacks.printError(
+            "ApiHunter dedup key parse error for '{}': {}".format(clean, str(e))
+        )
+        return clean
+
+def _collect_apihunter_targets(self):
+    """Collect scoped host-base targets for ApiHunter scans."""
+    filtered_source = {}
+    filter_eval_error = ""
+    try:
+        filtered_source = dict(self._filter_endpoints())
+    except Exception as e:
+        filter_eval_error = self._ascii_safe(e)
+        self._callbacks.printError(
+            "ApiHunter filtered-view snapshot error: {}".format(str(e))
+        )
+    source_mode = "filtered_view_only"
+    if filter_eval_error:
+        source_mode = "filtered_view_error"
+    entries_snapshot = [self._get_entry(entries) for entries in filtered_source.values()]
+
+    scope_override = self._get_target_scope_override()
+    selected_host = "all"
+    force_host = False
+    if scope_override.get("enabled"):
+        selected_host = "target-bases"
+    else:
+        try:
+            if hasattr(self, "host_filter") and self.host_filter is not None:
+                selected_host = self._ascii_safe(
+                    str(self.host_filter.getSelectedItem()), lower=True
+                ).strip()
+        except Exception as e:
+            self._callbacks.printError("ApiHunter host-filter read error: {}".format(str(e)))
+            selected_host = "all"
+        force_host = bool(selected_host and selected_host != "all")
+
+    filter_cfg = self._build_passive_filter_config(filtered_source)
+    targets = {}
+    dedup_collisions = 0
+    dropped_scope_host = 0
+    dropped_noise_or_static = 0
+    dropped_missing_host = 0
+    inspected_entries = 0
+
+    for entry in entries_snapshot:
+        inspected_entries += 1
+        host = self._ascii_safe(entry.get("host"), lower=True).strip()
+        if not host:
+            dropped_missing_host += 1
+            continue
+        if scope_override.get("enabled"):
+            if not self._host_matches_target_scope(host, scope_override):
+                dropped_scope_host += 1
+                continue
+        elif force_host and host != selected_host:
+            dropped_scope_host += 1
+            continue
+
+        if not self._passive_entry_allowed(entry, filter_cfg):
+            dropped_noise_or_static += 1
+            continue
+
+        protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
+        port = entry.get("port", -1)
+        if port == -1:
+            port = 443 if protocol == "https" else 80
+        if (protocol == "https" and port == 443) or (protocol == "http" and port == 80):
+            url = "{}://{}/".format(protocol, host)
+        else:
+            url = "{}://{}:{}/".format(protocol, host, port)
+
+        cleaned = self._clean_url(url)
+        if cleaned:
+            dedup_key = self._apihunter_target_key(cleaned)
+            if dedup_key in targets:
+                dedup_collisions += 1
+                continue
+            targets[dedup_key] = cleaned
+
+    ordered = sorted(targets.values())
+    raw_candidates = len(ordered)
+    truncated = 0
+    if raw_candidates > self.APIHUNTER_MAX_TARGETS:
+        truncated = raw_candidates - self.APIHUNTER_MAX_TARGETS
+        ordered = ordered[: self.APIHUNTER_MAX_TARGETS]
+
+    meta = {
+        "source_mode": source_mode,
+        "source_count": len(entries_snapshot),
+        "source_filter_error": filter_eval_error,
+        "inspected_entries": inspected_entries,
+        "dedup_collisions": dedup_collisions,
+        "raw_candidates": raw_candidates,
+        "truncated": truncated,
+        "dropped_scope_host": dropped_scope_host,
+        "dropped_noise_or_static": dropped_noise_or_static,
+        "dropped_missing_host": dropped_missing_host,
+        "force_host": force_host,
+        "selected_host": selected_host,
+        "manual_scope_enabled": bool(scope_override.get("enabled")),
+        "manual_scope_line_count": len(scope_override.get("lines", [])),
+        "manual_scope_host_count": len(scope_override.get("hosts", set())),
+        "manual_scope_base_count": len(scope_override.get("bases", set())),
+        "manual_scope_preview": list(scope_override.get("lines", []))[:3],
+    }
+    return ordered, meta
+
+def _run_apihunter(self, event):
+    """Run ApiHunter in gap-fill mode to complement existing external tools."""
+    try:
+        return heavy_runners._run_apihunter(self, event)
+    except Exception as e:
+        err = self._ascii_safe(e)
+        try:
+            if hasattr(self, "apihunter_area") and self.apihunter_area is not None:
+                self.apihunter_area.append(
+                    "\n[!] ApiHunter launcher error: {}\n".format(err)
+                )
+        except Exception as ui_err:
+            self._callbacks.printError(
+                "ApiHunter launcher UI-append error: {}".format(str(ui_err))
+            )
+        self._callbacks.printError("ApiHunter launcher error: {}".format(str(e)))
+        self.log_to_ui("[!] ApiHunter launcher error: {}".format(err))
+        return None
+
+def _export_apihunter_targets(self):
+    """Export scoped ApiHunter target list."""
+    import os
+
+    targets, _ = self._collect_apihunter_targets()
+    if not targets:
+        self.apihunter_area.setText(
+            "[!] No ApiHunter targets found\n[*] Capture/import Recon traffic first\n"
+        )
+        return
+    export_dir = self._get_export_dir("ApiHunter_Export")
+    if not export_dir:
+        return
+    filepath = os.path.join(export_dir, "apihunter_targets.txt")
+    writer = None
+    try:
+        writer = FileWriter(filepath)
+        for target in targets:
+            writer.write(target + "\n")
+        self.apihunter_area.append(
+            "\n[+] Exported {} ApiHunter targets\n[+] File: {}\n[+] Folder: {}\n".format(
+                len(targets), filepath, export_dir
+            )
+        )
+        self.log_to_ui("[+] Exported ApiHunter targets to: {}".format(export_dir))
+    except Exception as e:
+        self.apihunter_area.append("\n[!] ApiHunter export failed: {}\n".format(str(e)))
+        self._callbacks.printError("ApiHunter target export failed: {}".format(str(e)))
+    finally:
+        if writer:
+            try:
+                writer.close()
+            except Exception as close_err:
+                self._callbacks.printError(
+                    "Error closing ApiHunter target file {}: {}".format(
+                        filepath, str(close_err)
+                    )
+                )
+
 def _export_list_to_file(self, data_list, export_type, output_area, list_name):
     """Helper to export list to file - only called on explicit export"""
     import os
@@ -6046,6 +6232,10 @@ __all__ = [
     "_export_passive_discovery_results",
     "_export_sequence_invariant_ledger",
     "_normalize_wayback_entry",
+    "_apihunter_target_key",
+    "_collect_apihunter_targets",
+    "_run_apihunter",
+    "_export_apihunter_targets",
     "_run_httpx",
     "_export_list_to_file",
     "_parse_positive_int",
@@ -6099,3 +6289,127 @@ __all__ = [
     "_export_wayback_results",
     "_score_wayback_url",
 ]
+
+def _process_apihunter_ndjson_results(self, results_file, output_area):
+    """Parse ApiHunter NDJSON output and display formatted summary."""
+    severity_order = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
+    
+    try:
+        top_findings_min_severity = "medium"
+        try:
+            top_findings_selected = self._ascii_safe(
+                str(self.apihunter_top_findings_min_combo.getSelectedItem()), lower=True
+            ).strip()
+            if top_findings_selected in ["critical", "high", "medium"]:
+                top_findings_min_severity = top_findings_selected
+        except Exception as e:
+            self._callbacks.printError(
+                "ApiHunter top findings min severity read error: {}".format(str(e))
+            )
+        
+        min_rank = severity_order.get(top_findings_min_severity.lower(), 3)
+        
+        findings = []
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+        scanner_counts = {}
+        
+        try:
+            with open(results_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        severity = self._ascii_safe(entry.get("severity", "info"), lower=True).strip()
+                        scanner = self._ascii_safe(entry.get("scanner", "unknown")).strip()
+                        url = self._ascii_safe(entry.get("url", "")).strip()
+                        check = self._ascii_safe(entry.get("check", "")).strip()
+                        title = self._ascii_safe(entry.get("title", "")).strip()
+                        detail = self._ascii_safe(entry.get("detail", "")).strip()
+                        evidence = self._ascii_safe(entry.get("evidence", "")).strip()
+                        remediation = self._ascii_safe(entry.get("remediation", "")).strip()
+                        timestamp = self._ascii_safe(entry.get("timestamp", "")).strip()
+                        
+                        if severity in severity_counts:
+                            severity_counts[severity] += 1
+                        scanner_counts[scanner] = scanner_counts.get(scanner, 0) + 1
+                        
+                        findings.append({
+                            "severity": severity,
+                            "scanner": scanner,
+                            "url": url,
+                            "check": check,
+                            "title": title,
+                            "detail": detail,
+                            "evidence": evidence,
+                            "remediation": remediation,
+                            "timestamp": timestamp,
+                            "rank": severity_order.get(severity, 0)
+                        })
+                    except (ValueError, TypeError) as parse_err:
+                        self._callbacks.printError("ApiHunter NDJSON parse error: {}".format(str(parse_err)))
+                        continue
+        except (IOError, OSError) as e:
+            output_area.append("[!] Failed to read results file: {}\n".format(str(e)))
+            return
+        
+        total = sum(severity_counts.values())
+        
+        summary = ["\n" + "=" * 80, "APIHUNTER SCAN RESULTS", "=" * 80, ""]
+        summary.append("[*] Total Findings: {}".format(total))
+        summary.append("[*] Critical: {}".format(severity_counts["critical"]))
+        summary.append("[*] High: {}".format(severity_counts["high"]))
+        summary.append("[*] Medium: {}".format(severity_counts["medium"]))
+        summary.append("[*] Low: {}".format(severity_counts["low"]))
+        summary.append("[*] Info: {}".format(severity_counts["info"]))
+        summary.append("")
+        
+        if scanner_counts:
+            summary.append("Top checks:")
+            for scanner, count in sorted(scanner_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
+                summary.append("  {}: {}".format(scanner, count))
+            summary.append("")
+        
+        findings.sort(key=lambda x: x["rank"], reverse=True)
+        filtered_findings = [f for f in findings if f["rank"] >= min_rank]
+        
+        if filtered_findings:
+            summary.append("=" * 80)
+            summary.append("TOP FINDINGS (>= {})".format(top_findings_min_severity.upper()))
+            summary.append("=" * 80)
+            for finding in filtered_findings[:20]:
+                summary.append("")
+                summary.append("[{}] {}".format(finding["severity"].upper(), finding["title"]))
+                summary.append("  Check: {}".format(finding["check"]))
+                summary.append("  Scanner: {}".format(finding["scanner"]))
+                summary.append("  URL: {}".format(finding["url"]))
+                if finding["detail"]:
+                    summary.append("  Detail: {}".format(finding["detail"][:200]))
+                if finding["evidence"]:
+                    summary.append("  Evidence: {}".format(finding["evidence"][:200]))
+                if finding.get("remediation"):
+                    summary.append("  Remediation: {}".format(finding["remediation"][:200]))
+            if len(filtered_findings) > 20:
+                summary.append("")
+                summary.append("... ({} more findings not shown)".format(len(filtered_findings) - 20))
+        
+        summary.append("")
+        summary.append("=" * 80)
+        summary.append("SUMMARY")
+        summary.append("=" * 80)
+        summary.append("[*] Findings displayed: {} (filtered by min severity: {})".format(
+            len(filtered_findings), top_findings_min_severity.upper()
+        ))
+        summary.append("[*] Total findings in scan: {}".format(total))
+        
+        output_area.append("\n".join(summary) + "\n")
+        
+        with getattr(self, "apihunter_lock", threading.Lock()):
+            self.apihunter_findings = findings
+            
+    except Exception as e:
+        output_area.append("[!] ApiHunter result processing error: {}\n".format(self._ascii_safe(e)))
+        self._callbacks.printError("ApiHunter result processing error: {}".format(str(e)))
+
+__all__.append("_process_apihunter_ndjson_results")
