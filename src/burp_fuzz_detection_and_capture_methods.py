@@ -2564,9 +2564,10 @@ Prioritize non-obvious findings with strong proof over generic low-signal issues
 
 ## Output Requirements
 - Return JSON only.
-- Include for each finding: endpoint(s), bug_class, sensitive_data_target, confidence, duplicate_risk, novelty_reason, repro_steps, expected_response_delta, impact, remediation.
-- Include `quick_wins` (high confidence, low effort) and `deep_chains` (high impact, multi-step).
-- If data is insufficient, include `missing_data` with exact artifacts needed for confirmation.
+- Use exact finding keys: title, severity, bug_class, confidence, duplicate_risk, why_novel, affected_endpoints, sensitive_data_target, reproduction_steps, expected_response_delta, evidence_used, remediation.
+- Include `Priority Queue` ranked highest ROI to lowest ROI.
+- Include `Needs Verification` with exact missing requests/responses/tokens/artifacts when evidence is insufficient.
+- If truncation exists, include `Truncation Report` and request overflow artifacts.
 """
 
 def _generate_ai_prompt(self):

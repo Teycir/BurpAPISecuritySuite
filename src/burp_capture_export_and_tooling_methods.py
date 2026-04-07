@@ -732,63 +732,56 @@ def _analyze_security(self, data_snapshot=None):
     return observations
 
 def _generate_llm_prompt(self):
-    return """# API Evidence Bundle Prioritization (BurpAPISecuritySuite)
+    return """## SYSTEM
+You are a senior API penetration tester.
+Analyze the supplied bundle and return only high-signal findings that demonstrate:
+1) unauthorized sensitive-data access (cross-account or cross-tenant), or
+2) unauthorized state change (role/permission/order/payment/account lifecycle abuse).
 
-## Context
-You are analyzing structured API evidence exported from BurpAPISecuritySuite.
-This bundle may include:
-- endpoints / api_structure / security_observations
+Bundle layers to use:
 - ai_prep_layer.invariant_hints
 - ai_prep_layer.sequence_candidates
 - ai_prep_layer.evidence_graph
 - ai_prep_layer.truncation
 - deep-logic findings with confidence_score and non_destructive fields
 
-## Core Objective
-Produce confidence-weighted, high-ROI API security findings and reproducible test plans.
-Prioritize exploit paths that expose or alter sensitive data over generic weaknesses.
-Do not default to code generation first. Prioritize analysis and exploitability evidence.
+Reasoning rules:
+- Use multi-hop graph reasoning over evidence_graph before concluding.
+- Correlate graph + invariant_hints + sequence_candidates.
+- Respect non_destructive findings as replay-safe by default.
+- If truncation.total_truncated > 0, include a truncation report and request overflow artifacts.
+- Assume duplicates are common; estimate duplicate_risk and explain why_novel.
+- Use only evidence from the bundle. Do not invent endpoints, parameters, or responses.
+- Do not generate code.
 
-## Reasoning Requirements
-1) Use multi-hop graph reasoning on evidence_graph relationships:
-   - endpoint -> has_param -> parameter
-   - endpoint -> uses_auth -> auth_context
-   - endpoint -> flagged_as -> attack_candidate
-2) Correlate graph signals with invariant_hints and sequence_candidates before ranking.
-3) Use confidence_score where present to influence priority.
-4) Respect non_destructive=true entries as replay-safe probes by default.
-5) Read truncation:
-   - if truncation.total_truncated > 0, explicitly report analysis limits
-   - request overflow chunks needed for a second-pass analysis.
-6) For each candidate finding, estimate duplicate risk and explain what is novel.
+Priority order:
+1) STATE_MACHINE_BREAK / lifecycle integrity
+2) golden_ticket_cross_resource_reuse / privilege pivot chains
+3) cross-account BOLA/IDOR with mixed auth context
+4) cross-interface parity drift
+5) race/invariant issues on write-heavy resources
 
-## Priority Order (highest ROI first)
-1. STATE_MACHINE_BREAK / lifecycle integrity violations
-2. golden_ticket_cross_resource_reuse / privilege-escalation chains
-3. Sensitive-data access via BOLA/IDOR (shared identifiers + mixed auth contexts)
-4. cross_interface_parity drift (REST vs GraphQL vs internal)
-5. Race-condition and concurrent write integrity issues affecting account balances/orders/roles
+## USER
+Analyze the bundle below. For each finding output exactly:
+- title
+- severity
+- bug_class
+- confidence
+- duplicate_risk
+- why_novel
+- affected_endpoints
+- sensitive_data_target
+- reproduction_steps
+- expected_response_delta
+- evidence_used
+- remediation
 
-## Required Output For Each Finding
-- Priority rank (1..N) and confidence (0.00-1.00)
-- Bug class and likely impact
-- Exact endpoint references (method + path + host)
-- Reproduction steps (non-destructive first)
-- Expected response delta proving exploitability
-- Sensitive-data exposure or unauthorized state-change proof
-- Duplicate risk (`low|medium|high`) with novelty rationale
-- False-positive risk notes
-- CVSS estimate and likely bounty range
+After all findings output:
+1) Priority Queue
+2) Needs Verification
+3) Truncation Report
 
-## Additional Output Blocks
-- Top 5 quick wins (high confidence, low effort)
-- Top 5 deep investigations (high impact, needs chained workflow)
-- Missing-data requests driven by truncation or weak evidence
-
-## Optional (Only If Explicitly Requested)
-If the user asks for automation, generate a Burp Jython extension skeleton that focuses on the prioritized findings above instead of generic attack lists.
-
-## API Data Analysis Below
+## BUNDLE DATA
 """
 
 def _get_export_dir(self, export_type="Export"):
@@ -4308,15 +4301,23 @@ def _build_ai_request_analysis_prompt(self, endpoint_key, entry, source_label):
         "- Endpoint Key: {}".format(endpoint),
         "- Request: {} {}".format(method, url_text),
         "",
-        "Return in this format:",
-        "1) Priority findings (severity + confidence + duplicate_risk + why_novel + evidence)",
-        "2) Sensitive-data target per finding (fields/objects/accounts at risk)",
-        "3) Exact reproduction steps (auth context + request mutations + sequence)",
-        "4) Expected response delta that proves exploitability",
-        "5) Optional crafted payload variations",
-        "6) Mitigations mapped to each finding",
-        "7) Short follow-up test checklist",
-        "8) Missing data to confirm exploit (if evidence is insufficient)",
+        "Return format per finding (exact keys):",
+        "- title",
+        "- severity",
+        "- bug_class",
+        "- confidence",
+        "- duplicate_risk",
+        "- why_novel",
+        "- affected_endpoints",
+        "- sensitive_data_target",
+        "- reproduction_steps",
+        "- expected_response_delta",
+        "- evidence_used",
+        "- remediation",
+        "After findings include:",
+        "1) Priority Queue",
+        "2) Needs Verification (missing requests/responses/tokens/artifacts)",
+        "3) Truncation Report (if applicable)",
     ]
     return "\n".join(lines)
 
