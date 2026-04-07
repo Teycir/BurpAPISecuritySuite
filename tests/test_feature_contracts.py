@@ -407,10 +407,29 @@ def test_recon_exports_include_postman_and_insomnia():
 def test_recon_logger_and_turbo_intruder_features_are_wired():
     text = _source_text()
     required_tokens = [
+        'filter_row.add(JLabel("String Filter:"))',
+        'filter_row.add(JLabel("Regex Filter:"))',
         'self.tag_filter = JComboBox(["All"])',
         'self.tool_filter = JComboBox(["All"])',
         "self.recon_regex_field = JTextField(12)",
         'self.recon_regex_scope_combo = JComboBox(["Any", "Request", "Response", "Req+Resp"])',
+        'controls_row.add(JLabel("Max Rows:"))',
+        'self.logger_max_rows_combo = JComboBox(["2000", "5000", "10000", "20000"])',
+        'self.logger_auto_prune_checkbox = JCheckBox("Auto Prune", True)',
+        'self.logger_import_on_open_checkbox = JCheckBox("Import on Open", True)',
+        "self.logger_max_rows_combo.addActionListener(",
+        "lambda e: self._logger_apply_runtime_settings()",
+        "lambda e: self._show_logger_capacity_help_popup()",
+        'recon_save_regex_btn = self._create_action_button(',
+        '"Save Filter",',
+        "Color(111, 66, 193),",
+        'recon_clear_filter_btn = self._create_action_button(',
+        "Color(108, 117, 125),",
+        "self.recon_filter_library_combo = JComboBox([\"(No Saved Filters)\"])",
+        "self._apply_recon_filter()",
+        'recon_clear_saved_btn = self._create_action_button(',
+        '"Clear Saved",',
+        "Color(220, 53, 69),",
         'grep_btn = JButton("Grep")',
         'turbo_pack_btn = JButton("Turbo Pack")',
         "grep_btn.addActionListener(lambda e: self._run_recon_grep())",
@@ -427,6 +446,15 @@ def test_recon_logger_and_turbo_intruder_features_are_wired():
         '"source_tool": self._ascii_safe(source_tool),',
         "def _update_tool_filter(",
         "def _update_tag_filter(",
+        "def _persist_recon_filter_library(",
+        "def _restore_recon_filter_library(",
+        'if hasattr(self, "_restore_recon_filter_library"):',
+        "self._restore_recon_filter_library()",
+        "def _refresh_recon_filter_library_combo(",
+        "def _save_recon_filter(",
+        "def _apply_recon_filter(",
+        "def _remove_recon_filter(",
+        "def _clear_recon_filters(",
         'tags.add("api_endpoint")',
         'tags.add("idor_risk")',
         'tags.add("admin_debug")',
@@ -574,6 +602,7 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         "self._logger_refresh_min_interval_ms = 450",
         "self.logger_active_regex = \"\"",
         "self.logger_filter_library = []",
+        "self.recon_filter_library = []",
         "self.logger_tag_rules = []",
         "self._ensure_logger_default_tag_rules(force=False)",
         "def _create_logger_tab(",
@@ -588,14 +617,15 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         'self.logger_import_on_open_checkbox = JCheckBox("Import on Open", True)',
         'self.logger_export_format_combo = JComboBox(["JSONL", "JSON", "CSV"])',
         'self.logger_regex_field = JTextField("", 14)',
+        'controls.add(JLabel("String Filter:"))',
+        'regex_label = JLabel("Regex Filter:")',
         'self.logger_search_req_checkbox = JCheckBox("Req", True)',
         'self.logger_search_resp_checkbox = JCheckBox("Resp", True)',
         'self.logger_in_scope_checkbox = JCheckBox("In Scope", False)',
-        'self.logger_noise_filter_checkbox = JCheckBox(',
-        '"Filter Noise", bool(getattr(self, "logger_noise_filter_enabled", True))',
         'self.logger_len_min_field = JTextField("", 6)',
         'self.logger_len_max_field = JTextField("", 6)',
         "self.logger_filter_library_combo = JComboBox([\"(No Saved Filters)\"])",
+        '"Clear Saved"',
         '"Grep Values..."',
         '"Tag Rules..."',
         'lambda e: self._show_logger_help_popup()',
@@ -609,6 +639,7 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         '"Copy Selected Rows"',
         '"Send Selected To Repeater"',
         '"Tag Rules (Regex)..."',
+        '"Clear Filter"',
         '"Save Filter"',
         '"Apply Filter"',
         '"Remove Filter"',
@@ -618,11 +649,18 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         '"Endpoint Detail"',
         "def _logger_apply_runtime_settings(",
         "def _show_logger_help_popup(",
+        "def _show_logger_capacity_help_popup(",
+        "lambda e: self._show_logger_capacity_help_popup()",
         "class _LoggerSelectionListener(ListSelectionListener):",
         "class _LoggerRowActionMouseListener(MouseAdapter):",
         "self.logger_table.addMouseListener(_LoggerRowActionMouseListener(self))",
         "selection_model.addListSelectionListener(_LoggerSelectionListener(self))",
         "def _logger_trim_if_needed(",
+        "endpoint_counts = {}",
+        "drop_indexes = set()",
+        "kept_events = [",
+        "drop oldest duplicate rows first",
+        "keep at least one anchor row per endpoint",
         "def _sync_recon_entry_from_logger(",
         "def _logger_capture_event(",
         "self._sync_recon_entry_from_logger(endpoint_key, entry, tags=tag_values)",
@@ -635,6 +673,7 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         "def _save_logger_filter(",
         "def _apply_logger_filter(",
         "def _remove_logger_filter(",
+        "def _clear_logger_filters(",
         "def _open_logger_tag_rules_popup(",
         "def _compile_logger_tag_rules(",
         "def _logger_pick_color(",
@@ -711,7 +750,9 @@ def test_shared_noise_filter_helpers_are_wired_for_recon_and_logger():
         "if noise_filter_enabled and self._endpoint_is_recon_noise(key, entries):",
         "noise_filter_enabled = bool(getattr(self, \"logger_noise_filter_enabled\", True))",
         "noise_box = getattr(self, \"logger_noise_filter_checkbox\", None)",
-        "- Filter Noise: hide noisy ad-tech/CDN/static traffic rows.",
+        "if noise_box is None:",
+        "noise_box = getattr(self, \"recon_noise_filter_checkbox\", None)",
+        "- Filter Noise is controlled from Recon and applies to Logger too.",
     ]
     for token in required_tokens:
         assert token in text, "Missing shared noise-filter token: {}".format(token)
@@ -1593,6 +1634,8 @@ def test_text_and_combo_field_persistence_is_wired():
         'self._save_text_setting("combo.{}".format(attr_name), self._ascii_safe(selected or ""))',
         "_PersistTextFieldListener(self, attr_name)",
         "combo.addActionListener(",
+        '"recon_max_body_size_combo",',
+        '"recon_filter_library_combo",',
         '"apihunter_top_findings_min_combo",',
         'scope_lines_text = self._load_text_setting("target_base_scope_lines", scope_lines_default)',
         'self._save_text_setting(',
@@ -1601,6 +1644,61 @@ def test_text_and_combo_field_persistence_is_wired():
     for token in required_tokens:
         assert token in text, "Missing text/combo persistence token: {}".format(token)
     print("[PASS] test_text_and_combo_field_persistence_is_wired")
+
+
+def test_recon_max_body_size_dropdown_is_wired_and_persisted():
+    text = _source_text()
+    required_tokens = [
+        "self.max_body_size = 15000",
+        'self.recon_max_body_size_combo = JComboBox(["5000", "7500", "10000", "15000"])',
+        'self.recon_max_body_size_combo.setSelectedItem("15000")',
+        "lambda e: self._apply_recon_capture_settings()",
+        "def _apply_recon_capture_settings(",
+        "self.max_body_size = max_body_size",
+        'if hasattr(self, "_apply_recon_capture_settings"):',
+        "self._apply_recon_capture_settings()",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing recon max-body-size wiring token: {}".format(token)
+    print("[PASS] test_recon_max_body_size_dropdown_is_wired_and_persisted")
+
+
+def test_recon_max_body_size_applies_to_logger_capture_and_preview():
+    text = _source_text()
+    required_tokens = [
+        "def _truncate_body_text_by_max_size(",
+        "entry_copy[\"request_body\"] = self._truncate_body_text_by_max_size(",
+        "entry_copy[\"response_body\"] = self._truncate_body_text_by_max_size(",
+        "request_body = self._truncate_body_text_by_max_size(entry.get(\"request_body\") or \"\")",
+        "response_body = self._truncate_body_text_by_max_size(entry.get(\"response_body\") or \"\")",
+        "req_cap = max(req_cap, body_cap)",
+        "resp_cap = max(resp_cap, body_cap)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing shared max-body logger token: {}".format(token)
+    print("[PASS] test_recon_max_body_size_applies_to_logger_capture_and_preview")
+
+
+def test_recon_max_body_help_popup_is_wired():
+    text = _source_text()
+    required_tokens = [
+        'max_body_help_btn = JButton("?")',
+        "max_body_help_btn.addActionListener(lambda e: self._show_recon_max_body_help())",
+        "def _show_recon_max_body_help(",
+        'per_page_help_btn = JButton("?")',
+        "per_page_help_btn.addActionListener(lambda e: self._show_recon_per_page_help())",
+        "def _show_recon_per_page_help(",
+        "Recon Per Page Help",
+        "Per Page Help",
+        "Recon/Logger Max Body Help",
+        "Is 15000 risky?",
+        "Numeric safety: no. 15000 as an integer is safe.",
+        "Operational risk: maybe, on very large/high-volume sessions.",
+        "Max Body Help",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing max-body-help popup token: {}".format(token)
+    print("[PASS] test_recon_max_body_help_popup_is_wired")
 
 
 def test_logger_popup_persistence_is_wired():

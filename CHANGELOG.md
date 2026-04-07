@@ -50,8 +50,25 @@ All notable changes to this project are documented in this file.
   - Burp now launches the selected ApiHunter command and renders results, without Burp-side runtime guardrails/tuning heuristics.
   - Deep/Gap-Fill presets now use concise ApiHunter-native flags (no Burp-injected watchdog/max-endpoints runtime controls).
 - Capture defaults now retain more context:
-  - request/response body capture truncation default increased from `5KB` to `20KB`.
-  - Logger max memory default increased from `5,000` to `20,000` rows (UI + runtime fallback defaults).
+  - Recon request/response max body size is now operator-configurable from a dropdown (`5000`, `7500`, `10000`, `15000`) and persisted across restarts.
+  - the same max-body setting now applies to Logger capture/sync/preview paths so Recon and Logger truncate bodies consistently.
+  - Added a `?` help popup next to `Max Body` that explains integer safety vs operational memory/UI tradeoffs and gives sizing guidance.
+  - Added a `?` help popup next to Recon `Per page` that explains pagination scope/performance tradeoffs and how it differs from `Max Body`.
+  - Recon and Logger filter labels are now aligned as `String Filter` and `Regex Filter` for clearer operator intent.
+  - Recon and Logger now place the `Saved` filter dropdown before the `Save Filter` button for quicker saved-profile workflows.
+  - Recon saved-filter controls now mirror Logger with exactly three colored actions: `Save Filter` (purple), `Clear Saved` (red), and `Clear Filter` (gray).
+  - Recon and Logger now support saved filter profiles (string + regex criteria) via `Save Filter`, saved selector apply, and `Remove Filter`.
+  - Added explicit `Clear Filter` actions to clear active filter inputs without deleting saved filter profiles.
+  - Added explicit `Clear Saved` actions beside saved-filter selectors to remove selected saved entries from memory and persisted settings.
+  - Logger row-1 toolbar no longer shows `Clear Data`; shared data clearing remains available from Recon.
+  - `Max Rows` is now configured from Recon top controls and acts as a shared cap for Logger runtime retention/pruning behavior.
+  - Recon now includes a dedicated `?` help button next to `Max Rows` that explains `Show Last` vs `Max Rows` behavior and tuning guidance.
+  - `Auto Prune` is now configured from Recon top controls and applies to Logger retention behavior.
+  - `Filter Noise` now uses Recon as the single UI source and applies to both Recon and Logger filtering.
+  - `Import on Open` is now configured from Recon top controls as a shared startup backfill control.
+  - Logger auto-pruning is now endpoint-aware: oldest duplicate rows are pruned first so one anchor row per endpoint is preserved whenever possible.
+  - default Recon/Logger request/response body capture truncation is now `15KB`.
+  - Logger max rows default increased from `5,000` to `20,000` (UI + runtime fallback defaults).
 - ApiHunter runtime target source reporting now explicitly shows whether the run is using Recon filtered scope or `Custom Targets` popup input.
 
 ### Fixed

@@ -59,6 +59,21 @@ def _extract_body(self, message, offset):
         self._callbacks.printError("Body extraction error: " + str(e))
         return ""
 
+def _truncate_body_text_by_max_size(self, body_text):
+    """Clamp plain-text body content to the configured capture size."""
+    text = self._ascii_safe(body_text or "")
+    try:
+        cap = int(getattr(self, "max_body_size", 15000) or 15000)
+    except (TypeError, ValueError):
+        cap = 15000
+    if cap < 5000:
+        cap = 5000
+    if cap > 15000:
+        cap = 15000
+    if len(text) > cap:
+        return text[:cap] + "... [truncated]"
+    return text
+
 def _get_content_type(self, resp_info):
     for header in resp_info.getHeaders()[:30]:
         if header.lower().startswith("content-type:"):
@@ -1303,6 +1318,284 @@ def _on_filter_change(self):
     if noise_toggle_changed:
         self._refresh_logger_view()
 
+def _persist_recon_filter_library(self):
+    """Persist saved Recon filter profiles."""
+    with self.lock:
+        library_snapshot = list(getattr(self, "recon_filter_library", []) or [])
+    serializable = []
+    for item in library_snapshot:
+        if not isinstance(item, dict):
+            continue
+        alias = self._ascii_safe(item.get("alias") or "").strip()
+        string_filter = self._ascii_safe(item.get("string_filter") or "").strip()
+        regex_text = self._ascii_safe(item.get("regex") or "").strip()
+        regex_scope = self._ascii_safe(item.get("regex_scope") or "Any").strip()
+        if (not alias) or ((not string_filter) and (not regex_text)):
+            continue
+        if regex_scope not in ["Any", "Request", "Response", "Req+Resp"]:
+            regex_scope = "Any"
+        serializable.append(
+            {
+                "alias": alias[:80],
+                "string_filter": string_filter[:120],
+                "regex": regex_text[:400],
+                "regex_scope": regex_scope,
+            }
+        )
+        if len(serializable) >= 200:
+            break
+    try:
+        payload = json.dumps(serializable)
+    except (TypeError, ValueError) as json_err:
+        self._callbacks.printError(
+            "Recon filter-library persistence encode failed: {}".format(str(json_err))
+        )
+        return
+    self._save_text_setting("recon_filter_library_json", payload)
+
+def _restore_recon_filter_library(self):
+    """Restore saved Recon filter profiles from extension settings."""
+    raw_payload = self._load_text_setting("recon_filter_library_json", "").strip()
+    if not raw_payload:
+        with self.lock:
+            self.recon_filter_library = []
+        self._recon_filter_library_signature = ()
+        self._refresh_recon_filter_library_combo()
+        return
+    try:
+        parsed = json.loads(raw_payload)
+    except (TypeError, ValueError) as json_err:
+        self._callbacks.printError(
+            "Recon filter-library persistence decode failed: {}".format(str(json_err))
+        )
+        return
+    if not isinstance(parsed, list):
+        return
+    cleaned = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        alias = self._ascii_safe(item.get("alias") or "").strip()
+        string_filter = self._ascii_safe(item.get("string_filter") or "").strip()
+        regex_text = self._ascii_safe(item.get("regex") or "").strip()
+        regex_scope = self._ascii_safe(item.get("regex_scope") or "Any").strip()
+        if regex_scope not in ["Any", "Request", "Response", "Req+Resp"]:
+            regex_scope = "Any"
+        if (not alias) or ((not string_filter) and (not regex_text)):
+            continue
+        if regex_text:
+            try:
+                re.compile(regex_text, re.IGNORECASE | re.MULTILINE)
+            except re.error:
+                continue
+        cleaned.append(
+            {
+                "alias": alias[:80],
+                "string_filter": string_filter[:120],
+                "regex": regex_text[:400],
+                "regex_scope": regex_scope,
+            }
+        )
+        if len(cleaned) >= 200:
+            break
+    with self.lock:
+        self.recon_filter_library = cleaned
+    self._recon_filter_library_signature = ()
+    self._refresh_recon_filter_library_combo()
+    combo = getattr(self, "recon_filter_library_combo", None)
+    if combo is not None:
+        desired = self._load_text_setting("combo.recon_filter_library_combo", "").strip()
+        if desired and self._combo_contains_item(combo, desired):
+            self._syncing_recon_controls = True
+            try:
+                combo.setSelectedItem(desired)
+            finally:
+                self._syncing_recon_controls = False
+
+def _refresh_recon_filter_library_combo(self):
+    """Refresh Recon saved-filter dropdown from persisted library."""
+    combo = getattr(self, "recon_filter_library_combo", None)
+    if combo is None:
+        return
+    with self.lock:
+        entries = list(getattr(self, "recon_filter_library", []) or [])
+    aliases = []
+    for item in entries:
+        alias = self._ascii_safe(item.get("alias") or "").strip()
+        if alias:
+            aliases.append(alias)
+    aliases_signature = tuple(aliases)
+    cached_signature = tuple(getattr(self, "_recon_filter_library_signature", ()) or ())
+    selected = self._ascii_safe(
+        str(combo.getSelectedItem()) if combo.getSelectedItem() is not None else ""
+    )
+    if cached_signature == aliases_signature:
+        if (not aliases) and selected != "(No Saved Filters)":
+            self._syncing_recon_controls = True
+            try:
+                combo.setSelectedItem("(No Saved Filters)")
+            finally:
+                self._syncing_recon_controls = False
+        elif aliases and selected and selected not in aliases:
+            self._syncing_recon_controls = True
+            try:
+                combo.setSelectedItem(aliases[0])
+            finally:
+                self._syncing_recon_controls = False
+        return
+    self._syncing_recon_controls = True
+    try:
+        combo.removeAllItems()
+        if not aliases:
+            combo.addItem("(No Saved Filters)")
+        else:
+            for alias in aliases:
+                combo.addItem(alias)
+        if selected:
+            combo.setSelectedItem(selected)
+        self._recon_filter_library_signature = aliases_signature
+    finally:
+        self._syncing_recon_controls = False
+
+def _save_recon_filter(self):
+    """Save current Recon filter profile as named entry."""
+    string_filter = ""
+    if getattr(self, "search_field", None) is not None:
+        string_filter = self._ascii_safe(self.search_field.getText() or "")
+    string_filter = string_filter.strip()
+    regex_text = ""
+    if getattr(self, "recon_regex_field", None) is not None:
+        regex_text = self._ascii_safe(self.recon_regex_field.getText() or "")
+    regex_text = regex_text.strip()
+    regex_scope = "Any"
+    if getattr(self, "recon_regex_scope_combo", None) is not None:
+        regex_scope = self._ascii_safe(
+            str(self.recon_regex_scope_combo.getSelectedItem()) or "Any"
+        ).strip()
+    if regex_scope not in ["Any", "Request", "Response", "Req+Resp"]:
+        regex_scope = "Any"
+    if (not string_filter) and (not regex_text):
+        self.log_to_ui("[!] Recon: set String Filter and/or Regex Filter before saving")
+        return
+    if regex_text:
+        try:
+            re.compile(regex_text, re.IGNORECASE | re.MULTILINE)
+        except re.error as regex_err:
+            self.log_to_ui("[!] Recon invalid regex: {}".format(str(regex_err)))
+            return
+    alias = JOptionPane.showInputDialog(
+        self._panel, "Filter name:", "Save Recon Filter", JOptionPane.PLAIN_MESSAGE
+    )
+    alias = self._ascii_safe(alias or "").strip()
+    if not alias:
+        return
+    with self.lock:
+        library = list(getattr(self, "recon_filter_library", []) or [])
+        library = [
+            item
+            for item in library
+            if self._ascii_safe(item.get("alias") or "", lower=True)
+            != self._ascii_safe(alias, lower=True)
+        ]
+        library.append(
+            {
+                "alias": alias,
+                "string_filter": string_filter,
+                "regex": regex_text,
+                "regex_scope": regex_scope,
+            }
+        )
+        library = sorted(
+            library,
+            key=lambda item: self._ascii_safe(item.get("alias") or "", lower=True),
+        )[:200]
+        self.recon_filter_library = library
+    self._persist_recon_filter_library()
+    self._refresh_recon_filter_library_combo()
+    combo = getattr(self, "recon_filter_library_combo", None)
+    if combo is not None:
+        combo.setSelectedItem(alias)
+    self.log_to_ui("[+] Recon saved filter '{}'".format(alias))
+
+def _apply_recon_filter(self):
+    """Apply selected saved Recon filter profile."""
+    combo = getattr(self, "recon_filter_library_combo", None)
+    if combo is None:
+        return
+    alias = self._ascii_safe(
+        str(combo.getSelectedItem()) if combo.getSelectedItem() is not None else ""
+    ).strip()
+    if (not alias) or alias == "(No Saved Filters)":
+        return
+    string_filter = ""
+    regex_text = ""
+    regex_scope = "Any"
+    with self.lock:
+        for item in list(getattr(self, "recon_filter_library", []) or []):
+            if (
+                self._ascii_safe(item.get("alias") or "", lower=True)
+                == self._ascii_safe(alias, lower=True)
+            ):
+                string_filter = self._ascii_safe(item.get("string_filter") or "")
+                regex_text = self._ascii_safe(item.get("regex") or "")
+                regex_scope = self._ascii_safe(item.get("regex_scope") or "Any").strip()
+                break
+    if (not string_filter) and (not regex_text):
+        self.log_to_ui("[!] Recon: selected filter is empty")
+        return
+    if getattr(self, "search_field", None) is not None:
+        self.search_field.setText(string_filter)
+    if getattr(self, "recon_regex_field", None) is not None:
+        self.recon_regex_field.setText(regex_text)
+    if getattr(self, "recon_regex_scope_combo", None) is not None:
+        if regex_scope not in ["Any", "Request", "Response", "Req+Resp"]:
+            regex_scope = "Any"
+        self.recon_regex_scope_combo.setSelectedItem(regex_scope)
+    self._on_filter_change()
+
+def _remove_recon_filter(self):
+    """Remove selected saved Recon filter profile."""
+    combo = getattr(self, "recon_filter_library_combo", None)
+    if combo is None:
+        return
+    alias = self._ascii_safe(
+        str(combo.getSelectedItem()) if combo.getSelectedItem() is not None else ""
+    ).strip()
+    if (not alias) or alias == "(No Saved Filters)":
+        return
+    with self.lock:
+        library = list(getattr(self, "recon_filter_library", []) or [])
+        original = len(library)
+        library = [
+            item
+            for item in library
+            if self._ascii_safe(item.get("alias") or "", lower=True)
+            != self._ascii_safe(alias, lower=True)
+        ]
+        self.recon_filter_library = library
+    self._persist_recon_filter_library()
+    self._refresh_recon_filter_library_combo()
+    if len(library) < original:
+        self.log_to_ui("[*] Recon removed filter '{}'".format(alias))
+
+def _clear_recon_filters(self):
+    """Clear active Recon filter inputs (does not remove saved filters)."""
+    if getattr(self, "search_field", None) is not None:
+        self.search_field.setText("")
+    if getattr(self, "recon_regex_field", None) is not None:
+        self.recon_regex_field.setText("")
+    if getattr(self, "recon_regex_scope_combo", None) is not None:
+        self.recon_regex_scope_combo.setSelectedItem("Any")
+    combo = getattr(self, "recon_filter_library_combo", None)
+    if combo is not None and self._combo_contains_item(combo, "(No Saved Filters)"):
+        self._syncing_recon_controls = True
+        try:
+            combo.setSelectedItem("(No Saved Filters)")
+        finally:
+            self._syncing_recon_controls = False
+    self._on_filter_change()
+    self.log_to_ui("[*] Recon filters cleared")
+
 def _on_group_change(self):
     group = str(self.group_by.getSelectedItem())
     self.log_to_ui("[*] Grouping changed: {}".format(group))
@@ -1604,6 +1897,8 @@ def _logger_apply_runtime_settings(self, schedule_refresh=True):
         import_on_open = bool(import_box.isSelected())
     noise_filter_enabled = bool(getattr(self, "logger_noise_filter_enabled", True))
     noise_box = getattr(self, "logger_noise_filter_checkbox", None)
+    if noise_box is None:
+        noise_box = getattr(self, "recon_noise_filter_checkbox", None)
     if noise_box is not None:
         noise_filter_enabled = bool(noise_box.isSelected())
 
@@ -1624,12 +1919,15 @@ def _show_logger_help_popup(self):
         "Logger Quick Help",
         "",
         "- Logging Off: pause capture while keeping current rows visible.",
-        "- Filter Noise: hide noisy ad-tech/CDN/static traffic rows.",
-        "- Clear: wipe Logger table + previews in one click.",
+        "- Filter Noise is controlled from Recon and applies to Logger too.",
+        "- Clear Data lives in Recon and clears shared Recon+Logger capture state.",
         "- Len >= / Len <=: filter visible rows by response length.",
         "- Grep Values...: regex search popup with request/response scope.",
         "- Tag Rules...: create custom regex tags (tag|scope|regex).",
-        "- Show Last + Max Memory + Auto Prune: keep long sessions responsive.",
+        "- Show Last + Max Rows + Auto Prune: keep long sessions responsive.",
+        "- Max Rows is configured from Recon top controls and applies to Logger runtime.",
+        "- Auto Prune and Import on Open are configured from Recon top controls.",
+        "- Use the '?' next to Recon Max Rows for detailed capacity guidance.",
         "",
         "Tip: right-click the table for bulk actions (select all, copy, send to repeater).",
     ]
@@ -1640,34 +1938,98 @@ def _show_logger_help_popup(self):
         JOptionPane.INFORMATION_MESSAGE,
     )
 
+def _show_logger_capacity_help_popup(self):
+    """Explain the difference between Show Last and Max Rows controls."""
+    lines = [
+        "Logger Capacity Help",
+        "=" * 56,
+        "",
+        "Show Last:",
+        "  - View limit only (how many newest rows are rendered in table).",
+        "  - Does not change capture retention.",
+        "",
+        "Max Rows:",
+        "  - Memory retention limit (total rows Logger keeps).",
+        "  - When reached, Logger prunes oldest duplicate rows first when possible.",
+        "  - This keeps at least one anchor row per endpoint before deeper pruning.",
+        "",
+        "How they work together:",
+        "  - Keep: up to Max Rows.",
+        "  - Display: up to Show Last from that kept set.",
+        "  - Effective visible rows are also reduced by active filters.",
+        "",
+        "Tuning tips:",
+        "  - Lower Show Last if UI feels heavy while keeping history.",
+        "  - Lower Max Rows if memory usage grows during long sessions.",
+    ]
+    JOptionPane.showMessageDialog(
+        self._panel,
+        "\n".join(lines),
+        "Logger Capacity Help",
+        JOptionPane.INFORMATION_MESSAGE,
+    )
+
 def _logger_trim_if_needed(self, force=False):
-    """Trim oldest logger events to keep memory bounded."""
+    """Trim logger events to keep memory bounded while preserving endpoint coverage."""
     with self.logger_lock:
         max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
         auto_prune = bool(getattr(self, "logger_auto_prune_enabled", True))
         if (not force) and (not auto_prune):
             return 0
-        overflow = len(self.logger_events) - max_rows
+        total_rows = int(len(self.logger_events) or 0)
+        overflow = total_rows - max_rows
         if overflow <= 0:
             return 0
         trim_batch = int(getattr(self, "logger_trim_batch", 500) or 500)
         drop_count = overflow if force else max(overflow, trim_batch)
-        if drop_count > len(self.logger_events):
-            drop_count = len(self.logger_events)
-        if hasattr(self.logger_events, "popleft"):
-            dropped = 0
-            while dropped < drop_count:
-                try:
-                    self.logger_events.popleft()
-                    dropped += 1
-                except Exception as trim_err:
-                    self._callbacks.printError(
-                        "Logger trim popleft error: {}".format(str(trim_err))
-                    )
+        if drop_count > total_rows:
+            drop_count = total_rows
+        if drop_count <= 0:
+            return 0
+
+        events_snapshot = list(self.logger_events)
+        endpoint_counts = {}
+        endpoint_keys = []
+        for event in events_snapshot:
+            endpoint_key = self._ascii_safe(event.get("endpoint_key") or "").strip()
+            if not endpoint_key:
+                endpoint_key = "__no_endpoint__"
+            endpoint_keys.append(endpoint_key)
+            endpoint_counts[endpoint_key] = int(endpoint_counts.get(endpoint_key, 0) or 0) + 1
+
+        # Pass 1: drop oldest duplicate rows first (keep at least one anchor row per endpoint).
+        drop_indexes = set()
+        for index, endpoint_key in enumerate(endpoint_keys):
+            if len(drop_indexes) >= drop_count:
+                break
+            if endpoint_counts.get(endpoint_key, 0) > 1:
+                drop_indexes.add(index)
+                endpoint_counts[endpoint_key] = int(endpoint_counts.get(endpoint_key, 0) or 0) - 1
+
+        # Pass 2: if still overflowing, drop oldest remaining rows.
+        if len(drop_indexes) < drop_count:
+            for index in range(len(events_snapshot)):
+                if len(drop_indexes) >= drop_count:
                     break
-            drop_count = dropped
-        else:
-            del self.logger_events[:drop_count]
+                if index in drop_indexes:
+                    continue
+                drop_indexes.add(index)
+
+        kept_events = [
+            event for index, event in enumerate(events_snapshot) if index not in drop_indexes
+        ]
+        dropped = total_rows - len(kept_events)
+        if dropped < 0:
+            dropped = 0
+        if dropped:
+            if hasattr(self.logger_events, "popleft"):
+                try:
+                    self.logger_events = self.logger_events.__class__(kept_events)
+                except (TypeError, ValueError):
+                    self.logger_events = list(kept_events)
+            else:
+                self.logger_events = list(kept_events)
+        drop_count = dropped
         self.logger_dropped_count = int(getattr(self, "logger_dropped_count", 0) or 0) + drop_count
         self.logger_last_prune_ts = time.strftime("%H:%M:%S")
     return drop_count
@@ -1686,6 +2048,17 @@ def _logger_effective_preview_caps(self):
     elif max_rows >= 5000:
         req_cap = min(req_cap, 1000)
         resp_cap = min(resp_cap, 2000)
+    try:
+        body_cap = int(getattr(self, "max_body_size", 15000) or 15000)
+    except (TypeError, ValueError):
+        body_cap = 15000
+    if body_cap < 5000:
+        body_cap = 5000
+    if body_cap > 15000:
+        body_cap = 15000
+    # Keep logger request/response previews aligned with Recon max-body setting.
+    req_cap = max(req_cap, body_cap)
+    resp_cap = max(resp_cap, body_cap)
     req_cap = max(300, req_cap)
     resp_cap = max(500, resp_cap)
     return req_cap, resp_cap
@@ -1738,8 +2111,12 @@ def _sync_recon_entry_from_logger(self, endpoint_key, entry, tags=None):
     entry_copy["source_tool"] = self._ascii_safe(entry.get("source_tool") or "Logger")
     entry_copy["headers"] = dict(entry.get("headers") or {})
     entry_copy["response_headers"] = dict(entry.get("response_headers") or {})
-    entry_copy["request_body"] = self._ascii_safe(entry.get("request_body") or "")
-    entry_copy["response_body"] = self._ascii_safe(entry.get("response_body") or "")
+    entry_copy["request_body"] = self._truncate_body_text_by_max_size(
+        entry.get("request_body") or ""
+    )
+    entry_copy["response_body"] = self._truncate_body_text_by_max_size(
+        entry.get("response_body") or ""
+    )
     entry_copy["host"] = self._ascii_safe(entry.get("host") or "", lower=True).strip()
     entry_copy["protocol"] = self._ascii_safe(
         entry.get("protocol") or "https", lower=True
@@ -1879,7 +2256,7 @@ def _logger_capture_event(
         if any(marker in key_lower for marker in ["authorization", "cookie", "token", "api-key", "apikey"]):
             value_text = "<redacted>"
         req_preview_lines.append("{}: {}".format(key_text, value_text))
-    request_body = self._ascii_safe(entry.get("request_body") or "")
+    request_body = self._truncate_body_text_by_max_size(entry.get("request_body") or "")
     if request_body:
         req_preview_lines.append("")
         req_preview_lines.append(request_body)
@@ -1895,7 +2272,7 @@ def _logger_capture_event(
             break
         resp_header_count += 1
         resp_preview_lines.append("{}: {}".format(self._ascii_safe(key), self._ascii_safe(value)))
-    response_body = self._ascii_safe(entry.get("response_body") or "")
+    response_body = self._truncate_body_text_by_max_size(entry.get("response_body") or "")
     if response_body:
         resp_preview_lines.append("")
         resp_preview_lines.append(response_body)
@@ -2343,7 +2720,7 @@ def _reset_logger_regex_search(self, clear_field=True, log_feedback=True):
         self.log_to_ui("[*] Logger++ grep reset")
 
 def _persist_logger_filter_library(self):
-    """Persist named logger regex filters across Burp sessions."""
+    """Persist named logger filter profiles across Burp sessions."""
     with self.logger_lock:
         library_snapshot = list(getattr(self, "logger_filter_library", []) or [])
     cleaned = []
@@ -2351,10 +2728,23 @@ def _persist_logger_filter_library(self):
         if not isinstance(item, dict):
             continue
         alias = self._ascii_safe(item.get("alias") or "").strip()
+        string_filter = self._ascii_safe(item.get("string_filter") or "").strip()
         regex_text = self._ascii_safe(item.get("regex") or "").strip()
-        if (not alias) or (not regex_text):
+        search_req = bool(item.get("search_req", True))
+        search_resp = bool(item.get("search_resp", True))
+        scope_only = bool(item.get("scope_only", False))
+        if (not alias) or ((not string_filter) and (not regex_text)):
             continue
-        cleaned.append({"alias": alias[:80], "regex": regex_text[:400]})
+        cleaned.append(
+            {
+                "alias": alias[:80],
+                "string_filter": string_filter[:120],
+                "regex": regex_text[:400],
+                "search_req": search_req,
+                "search_resp": search_resp,
+                "scope_only": scope_only,
+            }
+        )
         if len(cleaned) >= 200:
             break
     try:
@@ -2367,7 +2757,7 @@ def _persist_logger_filter_library(self):
     self._save_text_setting("logger_filter_library_json", payload)
 
 def _restore_logger_filter_library(self):
-    """Restore named logger regex filters from extension settings."""
+    """Restore named logger filter profiles from extension settings."""
     raw_payload = self._load_text_setting("logger_filter_library_json", "").strip()
     if not raw_payload:
         return
@@ -2385,10 +2775,28 @@ def _restore_logger_filter_library(self):
         if not isinstance(item, dict):
             continue
         alias = self._ascii_safe(item.get("alias") or "").strip()
+        string_filter = self._ascii_safe(item.get("string_filter") or "").strip()
         regex_text = self._ascii_safe(item.get("regex") or "").strip()
-        if (not alias) or (not regex_text):
+        search_req = bool(item.get("search_req", True))
+        search_resp = bool(item.get("search_resp", True))
+        scope_only = bool(item.get("scope_only", False))
+        if (not alias) or ((not string_filter) and (not regex_text)):
             continue
-        cleaned.append({"alias": alias[:80], "regex": regex_text[:400]})
+        if regex_text:
+            try:
+                re.compile(regex_text, re.IGNORECASE)
+            except re.error:
+                continue
+        cleaned.append(
+            {
+                "alias": alias[:80],
+                "string_filter": string_filter[:120],
+                "regex": regex_text[:400],
+                "search_req": search_req,
+                "search_resp": search_resp,
+                "scope_only": scope_only,
+            }
+        )
         if len(cleaned) >= 200:
             break
     with self.logger_lock:
@@ -2539,19 +2947,33 @@ def _refresh_logger_filter_library_combo(self):
         self._syncing_logger_controls = False
 
 def _save_logger_filter(self):
-    """Save current logger regex as named filter-library entry."""
+    """Save current logger filter profile as named library entry."""
+    string_filter = ""
+    if getattr(self, "logger_filter_field", None) is not None:
+        string_filter = self._ascii_safe(self.logger_filter_field.getText() or "")
+    string_filter = string_filter.strip()
     regex_text = ""
     if getattr(self, "logger_regex_field", None) is not None:
         regex_text = self._ascii_safe(self.logger_regex_field.getText() or "")
     regex_text = regex_text.strip()
-    if not regex_text:
-        self.log_to_ui("[!] Logger++: enter a regex before saving a filter")
+    search_req = True
+    search_resp = True
+    scope_only = False
+    if getattr(self, "logger_search_req_checkbox", None) is not None:
+        search_req = bool(self.logger_search_req_checkbox.isSelected())
+    if getattr(self, "logger_search_resp_checkbox", None) is not None:
+        search_resp = bool(self.logger_search_resp_checkbox.isSelected())
+    if getattr(self, "logger_in_scope_checkbox", None) is not None:
+        scope_only = bool(self.logger_in_scope_checkbox.isSelected())
+    if (not string_filter) and (not regex_text):
+        self.log_to_ui("[!] Logger++: set String Filter and/or Regex Filter before saving")
         return
-    try:
-        re.compile(regex_text, re.IGNORECASE)
-    except re.error as regex_err:
-        self.log_to_ui("[!] Logger++ invalid regex: {}".format(str(regex_err)))
-        return
+    if regex_text:
+        try:
+            re.compile(regex_text, re.IGNORECASE)
+        except re.error as regex_err:
+            self.log_to_ui("[!] Logger++ invalid regex: {}".format(str(regex_err)))
+            return
     alias = JOptionPane.showInputDialog(
         self._panel, "Filter name:", "Save Logger Filter", JOptionPane.PLAIN_MESSAGE
     )
@@ -2566,7 +2988,16 @@ def _save_logger_filter(self):
             if self._ascii_safe(item.get("alias") or "", lower=True)
             != self._ascii_safe(alias, lower=True)
         ]
-        library.append({"alias": alias, "regex": regex_text})
+        library.append(
+            {
+                "alias": alias,
+                "string_filter": string_filter,
+                "regex": regex_text,
+                "search_req": bool(search_req),
+                "search_resp": bool(search_resp),
+                "scope_only": bool(scope_only),
+            }
+        )
         library = sorted(
             library, key=lambda item: self._ascii_safe(item.get("alias") or "", lower=True)
         )[:200]
@@ -2579,7 +3010,7 @@ def _save_logger_filter(self):
     self.log_to_ui("[+] Logger++ saved filter '{}'".format(alias))
 
 def _apply_logger_filter(self):
-    """Apply selected named filter from logger filter library."""
+    """Apply selected named filter profile from logger filter library."""
     combo = getattr(self, "logger_filter_library_combo", None)
     if combo is None:
         return
@@ -2588,21 +3019,41 @@ def _apply_logger_filter(self):
     ).strip()
     if (not alias) or alias == "(No Saved Filters)":
         return
+    string_filter = ""
     regex_text = ""
+    search_req = True
+    search_resp = True
+    scope_only = False
     with self.logger_lock:
         for item in list(getattr(self, "logger_filter_library", []) or []):
             if (
                 self._ascii_safe(item.get("alias") or "", lower=True)
                 == self._ascii_safe(alias, lower=True)
             ):
+                string_filter = self._ascii_safe(item.get("string_filter") or "")
                 regex_text = self._ascii_safe(item.get("regex") or "")
+                search_req = bool(item.get("search_req", True))
+                search_resp = bool(item.get("search_resp", True))
+                scope_only = bool(item.get("scope_only", False))
                 break
-    if not regex_text:
-        self.log_to_ui("[!] Logger++: selected filter has no regex")
+    if (not string_filter) and (not regex_text):
+        self.log_to_ui("[!] Logger++: selected filter has no criteria")
         return
+    if getattr(self, "logger_filter_field", None) is not None:
+        self.logger_filter_field.setText(string_filter)
     if getattr(self, "logger_regex_field", None) is not None:
         self.logger_regex_field.setText(regex_text)
-    self._run_logger_regex_search()
+    if getattr(self, "logger_search_req_checkbox", None) is not None:
+        self.logger_search_req_checkbox.setSelected(bool(search_req))
+    if getattr(self, "logger_search_resp_checkbox", None) is not None:
+        self.logger_search_resp_checkbox.setSelected(bool(search_resp))
+    if getattr(self, "logger_in_scope_checkbox", None) is not None:
+        self.logger_in_scope_checkbox.setSelected(bool(scope_only))
+    if regex_text:
+        self._run_logger_regex_search(log_feedback=False)
+    else:
+        self._reset_logger_regex_search(clear_field=False, log_feedback=False)
+        self._schedule_logger_ui_refresh(force=True)
 
 def _remove_logger_filter(self):
     """Remove selected named filter from logger filter library."""
@@ -2628,6 +3079,32 @@ def _remove_logger_filter(self):
     self._refresh_logger_filter_library_combo()
     if len(library) < original:
         self.log_to_ui("[*] Logger++ removed filter '{}'".format(alias))
+
+def _clear_logger_filters(self, log_feedback=True):
+    """Clear active logger string/regex filters (keeps saved library entries)."""
+    if getattr(self, "logger_filter_field", None) is not None:
+        self.logger_filter_field.setText("")
+    self._reset_logger_regex_search(clear_field=True, log_feedback=False)
+    if getattr(self, "logger_len_min_field", None) is not None:
+        self.logger_len_min_field.setText("")
+    if getattr(self, "logger_len_max_field", None) is not None:
+        self.logger_len_max_field.setText("")
+    if getattr(self, "logger_tool_combo", None) is not None:
+        self.logger_tool_combo.setSelectedItem("All")
+    if getattr(self, "logger_method_combo", None) is not None:
+        self.logger_method_combo.setSelectedItem("All")
+    if getattr(self, "logger_status_combo", None) is not None:
+        self.logger_status_combo.setSelectedItem("All")
+    combo = getattr(self, "logger_filter_library_combo", None)
+    if combo is not None and self._combo_contains_item(combo, "(No Saved Filters)"):
+        self._syncing_logger_controls = True
+        try:
+            combo.setSelectedItem("(No Saved Filters)")
+        finally:
+            self._syncing_logger_controls = False
+    self._schedule_logger_ui_refresh(force=True)
+    if log_feedback:
+        self.log_to_ui("[*] Logger++ filters cleared")
 
 def _logger_hex_to_color(self, hex_text, default_color=None):
     """Convert #RRGGBB text to java.awt.Color."""
@@ -3479,6 +3956,8 @@ def _refresh_logger_view(self):
     scope_only = bool(getattr(self, "logger_regex_scope_only", False))
     noise_filter_enabled = bool(getattr(self, "logger_noise_filter_enabled", True))
     noise_box = getattr(self, "logger_noise_filter_checkbox", None)
+    if noise_box is None:
+        noise_box = getattr(self, "recon_noise_filter_checkbox", None)
     if noise_box is not None:
         noise_filter_enabled = bool(noise_box.isSelected())
     self.logger_noise_filter_enabled = noise_filter_enabled
@@ -8989,6 +9468,7 @@ def _stop_dalfox(self, event):
 
 __all__ = [
     "_extract_body",
+    "_truncate_body_text_by_max_size",
     "_get_content_type",
     "_detect_auth",
     "_extract_jwt",
@@ -9019,6 +9499,13 @@ __all__ = [
     "_logger_event_is_noise",
     "_filter_endpoints",
     "_on_filter_change",
+    "_persist_recon_filter_library",
+    "_restore_recon_filter_library",
+    "_refresh_recon_filter_library_combo",
+    "_save_recon_filter",
+    "_apply_recon_filter",
+    "_remove_recon_filter",
+    "_clear_recon_filters",
     "_on_group_change",
     "_on_refresh",
     "_prev_page",
@@ -9035,6 +9522,7 @@ __all__ = [
     "_run_capture_ui_refresh",
     "_logger_apply_runtime_settings",
     "_show_logger_help_popup",
+    "_show_logger_capacity_help_popup",
     "_logger_trim_if_needed",
     "_logger_effective_preview_caps",
     "_logger_effective_header_preview_limit",
@@ -9060,6 +9548,7 @@ __all__ = [
     "_save_logger_filter",
     "_apply_logger_filter",
     "_remove_logger_filter",
+    "_clear_logger_filters",
     "_logger_hex_to_color",
     "_logger_color_to_hex",
     "_logger_pick_color",

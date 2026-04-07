@@ -53,7 +53,6 @@ _PERSISTED_CHECKBOX_ATTRS = (
     "recon_autopopulate_checkbox",
     "recon_noise_filter_checkbox",
     "logger_auto_prune_checkbox",
-    "logger_noise_filter_checkbox",
     "logger_logging_off_checkbox",
     "logger_import_on_open_checkbox",
     "logger_search_req_checkbox",
@@ -137,6 +136,8 @@ _PERSISTED_TEXT_ATTRS = (
 
 _PERSISTED_COMBO_ATTRS = (
     "sample_limit",
+    "recon_max_body_size_combo",
+    "recon_filter_library_combo",
     "page_size_combo",
     "recon_regex_scope_combo",
     "group_by",
@@ -566,7 +567,7 @@ def _initialize_runtime_state(self):
     self.endpoint_times = {}
     self.lock = threading.Lock()
     self.max_endpoints = 800
-    self.max_body_size = 20000
+    self.max_body_size = 15000
     self._tool_help_cache = {}
     self.target_base_scope_lines = []
     self.target_base_scope_hosts = set()
@@ -624,6 +625,9 @@ def _initialize_runtime_state(self):
     self._capture_ui_refresh_min_interval_ms = 250
     self._recon_last_regex_error = ""
     self._recon_filter_endpoint_tags_snapshot = None
+    self._syncing_recon_controls = False
+    self._recon_filter_library_signature = ()
+    self.recon_filter_library = []
     self.recon_view_keys = []
     self._recon_selected_endpoint_key = None
     self.recon_hidden_param_results = []
@@ -847,8 +851,12 @@ def _restore_persisted_ui_state(self):
 
     if hasattr(self, "_restore_logger_popup_persistence"):
         self._restore_logger_popup_persistence()
+    if hasattr(self, "_restore_recon_filter_library"):
+        self._restore_recon_filter_library()
     if hasattr(self, "_logger_apply_runtime_settings"):
         self._logger_apply_runtime_settings(schedule_refresh=False)
+    if hasattr(self, "_apply_recon_capture_settings"):
+        self._apply_recon_capture_settings()
     if hasattr(self, "_sync_noise_filter_checkboxes"):
         self._sync_noise_filter_checkboxes(source="recon")
     if hasattr(self, "_refresh_logger_view"):
@@ -903,6 +911,58 @@ def _build_recon_top_panel(self):
         "Number of request/response samples to collect per endpoint (e.g., GET:/api/users/{id})"
     )
     controls_row.add(self.sample_limit)
+    max_body_label = JLabel("Max Body:")
+    max_body_label.setToolTipText("Capture/truncate request and response body at this limit")
+    controls_row.add(max_body_label)
+    self.recon_max_body_size_combo = JComboBox(["5000", "7500", "10000", "15000"])
+    self.recon_max_body_size_combo.setSelectedItem("15000")
+    self.recon_max_body_size_combo.setToolTipText(
+        "Maximum body size (bytes) captured per request/response sample."
+    )
+    self.recon_max_body_size_combo.addActionListener(
+        lambda e: self._apply_recon_capture_settings()
+    )
+    controls_row.add(self.recon_max_body_size_combo)
+    max_body_help_btn = JButton("?")
+    max_body_help_btn.setToolTipText(
+        "Explain Max Body impact on Recon and Logger memory/performance."
+    )
+    max_body_help_btn.addActionListener(lambda e: self._show_recon_max_body_help())
+    controls_row.add(max_body_help_btn)
+    controls_row.add(JLabel("Max Rows:"))
+    self.logger_max_rows_combo = JComboBox(["2000", "5000", "10000", "20000"])
+    self.logger_max_rows_combo.setSelectedItem("20000")
+    self.logger_max_rows_combo.setToolTipText(
+        "Shared retention cap for Logger rows (affects Recon<->Logger drift behavior)."
+    )
+    self.logger_max_rows_combo.addActionListener(
+        lambda e: self._logger_apply_runtime_settings()
+    )
+    controls_row.add(self.logger_max_rows_combo)
+    logger_capacity_help_btn = JButton("?")
+    logger_capacity_help_btn.setToolTipText(
+        "Explain Show Last vs Max Rows and how they interact."
+    )
+    logger_capacity_help_btn.addActionListener(
+        lambda e: self._show_logger_capacity_help_popup()
+    )
+    controls_row.add(logger_capacity_help_btn)
+    self.logger_auto_prune_checkbox = JCheckBox("Auto Prune", True)
+    self.logger_auto_prune_checkbox.setToolTipText(
+        "Shared auto-prune toggle for Logger retention when Max Rows is reached."
+    )
+    self.logger_auto_prune_checkbox.addActionListener(
+        lambda e: self._logger_apply_runtime_settings()
+    )
+    controls_row.add(self.logger_auto_prune_checkbox)
+    self.logger_import_on_open_checkbox = JCheckBox("Import on Open", True)
+    self.logger_import_on_open_checkbox.setToolTipText(
+        "Shared startup backfill toggle for Logger from Burp Proxy history."
+    )
+    self.logger_import_on_open_checkbox.addActionListener(
+        lambda e: self._logger_apply_runtime_settings()
+    )
+    controls_row.add(self.logger_import_on_open_checkbox)
 
     controls_row.add(JLabel(" | Page:"))
     self.page_label = JLabel("1/1")
@@ -919,13 +979,57 @@ def _build_recon_top_panel(self):
     self.page_size_combo.setSelectedItem("100")
     self.page_size_combo.addActionListener(lambda e: self._change_page_size())
     controls_row.add(self.page_size_combo)
+    per_page_help_btn = JButton("?")
+    per_page_help_btn.setToolTipText(
+        "Explain Per page pagination behavior and performance tradeoffs."
+    )
+    per_page_help_btn.addActionListener(lambda e: self._show_recon_per_page_help())
+    controls_row.add(per_page_help_btn)
     controls_row.setAlignmentX(0.0)
 
     filter_row = JPanel(FlowLayout(FlowLayout.LEFT))
-    filter_row.add(JLabel("Search:"))
+    filter_row.add(JLabel("String Filter:"))
     self.search_field = JTextField(15)
     self.search_field.getDocument().addDocumentListener(SearchListener(self))
     filter_row.add(self.search_field)
+    filter_row.add(JLabel("Regex Filter:"))
+    self.recon_regex_field = JTextField(12)
+    self.recon_regex_field.getDocument().addDocumentListener(SearchListener(self))
+    filter_row.add(self.recon_regex_field)
+    filter_row.add(JLabel("Saved:"))
+    self.recon_filter_library_combo = JComboBox(["(No Saved Filters)"])
+    self.recon_filter_library_combo.setToolTipText(
+        "Pick a saved Recon filter profile to apply."
+    )
+    self.recon_filter_library_combo.addActionListener(
+        lambda e: (
+            None
+            if getattr(self, "_syncing_recon_controls", False)
+            else self._apply_recon_filter()
+        )
+    )
+    filter_row.add(self.recon_filter_library_combo)
+    recon_save_regex_btn = self._create_action_button(
+        "Save Filter",
+        Color(111, 66, 193),
+        lambda e: self._save_recon_filter(),
+        tooltip="Save current Recon filter (string + regex).",
+    )
+    filter_row.add(recon_save_regex_btn)
+    recon_clear_saved_btn = self._create_action_button(
+        "Clear Saved",
+        Color(220, 53, 69),
+        lambda e: self._remove_recon_filter(),
+        tooltip="Remove selected saved Recon filter from memory and persisted settings.",
+    )
+    filter_row.add(recon_clear_saved_btn)
+    recon_clear_filter_btn = self._create_action_button(
+        "Clear Filter",
+        Color(108, 117, 125),
+        lambda e: self._clear_recon_filters(),
+        tooltip="Clear active Recon string/regex filters.",
+    )
+    filter_row.add(recon_clear_filter_btn)
     filter_row.add(JLabel("Host:"))
     self.host_filter = JComboBox(["All"])
     self.host_filter.addActionListener(lambda e: self._on_filter_change())
@@ -940,6 +1044,10 @@ def _build_recon_top_panel(self):
     self.severity_filter = JComboBox(["All", "Critical", "High", "Medium", "Info"])
     self.severity_filter.addActionListener(lambda e: self._on_filter_change())
     filter_row.add(self.severity_filter)
+    filter_row.add(JLabel("Group:"))
+    self.group_by = JComboBox(["None", "Host", "Method", "Auth", "Encryption"])
+    self.group_by.addActionListener(lambda e: self._on_group_change())
+    filter_row.add(self.group_by)
     filter_row.add(JLabel("Tag:"))
     self.tag_filter = JComboBox(["All"])
     self.tag_filter.addActionListener(lambda e: self._on_filter_change())
@@ -956,24 +1064,97 @@ def _build_recon_top_panel(self):
     )
     self.recon_noise_filter_checkbox.addActionListener(lambda e: self._on_filter_change())
     filter_row.add(self.recon_noise_filter_checkbox)
-    filter_row.add(JLabel("Regex:"))
-    self.recon_regex_field = JTextField(12)
-    self.recon_regex_field.getDocument().addDocumentListener(SearchListener(self))
-    filter_row.add(self.recon_regex_field)
     self.recon_regex_scope_combo = JComboBox(["Any", "Request", "Response", "Req+Resp"])
     self.recon_regex_scope_combo.setSelectedItem("Any")
     self.recon_regex_scope_combo.addActionListener(lambda e: self._on_filter_change())
     filter_row.add(self.recon_regex_scope_combo)
-    filter_row.add(JLabel("Group:"))
-    self.group_by = JComboBox(["None", "Host", "Method", "Auth", "Encryption"])
-    self.group_by.addActionListener(lambda e: self._on_group_change())
-    filter_row.add(self.group_by)
     filter_row.setAlignmentX(0.0)
 
     top_panel.add(stats_panel)
     top_panel.add(controls_row)
     top_panel.add(filter_row)
     return top_panel
+
+def _apply_recon_capture_settings(self):
+    """Apply Recon capture settings from top-panel controls."""
+    max_body_size = int(getattr(self, "max_body_size", 15000) or 15000)
+    max_body_combo = getattr(self, "recon_max_body_size_combo", None)
+    if max_body_combo is not None:
+        try:
+            max_body_size = int(str(max_body_combo.getSelectedItem()))
+        except (TypeError, ValueError):
+            max_body_size = int(getattr(self, "max_body_size", 15000) or 15000)
+    if max_body_size < 5000:
+        max_body_size = 5000
+    if max_body_size > 15000:
+        max_body_size = 15000
+    self.max_body_size = max_body_size
+    if max_body_combo is not None:
+        selected = self._ascii_safe(max_body_combo.getSelectedItem() or "")
+        target = str(max_body_size)
+        if selected != target and self._combo_contains_item(max_body_combo, target):
+            max_body_combo.setSelectedItem(target)
+
+def _show_recon_max_body_help(self, _event=None):
+    """Explain max-body sizing tradeoffs for Recon and Logger capture paths."""
+    lines = []
+    lines.append("Recon/Logger Max Body Help")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append("Is 15000 risky?")
+    lines.append("  - Numeric safety: no. 15000 as an integer is safe.")
+    lines.append("  - Operational risk: maybe, on very large/high-volume sessions.")
+    lines.append("")
+    lines.append("What this setting controls:")
+    lines.append("  - Request/response body truncation during Recon capture.")
+    lines.append("  - Logger capture/sync/preview body truncation.")
+    lines.append("")
+    lines.append("Tradeoff:")
+    lines.append("  - Higher value keeps more payload context for analysis.")
+    lines.append("  - Higher value also increases memory usage and can slow UI refresh.")
+    lines.append("")
+    lines.append("Sizing guidance:")
+    lines.append("  - 15000: good default for normal debugging.")
+    lines.append("  - 10000: balanced for medium/high traffic.")
+    lines.append("  - 5000: safer for long captures or very noisy traffic.")
+    lines.append("")
+    lines.append("Tip:")
+    lines.append("  - If UI feels heavy, lower Max Body and/or reduce Logger Max Rows.")
+    JOptionPane.showMessageDialog(
+        self._panel,
+        "\n".join(lines),
+        "Max Body Help",
+        JOptionPane.INFORMATION_MESSAGE,
+    )
+
+def _show_recon_per_page_help(self, _event=None):
+    """Explain how Recon pagination page-size affects view rendering."""
+    lines = []
+    lines.append("Recon Per Page Help")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append("Per page:")
+    lines.append("  - Controls how many endpoints are rendered on the current page.")
+    lines.append("  - Does not change capture volume or endpoint retention.")
+    lines.append("")
+    lines.append("What changes when you raise it:")
+    lines.append("  - Fewer pages and less paging clicks.")
+    lines.append("  - More rows rendered at once, which can feel heavier on large datasets.")
+    lines.append("")
+    lines.append("How it differs from Max Body:")
+    lines.append("  - Per page limits visible rows in Recon.")
+    lines.append("  - Max Body limits request/response body bytes captured per sample.")
+    lines.append("")
+    lines.append("Practical defaults:")
+    lines.append("  - 100: balanced default.")
+    lines.append("  - 50: smoother on slower systems.")
+    lines.append("  - 200/500: faster browsing when the UI remains responsive.")
+    JOptionPane.showMessageDialog(
+        self._panel,
+        "\n".join(lines),
+        "Per Page Help",
+        JOptionPane.INFORMATION_MESSAGE,
+    )
 
 def _build_recon_center_split(self):
     self.list_model = DefaultListModel()
@@ -1218,7 +1399,7 @@ def _create_logger_tab(self):
     controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
     controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
     controls = controls_line1
-    controls.add(JLabel("Filter:"))
+    controls.add(JLabel("String Filter:"))
     self.logger_filter_field = JTextField("", 20)
     self.logger_filter_field.setToolTipText(
         "Free-text filter across method/tool/host/path/query/tags/status."
@@ -1227,7 +1408,7 @@ def _create_logger_tab(self):
         _LoggerFilterListener(self, delay_ms=240)
     )
     controls.add(self.logger_filter_field)
-    regex_label = JLabel("Regex:")
+    regex_label = JLabel("Regex Filter:")
     controls.add(regex_label)
     self.logger_regex_field = JTextField("", 14)
     self.logger_regex_field.setToolTipText(
@@ -1237,20 +1418,10 @@ def _create_logger_tab(self):
         _LoggerFilterListener(self, delay_ms=220)
     )
     controls.add(self.logger_regex_field)
-    controls.add(
-        self._create_action_button(
-            "Save Regex", Color(111, 66, 193), lambda e: self._save_logger_filter()
-        )
-    )
-    controls.add(
-        self._create_action_button(
-            "Clear Data", Color(220, 53, 69), lambda e: self.clear_data()
-        )
-    )
     controls.add(JLabel("Saved:"))
     self.logger_filter_library_combo = JComboBox(["(No Saved Filters)"])
     self.logger_filter_library_combo.setToolTipText(
-        "Pick a saved regex pattern to populate and apply the Regex field."
+        "Pick a saved filter profile to populate and apply String/Regex fields."
     )
     self.logger_filter_library_combo.addActionListener(
         lambda e: (
@@ -1260,6 +1431,21 @@ def _create_logger_tab(self):
         )
     )
     controls.add(self.logger_filter_library_combo)
+    controls.add(
+        self._create_action_button(
+            "Save Filter", Color(111, 66, 193), lambda e: self._save_logger_filter()
+        )
+    )
+    controls.add(
+        self._create_action_button(
+            "Clear Saved", Color(220, 53, 69), lambda e: self._remove_logger_filter()
+        )
+    )
+    controls.add(
+        self._create_action_button(
+            "Clear Filter", Color(108, 117, 125), lambda e: self._clear_logger_filters()
+        )
+    )
     controls.add(JLabel("Tool:"))
     self.logger_tool_combo = JComboBox(["All"])
     controls.add(self.logger_tool_combo)
@@ -1277,32 +1463,11 @@ def _create_logger_tab(self):
     self.logger_show_last_combo = JComboBox(["200", "500", "1000", "2000", "5000"])
     self.logger_show_last_combo.setSelectedItem("1000")
     controls.add(self.logger_show_last_combo)
-    controls.add(JLabel("Max Memory:"))
-    self.logger_max_rows_combo = JComboBox(["2000", "5000", "10000", "20000"])
-    self.logger_max_rows_combo.setSelectedItem("20000")
-    controls.add(self.logger_max_rows_combo)
-    self.logger_auto_prune_checkbox = JCheckBox("Auto Prune", True)
-    self.logger_auto_prune_checkbox.setToolTipText(
-        "Automatically discard oldest rows when memory cap is reached."
-    )
-    controls.add(self.logger_auto_prune_checkbox)
-    self.logger_noise_filter_checkbox = JCheckBox(
-        "Filter Noise", bool(getattr(self, "logger_noise_filter_enabled", True))
-    )
-    self.logger_noise_filter_checkbox.setToolTipText(
-        "Hide noisy ad-tech/CDN/static traffic in Logger view."
-    )
-    controls.add(self.logger_noise_filter_checkbox)
     self.logger_logging_off_checkbox = JCheckBox("Logging Off", False)
     self.logger_logging_off_checkbox.setToolTipText(
         "Hard pause logger capture while keeping existing rows visible."
     )
     controls.add(self.logger_logging_off_checkbox)
-    self.logger_import_on_open_checkbox = JCheckBox("Import on Open", True)
-    self.logger_import_on_open_checkbox.setToolTipText(
-        "Backfill from Burp Proxy history when Logger++ tab is initialized."
-    )
-    controls.add(self.logger_import_on_open_checkbox)
     controls = controls_line2
     controls.add(JLabel("Export:"))
     self.logger_export_format_combo = JComboBox(["JSONL", "JSON", "CSV"])
@@ -1374,11 +1539,6 @@ def _create_logger_tab(self):
     controls.add(
         self._create_action_button(
             "Reset", Color(108, 117, 125), lambda e: self._reset_logger_regex_search()
-        )
-    )
-    controls.add(
-        self._create_action_button(
-            "Save Filter", Color(111, 66, 193), lambda e: self._save_logger_filter()
         )
     )
     controls.add(
@@ -1537,25 +1697,13 @@ def _create_logger_tab(self):
     self.logger_method_combo.addActionListener(lambda e: self._refresh_logger_view())
     self.logger_status_combo.addActionListener(lambda e: self._refresh_logger_view())
     self.logger_show_last_combo.addActionListener(lambda e: self._refresh_logger_view())
-    self.logger_max_rows_combo.addActionListener(
-        lambda e: self._logger_apply_runtime_settings()
-    )
-    self.logger_auto_prune_checkbox.addActionListener(
-        lambda e: self._logger_apply_runtime_settings()
-    )
     self.logger_logging_off_checkbox.addActionListener(
-        lambda e: self._logger_apply_runtime_settings()
-    )
-    self.logger_import_on_open_checkbox.addActionListener(
         lambda e: self._logger_apply_runtime_settings()
     )
     self.logger_regex_field.addActionListener(lambda e: self._run_logger_regex_search())
     self.logger_search_req_checkbox.addActionListener(lambda e: self._refresh_logger_view())
     self.logger_search_resp_checkbox.addActionListener(lambda e: self._refresh_logger_view())
     self.logger_in_scope_checkbox.addActionListener(lambda e: self._refresh_logger_view())
-    self.logger_noise_filter_checkbox.addActionListener(
-        lambda e: self._refresh_logger_view()
-    )
     self.logger_len_min_field.addActionListener(lambda e: self._refresh_logger_view())
     self.logger_len_max_field.addActionListener(lambda e: self._refresh_logger_view())
     self._logger_apply_runtime_settings()
@@ -6566,6 +6714,9 @@ __all__ = [
     "_initialize_pagination_state",
     "_initialize_main_panel",
     "_build_recon_top_panel",
+    "_apply_recon_capture_settings",
+    "_show_recon_max_body_help",
+    "_show_recon_per_page_help",
     "_build_recon_center_split",
     "_build_recon_button_panel",
     "_build_recon_tab",
