@@ -2824,3 +2824,195 @@ def _run_wayback(self):
     thread = threading.Thread(target=run_discovery)
     thread.daemon = True
     thread.start()
+
+def _run_apihunter(self, event):
+    """Run ApiHunter with calibration preset support."""
+    import os
+    import subprocess
+    import tempfile
+    import threading
+    import time as time_module
+
+    apihunter_path = self.apihunter_path_field.getText().strip()
+    if not apihunter_path:
+        self.apihunter_area.setText("[!] Configure ApiHunter path first\n")
+        return
+    if not self.api_data:
+        self.apihunter_area.setText("[!] No endpoints in Recon tab\n")
+        return
+
+    temp_dir = tempfile.mkdtemp(prefix="burp_apihunter_")
+    targets_file = os.path.join(temp_dir, "targets.txt")
+    results_file = os.path.join(temp_dir, "results.ndjson")
+
+    targets, _ = self._collect_apihunter_targets()
+    if not targets:
+        self._cleanup_temp_dir(temp_dir, "apihunter empty")
+        self.apihunter_area.setText("[!] No targets\n")
+        return
+
+    writer = None
+    try:
+        writer = FileWriter(targets_file)
+        for target in targets:
+            writer.write(target + "\n")
+    finally:
+        if writer:
+            writer.close()
+
+    # Get calibration preset
+    calibration = "Balanced (Desktop Preset)"
+    try:
+        calibration = str(self.apihunter_calibration_combo.getSelectedItem())
+    except Exception as e:
+        self._callbacks.printError("ApiHunter calibration read error: {}".format(str(e)))
+
+    # Check for custom command override
+    use_custom, custom_command = self._resolve_custom_command(
+        "ApiHunter",
+        self.apihunter_custom_cmd_checkbox,
+        self.apihunter_custom_cmd_field,
+        {
+            "apihunter_path": apihunter_path,
+            "targets_file": targets_file,
+            "results_file": results_file,
+        },
+        self.apihunter_area,
+    )
+    if use_custom and not custom_command:
+        self._cleanup_temp_dir(temp_dir, "apihunter custom command validation")
+        return
+
+    self.apihunter_area.setText("[*] Running ApiHunter...\n")
+    if not use_custom:
+        self.apihunter_area.append("[*] Calibration: {}\n".format(calibration))
+    self.apihunter_area.append("[*] Targets: {}\n\n".format(len(targets)))
+    self._clear_tool_cancel("apihunter")
+
+    def run_scan():
+        process = None
+        try:
+            if use_custom and custom_command:
+                cmd = self._build_shell_command(custom_command)
+                display_cmd = custom_command
+                SwingUtilities.invokeLater(
+                    lambda: self.apihunter_area.append(
+                        "[*] Custom command override enabled\n"
+                    )
+                )
+            else:
+                # Build command based on calibration preset
+                cmd = [
+                    apihunter_path,
+                    "--urls",
+                    targets_file,
+                    "--format",
+                    "ndjson",
+                    "--output",
+                    results_file,
+                    "--no-discovery",
+                ]
+                
+                if "Quick" in calibration:
+                    cmd.extend([
+                        "--filter-timeout", "3",
+                        "--max-endpoints", "40",
+                        "--concurrency", "4",
+                        "--timeout-secs", "12",
+                        "--retries", "1",
+                        "--delay-ms", "0",
+                    ])
+                elif "Deep" in calibration:
+                    cmd.extend([
+                        "--active-checks",
+                        "--response-diff-deep",
+                        "--filter-timeout", "3",
+                        "--max-endpoints", "0",
+                        "--concurrency", "6",
+                        "--timeout-secs", "20",
+                        "--retries", "2",
+                        "--delay-ms", "100",
+                        "--waf-evasion",
+                        "--per-host-clients",
+                        "--adaptive-concurrency",
+                    ])
+                else:  # Balanced (default)
+                    cmd.extend([
+                        "--filter-timeout", "3",
+                        "--max-endpoints", "80",
+                        "--concurrency", "5",
+                        "--timeout-secs", "15",
+                        "--retries", "1",
+                        "--delay-ms", "50",
+                    ])
+                display_cmd = " ".join(cmd)
+            
+            SwingUtilities.invokeLater(
+                lambda: self.apihunter_area.append("[*] Command: {}\n\n".format(display_cmd))
+            )
+
+            start_time = time_module.time()
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+            )
+            self._set_active_tool_process("apihunter", process)
+
+            SwingUtilities.invokeLater(
+                lambda: self.apihunter_area.append("[*] Computing...\n")
+            )
+
+            # Adjust timeout based on calibration preset
+            if "Quick" in calibration:
+                max_timeout = len(targets) * 20  # Quick: 20s per target
+            elif "Deep" in calibration:
+                max_timeout = len(targets) * 90  # Deep: 90s per target
+            else:  # Balanced
+                max_timeout = len(targets) * 40  # Balanced: 40s per target
+            
+            while process.poll() is None:
+                if self._is_tool_cancelled("apihunter"):
+                    self._terminate_process_cross_platform(process, "ApiHunter")
+                    SwingUtilities.invokeLater(
+                        lambda: self.apihunter_area.append("\n[!] Cancelled\n")
+                    )
+                    return
+                elapsed = int(time_module.time() - start_time)
+                if elapsed > max_timeout:
+                    try:
+                        process.kill()
+                        process.wait()
+                    except Exception:
+                        pass
+                    SwingUtilities.invokeLater(
+                        lambda: self.apihunter_area.append("\n[!] Timeout after {}s\n".format(max_timeout))
+                    )
+                    return
+                time_module.sleep(0.1)
+
+            process.wait()
+            elapsed = int(time_module.time() - start_time)
+
+            SwingUtilities.invokeLater(
+                lambda e=elapsed: self.apihunter_area.append(
+                    "\n[+] Completed in {}s\n".format(e)
+                )
+            )
+
+            if os.path.exists(results_file):
+                SwingUtilities.invokeLater(
+                    lambda: self._process_apihunter_ndjson_results(results_file, self.apihunter_area)
+                )
+        except Exception as e:
+            err = "[!] Error: {}\n".format(str(e))
+            SwingUtilities.invokeLater(lambda t=err: self.apihunter_area.append(t))
+        finally:
+            self._clear_active_tool_process("apihunter", process)
+            self._clear_tool_cancel("apihunter")
+            self._cleanup_temp_dir(temp_dir, "apihunter")
+
+    thread = threading.Thread(target=run_scan)
+    thread.daemon = True
+    thread.start()
