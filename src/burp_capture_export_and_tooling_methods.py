@@ -732,72 +732,61 @@ def _analyze_security(self, data_snapshot=None):
     return observations
 
 def _generate_llm_prompt(self):
-    return """# API Red Team Extension Generation
+    return """# API Evidence Bundle Prioritization (BurpAPISecuritySuite)
 
 ## Context
-This JSON contains comprehensive API traffic analysis from a Burp Suite scan/capture session.
+You are analyzing structured API evidence exported from BurpAPISecuritySuite.
+This bundle may include:
+- endpoints / api_structure / security_observations
+- ai_prep_layer.invariant_hints
+- ai_prep_layer.sequence_candidates
+- ai_prep_layer.evidence_graph
+- ai_prep_layer.truncation
+- deep-logic findings with confidence_score and non_destructive fields
 
-## Your Task
-Analyze this API data and generate a custom Burp Suite extension in Jython that:
+## Core Objective
+Produce confidence-weighted, high-ROI API security findings and reproducible test plans.
+Prioritize exploit paths that expose or alter sensitive data over generic weaknesses.
+Do not default to code generation first. Prioritize analysis and exploitability evidence.
 
-### 1. IDOR/BOLA Testing
-- For endpoints with {id}, {uuid} patterns, test:
-  * Sequential ID enumeration (1,2,3...)
-  * UUID manipulation
-  * Negative IDs and boundary values
-  * Other user's resource access
+## Reasoning Requirements
+1) Use multi-hop graph reasoning on evidence_graph relationships:
+   - endpoint -> has_param -> parameter
+   - endpoint -> uses_auth -> auth_context
+   - endpoint -> flagged_as -> attack_candidate
+2) Correlate graph signals with invariant_hints and sequence_candidates before ranking.
+3) Use confidence_score where present to influence priority.
+4) Respect non_destructive=true entries as replay-safe probes by default.
+5) Read truncation:
+   - if truncation.total_truncated > 0, explicitly report analysis limits
+   - request overflow chunks needed for a second-pass analysis.
+6) For each candidate finding, estimate duplicate risk and explain what is novel.
 
-### 2. Authentication/Authorization
-- Test missing/invalid tokens
-- Session fixation attacks
-- JWT manipulation (alg:none, weak secrets)
-- Privilege escalation attempts
-- Cookie tampering
+## Priority Order (highest ROI first)
+1. STATE_MACHINE_BREAK / lifecycle integrity violations
+2. golden_ticket_cross_resource_reuse / privilege-escalation chains
+3. Sensitive-data access via BOLA/IDOR (shared identifiers + mixed auth contexts)
+4. cross_interface_parity drift (REST vs GraphQL vs internal)
+5. Race-condition and concurrent write integrity issues affecting account balances/orders/roles
 
-### 3. Parameter Manipulation
-- Mass assignment (add admin=true, role=admin)
-- Type confusion (string->int, array->object)
-- SQL injection in all parameters
-- NoSQL injection for JSON APIs
-- Command injection in file paths
-- XXE for XML endpoints
+## Required Output For Each Finding
+- Priority rank (1..N) and confidence (0.00-1.00)
+- Bug class and likely impact
+- Exact endpoint references (method + path + host)
+- Reproduction steps (non-destructive first)
+- Expected response delta proving exploitability
+- Sensitive-data exposure or unauthorized state-change proof
+- Duplicate risk (`low|medium|high`) with novelty rationale
+- False-positive risk notes
+- CVSS estimate and likely bounty range
 
-### 4. Business Logic
-- Negative quantities/prices
-- Race conditions on state changes
-- Workflow bypass (skip payment steps)
-- Rate limiting bypass
+## Additional Output Blocks
+- Top 5 quick wins (high confidence, low effort)
+- Top 5 deep investigations (high impact, needs chained workflow)
+- Missing-data requests driven by truncation or weak evidence
 
-### 5. Encryption/Encoding
-- Base64 decode/encode attacks
-- Padding oracle attacks
-- Replay attacks on encrypted data
-- Weak crypto detection
-
-### 6. Information Disclosure
-- Verbose error messages
-- Stack traces
-- Debug endpoints
-- API version disclosure
-
-### 7. Injection Attacks
-- Test reflected_params for XSS
-- SSTI in template parameters
-- LDAP injection
-- XML injection
-
-## Output Format
-Generate a complete Burp extension that:
-- Extends IBurpExtender, IScannerCheck
-- Implements doPassiveScan (info gathering) and doActiveScan (exploitation)
-- Returns IScanIssue objects with:
-  * Severity: Critical/High/Medium/Low/Info
-  * Confidence: Certain/Firm/Tentative
-  * Detailed description with proof
-  * Remediation advice
-- Handles all detected patterns from security_observations
-- Includes attack payloads specific to this API
-- Provides clear documentation and usage instructions
+## Optional (Only If Explicitly Requested)
+If the user asks for automation, generate a Burp Jython extension skeleton that focuses on the prioritized findings above instead of generic attack lists.
 
 ## API Data Analysis Below
 """
@@ -4305,20 +4294,29 @@ def _build_ai_request_analysis_prompt(self, endpoint_key, entry, source_label):
     method = self._ascii_safe(entry.get("method") or "GET").upper().strip() or "GET"
     url_text = self._entry_full_url(entry)
     lines = [
-        "You are a senior API security tester.",
+        "You are a senior API security tester focused on bug-bounty-grade exploit paths.",
         "Analyze the supplied HTTP request and response context from Burp capture data.",
-        "Focus on realistic exploitability and high-signal API weaknesses (BOLA/IDOR, authz/authn, mass assignment, injection, SSRF, business logic, race, data exposure).",
+        "Primary objective: find paths that expose sensitive data cross-account or allow unauthorized state changes.",
+        "Assume duplicates are common; prioritize non-obvious logic flaws before generic issues.",
+        "Use this testing order:",
+        "1) cross-account sensitive-data access (BOLA/IDOR/authz bypass)",
+        "2) role/token privilege pivot and cross-resource reuse",
+        "3) state-machine and workflow transition abuse",
+        "4) cross-interface parity drift and race/invariant violations",
         "Use this target context:",
         "- Source: {}".format(source),
         "- Endpoint Key: {}".format(endpoint),
         "- Request: {} {}".format(method, url_text),
         "",
         "Return in this format:",
-        "1) Top findings (severity + confidence + evidence)",
-        "2) Exact reproduction steps",
-        "3) Optional crafted payload variations",
-        "4) Mitigations mapped to each finding",
-        "5) Short follow-up test checklist",
+        "1) Priority findings (severity + confidence + duplicate_risk + why_novel + evidence)",
+        "2) Sensitive-data target per finding (fields/objects/accounts at risk)",
+        "3) Exact reproduction steps (auth context + request mutations + sequence)",
+        "4) Expected response delta that proves exploitability",
+        "5) Optional crafted payload variations",
+        "6) Mitigations mapped to each finding",
+        "7) Short follow-up test checklist",
+        "8) Missing data to confirm exploit (if evidence is insufficient)",
     ]
     return "\n".join(lines)
 

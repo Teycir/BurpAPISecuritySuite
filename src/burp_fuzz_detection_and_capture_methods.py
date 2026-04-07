@@ -2538,21 +2538,35 @@ def _calculate_attack_severity(self, attack):
     return "Medium"
 
 def _generate_enhanced_ai_prompt(self):
-    return """# Advanced API Security Payload Generation
+    return """# Advanced API Exploit Discovery (High ROI, Low Duplicate)
 
 ## Context
-You are analyzing real API capture data with vulnerability findings, response patterns, and behavior analytics.
+You are analyzing real API capture data with vulnerability findings, response patterns, behavioral analytics, and deep-logic artifacts.
+Treat this as bug-bounty triage where duplicate reports are common.
 
-## Tasks
-1. Generate baseline, context-aware, evasion, and chained payloads per vulnerability.
-2. Define success indicators (status/body/header/timing) and false-positive guards.
-3. Propose exploitation chains and verification steps (automated + manual), including token-overreach (Golden Ticket) and state-transition matrix hypotheses.
-4. Prioritize by severity, confidence, authentication context, and business impact.
+## Mission
+Find exploit paths that lead to unauthorized sensitive-data access or unauthorized state changes.
+Prioritize non-obvious findings with strong proof over generic low-signal issues.
+
+## Priority Order
+1. Sensitive-data access via authz flaws (BOLA/IDOR, cross-account reads, token scope abuse)
+2. Privilege escalation chains (golden-ticket-style token reuse, role drift, cross-resource pivots)
+3. State-machine/business-logic breaks (invalid transitions, lifecycle abuse, race invariants)
+4. Cross-interface parity drift (REST/GraphQL/internal mismatch leading to bypass)
+5. Injection/SSRF/other classes when they materially expose sensitive data
+
+## Required Reasoning Rules
+1. Correlate endpoint context, auth context, and behavioral patterns before ranking.
+2. Prefer reproducible multi-step chains over single noisy probes.
+3. For every finding, estimate duplicate risk and explain the novelty angle.
+4. Include proof deltas (status/body/header/timing/field-level differences) that demonstrate exploitability.
+5. Include false-positive guards and stop conditions.
 
 ## Output Requirements
 - Return JSON only.
-- Include endpoint, payload category, payload value, method, headers/body placement, confidence, and remediation.
-- Provide at least one exploitation chain when related endpoints suggest escalation paths.
+- Include for each finding: endpoint(s), bug_class, sensitive_data_target, confidence, duplicate_risk, novelty_reason, repro_steps, expected_response_delta, impact, remediation.
+- Include `quick_wins` (high confidence, low effort) and `deep_chains` (high impact, multi-step).
+- If data is insufficient, include `missing_data` with exact artifacts needed for confirmation.
 """
 
 def _generate_ai_prompt(self):

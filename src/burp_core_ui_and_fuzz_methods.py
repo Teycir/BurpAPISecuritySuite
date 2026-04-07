@@ -2659,14 +2659,19 @@ def _export_text_output_to_ai(self, source_label, output_text):
         return
 
     prompt_lines = [
-        "You are a senior API security analyst.",
-        "Analyze the provided tool output and produce practical, high-signal findings.",
-        "Prioritize likely exploitable issues and avoid generic advice.",
+        "You are a senior API bug bounty analyst.",
+        "Analyze the provided tool output and prioritize exploit paths that expose sensitive data or unauthorized state changes.",
+        "Assume duplicates are common; prioritize non-obvious logic/state/privilege flaws before generic scanner findings.",
+        "Rank findings by exploitability, confidence, and duplicate risk.",
+        "Prefer findings that include cross-endpoint chains, auth-context pivots, or invariant breaks.",
         "Return:",
-        "1) top findings with severity/confidence/evidence",
-        "2) concrete repro or validation steps",
-        "3) defensive fixes",
-        "4) a short testing plan for next iteration",
+        "1) top findings with severity/confidence/duplicate_risk/why_novel/evidence",
+        "2) sensitive-data target per finding (records/fields/accounts exposed)",
+        "3) concrete repro steps including exact request/auth mutations",
+        "4) expected response deltas proving exploitability",
+        "5) defensive fixes",
+        "6) a short testing plan for next iteration",
+        "7) missing artifacts needed to confirm high-value hypotheses (if data is incomplete)",
     ]
     export_lines = [
         "=== AI ANALYSIS PACK: {} ===".format(title),
@@ -4320,7 +4325,7 @@ def _create_httpx_tab(self):
             ],
             override_notes=[
                 "Include {urls_file} if you want to probe Recon-derived URLs.",
-                "If binary check fails, set HTTPX Path to /home/teycir/go/bin/httpx.",
+                "If binary check fails, set HTTPX Path to your local ProjectDiscovery httpx binary (for example: $HOME/go/bin/httpx).",
             ],
         )
     )

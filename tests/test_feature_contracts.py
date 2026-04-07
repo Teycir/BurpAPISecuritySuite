@@ -367,6 +367,46 @@ def test_ai_bundle_schema_validation_wired_into_export():
     print("[PASS] test_ai_bundle_schema_validation_wired_into_export")
 
 
+def test_llm_prompt_uses_ai_prep_and_truncation_context():
+    text = _source_text()
+    required_tokens = [
+        "def _generate_llm_prompt(",
+        "ai_prep_layer.invariant_hints",
+        "ai_prep_layer.sequence_candidates",
+        "ai_prep_layer.evidence_graph",
+        "ai_prep_layer.truncation",
+        "confidence_score",
+        "non_destructive",
+        "truncation.total_truncated",
+        "multi-hop graph reasoning",
+        "Do not default to code generation first.",
+        "expose or alter sensitive data",
+        "estimate duplicate risk and explain what is novel",
+        "Duplicate risk (`low|medium|high`) with novelty rationale",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing LLM prompt AI-prep token: {}".format(token)
+    print("[PASS] test_llm_prompt_uses_ai_prep_and_truncation_context")
+
+
+def test_enhanced_ai_prompt_prioritizes_sensitive_data_and_novelty():
+    text = _source_text()
+    required_tokens = [
+        "def _generate_enhanced_ai_prompt(",
+        "Advanced API Exploit Discovery (High ROI, Low Duplicate)",
+        "unauthorized sensitive-data access or unauthorized state changes",
+        "Treat this as bug-bounty triage where duplicate reports are common.",
+        "For every finding, estimate duplicate risk and explain the novelty angle.",
+        "sensitive_data_target",
+        "duplicate_risk",
+        "novelty_reason",
+        "missing_data",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing enhanced AI prompt ROI token: {}".format(token)
+    print("[PASS] test_enhanced_ai_prompt_prioritizes_sensitive_data_and_novelty")
+
+
 def test_api_asset_results_include_copy_ready_urls_block():
     text = _source_text()
     required_tokens = [
@@ -1900,11 +1940,30 @@ def test_ai_export_actions_are_wired_across_outputs():
         "def _export_text_output_to_ai(",
         "def _show_ai_copy_exit_dialog(",
         'options = ["Copy", "Exit"]',
+        "Assume duplicates are common; prioritize non-obvious logic/state/privilege flaws before generic scanner findings.",
+        "top findings with severity/confidence/duplicate_risk/why_novel/evidence",
+        "sensitive-data target per finding",
+        "expected response deltas proving exploitability",
     ]
     for token in required_tokens:
         assert token in text, "Missing AI export token: {}".format(token)
     assert text.count('"To AI"') >= 12
     print("[PASS] test_ai_export_actions_are_wired_across_outputs")
+
+
+def test_request_ai_prompt_prioritizes_sensitive_data_and_duplicate_control():
+    text = _source_text()
+    required_tokens = [
+        "def _build_ai_request_analysis_prompt(",
+        "Primary objective: find paths that expose sensitive data cross-account or allow unauthorized state changes.",
+        "Assume duplicates are common; prioritize non-obvious logic flaws before generic issues.",
+        "Priority findings (severity + confidence + duplicate_risk + why_novel + evidence)",
+        "Sensitive-data target per finding (fields/objects/accounts at risk)",
+        "Missing data to confirm exploit (if evidence is insufficient)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing request AI prompt ROI token: {}".format(token)
+    print("[PASS] test_request_ai_prompt_prioritizes_sensitive_data_and_duplicate_control")
 
 
 def test_method_injection_rejects_duplicate_exports():

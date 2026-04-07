@@ -16,6 +16,13 @@ All notable changes to this project are documented in this file.
   - Added auth-header signature normalization helpers for semantic duplicate detection across Guest/User/Admin fields.
   - `Extract` candidate ordering now prefers distinct signatures first and tags duplicate candidates as `[DUP TOKEN]`.
   - Auto-prefill (`_auto_detect_auth_profile_headers`) now attempts distinct token assignment for empty role fields before duplicate fallback.
+- AI export prompt strategy now prioritizes bundle-aware reasoning over generic code generation:
+  - `_generate_llm_prompt()` now explicitly references `invariant_hints`, `sequence_candidates`, `evidence_graph`, `truncation`, `confidence_score`, and `non_destructive`.
+  - Added truncation-aware follow-up guidance (`truncation.total_truncated`) and multi-hop graph reasoning instructions for higher ROI prioritization.
+- AI handoff prompts are now optimized for sensitive-data exploit discovery and duplicate resistance across all export surfaces:
+  - Updated all tab-level `To AI` exports (`_export_text_output_to_ai`) to require novelty-aware ranking (`duplicate_risk`, `why_novel`), sensitive-data targets, and exploit-proof response deltas.
+  - Updated request-level AI packs (`_build_ai_request_analysis_prompt`) to prioritize cross-account data exposure, privilege pivots, state-machine abuse, and explicit missing-data requests when evidence is thin.
+  - Updated bundle-level enhanced prompt (`_generate_enhanced_ai_prompt`) used by OpenAI/Anthropic/Ollama export files to prioritize high-bounty non-obvious chains over generic findings.
 - Duplicate-header handling remains execution-safe while improving operator visibility:
   - Duplicate role headers are still collapsed for replay/evaluation noise control.
   - Duplicate role table columns now mirror canonical role results to avoid misleading empty (`-`) Guest/User/Admin cells.
