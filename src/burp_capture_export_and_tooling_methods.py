@@ -4756,6 +4756,267 @@ def _open_target_base_scope_popup(self):
         scope_msg += " ({} invalid ignored)".format(parsed["invalid_count"])
     self.log_to_ui(scope_msg)
 
+def _sanitize_apihunter_custom_target_line(self, raw_line):
+    """Sanitize one custom ApiHunter target line into canonical base URL."""
+    line = self._ascii_safe(raw_line or "")
+    line = re.sub(r"[\x00-\x1f\x7f]", "", line).strip()
+    if not line or line.startswith("#"):
+        return {
+            "skip": True,
+            "valid": False,
+            "target": "",
+            "error": "",
+            "raw": "",
+        }
+
+    candidate = line.strip("'\"`")
+    if len(candidate) > 2048:
+        return {
+            "skip": False,
+            "valid": False,
+            "target": "",
+            "error": "entry too long",
+            "raw": line,
+        }
+    if (" " in candidate) or ("\t" in candidate):
+        return {
+            "skip": False,
+            "valid": False,
+            "target": "",
+            "error": "contains whitespace",
+            "raw": line,
+        }
+
+    probe = candidate
+    if "://" not in probe:
+        probe = "https://" + probe.lstrip("/")
+    try:
+        parsed = URL(probe)
+    except Exception as parse_err:
+        _ = parse_err
+        return {
+            "skip": False,
+            "valid": False,
+            "target": "",
+            "error": "not a valid URL",
+            "raw": line,
+        }
+
+    scheme = self._ascii_safe(parsed.getProtocol() or "", lower=True).strip()
+    if scheme not in ["http", "https"]:
+        return {
+            "skip": False,
+            "valid": False,
+            "target": "",
+            "error": "only http/https schemes are allowed",
+            "raw": line,
+        }
+
+    host = self._ascii_safe(parsed.getHost() or "", lower=True).strip()
+    if host.endswith("."):
+        host = host[:-1]
+    if (
+        (not host)
+        or ("/" in host)
+        or ("\\" in host)
+        or (" " in host)
+        or ("@" in host)
+        or (not re.match(r"^[a-z0-9.\-:]+$", host))
+    ):
+        return {
+            "skip": False,
+            "valid": False,
+            "target": "",
+            "error": "invalid host",
+            "raw": line,
+        }
+    if parsed.getUserInfo() is not None:
+        return {
+            "skip": False,
+            "valid": False,
+            "target": "",
+            "error": "userinfo in URL is not allowed",
+            "raw": line,
+        }
+
+    port = parsed.getPort()
+    if port != -1 and (port < 1 or port > 65535):
+        return {
+            "skip": False,
+            "valid": False,
+            "target": "",
+            "error": "invalid port",
+            "raw": line,
+        }
+    if port == -1:
+        port = 443 if scheme == "https" else 80
+
+    if (scheme == "https" and port == 443) or (scheme == "http" and port == 80):
+        target = "{}://{}/".format(scheme, host)
+    else:
+        target = "{}://{}:{}/".format(scheme, host, port)
+
+    return {
+        "skip": False,
+        "valid": True,
+        "target": target,
+        "error": "",
+        "raw": line,
+    }
+
+def _parse_apihunter_custom_targets_text(self, text, max_entries=20):
+    """Parse multiline ApiHunter custom targets into canonical base URLs."""
+    try:
+        limit = int(max_entries)
+    except Exception as limit_err:
+        _ = limit_err
+        limit = 20
+    if limit < 1:
+        limit = 20
+
+    targets = []
+    seen = set()
+    invalid_lines = []
+    for line_number, raw_line in enumerate(self._ascii_safe(text).splitlines(), 1):
+        result = self._sanitize_apihunter_custom_target_line(raw_line)
+        if result.get("skip"):
+            continue
+        if not result.get("valid"):
+            invalid_lines.append(
+                {
+                    "line": line_number,
+                    "value": self._ascii_safe(result.get("raw") or ""),
+                    "error": self._ascii_safe(result.get("error") or "invalid URL"),
+                }
+            )
+            continue
+        target = self._ascii_safe(result.get("target") or "").strip()
+        if not target:
+            continue
+        dedup_key = (
+            self._apihunter_target_key(target)
+            if hasattr(self, "_apihunter_target_key")
+            else target
+        )
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        targets.append(target)
+
+    too_many_count = max(0, len(targets) - limit)
+    if too_many_count > 0:
+        targets = targets[:limit]
+
+    return {
+        "targets": targets,
+        "invalid_lines": invalid_lines,
+        "invalid_count": len(invalid_lines),
+        "too_many_count": too_many_count,
+    }
+
+def _open_apihunter_custom_targets_popup(self):
+    """Open popup editor for ApiHunter custom target base URLs."""
+    current_text = "\n".join(getattr(self, "apihunter_custom_targets_lines", []) or [])
+    editor = JTextArea(current_text, 12, 60)
+    editor.setLineWrap(False)
+    editor.setWrapStyleWord(False)
+
+    content = JPanel(BorderLayout(0, 6))
+    content.add(
+        JLabel(
+            "Enter one URL/host per line (max 20). Input is sanitized and normalized to base URLs."
+        ),
+        BorderLayout.NORTH,
+    )
+    content.add(JScrollPane(editor), BorderLayout.CENTER)
+
+    decision = JOptionPane.showConfirmDialog(
+        self._panel,
+        content,
+        "ApiHunter Custom Targets",
+        JOptionPane.OK_CANCEL_OPTION,
+        JOptionPane.PLAIN_MESSAGE,
+    )
+    if decision != JOptionPane.OK_OPTION:
+        return
+
+    parsed = self._parse_apihunter_custom_targets_text(editor.getText(), max_entries=20)
+    too_many_count = int(parsed.get("too_many_count", 0) or 0)
+    invalid_lines = list(parsed.get("invalid_lines", []) or [])
+    if too_many_count > 0:
+        JOptionPane.showMessageDialog(
+            self._panel,
+            "ApiHunter custom targets accepts up to 20 entries. Remove {} extra line(s).".format(
+                too_many_count
+            ),
+            "ApiHunter Custom Targets",
+            JOptionPane.ERROR_MESSAGE,
+        )
+        return
+    if invalid_lines:
+        preview = []
+        for item in invalid_lines[:5]:
+            preview.append(
+                "Line {}: {} ({})".format(
+                    int(item.get("line", 0) or 0),
+                    self._ascii_safe(item.get("value") or "")[:80],
+                    self._ascii_safe(item.get("error") or "invalid URL"),
+                )
+            )
+        if len(invalid_lines) > 5:
+            preview.append("... and {} more invalid line(s)".format(len(invalid_lines) - 5))
+        JOptionPane.showMessageDialog(
+            self._panel,
+            "Invalid URL entries detected:\n\n{}".format("\n".join(preview)),
+            "ApiHunter Custom Targets",
+            JOptionPane.ERROR_MESSAGE,
+        )
+        return
+
+    self.apihunter_custom_targets_lines = list(parsed.get("targets", []) or [])
+    self._save_text_setting(
+        "apihunter_custom_targets_lines",
+        "\n".join(self.apihunter_custom_targets_lines),
+    )
+
+    count = len(self.apihunter_custom_targets_lines)
+    if count == 0:
+        self.log_to_ui("[*] ApiHunter custom targets cleared")
+    else:
+        self.log_to_ui(
+            "[+] ApiHunter custom targets updated: {} base URL(s)".format(count)
+        )
+
+def _get_apihunter_custom_targets_override(self):
+    """Return current ApiHunter custom-target toggle state and sanitized targets."""
+    enabled = False
+    checkbox = getattr(self, "apihunter_use_custom_targets_checkbox", None)
+    if checkbox is not None:
+        enabled = bool(checkbox.isSelected())
+
+    lines = list(getattr(self, "apihunter_custom_targets_lines", []) or [])
+    parsed = self._parse_apihunter_custom_targets_text("\n".join(lines), max_entries=20)
+    targets = list(parsed.get("targets", []) or [])
+    invalid_count = int(parsed.get("invalid_count", 0) or 0)
+    too_many_count = int(parsed.get("too_many_count", 0) or 0)
+
+    error = ""
+    if enabled:
+        if invalid_count > 0:
+            error = "ApiHunter custom targets contains invalid URL lines. Open 'Custom Targets...' and fix them."
+        elif too_many_count > 0:
+            error = "ApiHunter custom targets supports up to 20 entries."
+        elif len(targets) == 0:
+            error = "ApiHunter custom targets is enabled but no valid URLs are configured."
+
+    return {
+        "enabled": enabled,
+        "targets": targets,
+        "invalid_count": invalid_count,
+        "too_many_count": too_many_count,
+        "error": error,
+    }
+
 def _parse_target_base_scope_text(self, text):
     """Parse multiline target scope input into host/base-domain sets."""
     lines = []
@@ -8834,6 +9095,10 @@ __all__ = [
     "_recon_backfill_history",
     "_logger_backfill_history",
     "_open_target_base_scope_popup",
+    "_sanitize_apihunter_custom_target_line",
+    "_parse_apihunter_custom_targets_text",
+    "_open_apihunter_custom_targets_popup",
+    "_get_apihunter_custom_targets_override",
     "_parse_target_base_scope_text",
     "_extract_scope_host",
     "_get_target_scope_override",

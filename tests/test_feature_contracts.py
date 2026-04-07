@@ -1010,6 +1010,30 @@ def test_external_tool_scope_collectors_present():
     print("[PASS] test_external_tool_scope_collectors_present")
 
 
+def test_apihunter_custom_targets_popup_and_enforcement_are_wired():
+    text = _source_text()
+    required_tokens = [
+        'self.apihunter_use_custom_targets_checkbox = JCheckBox(',
+        '"Use Custom Targets", False',
+        "lambda e: self._open_apihunter_custom_targets_popup()",
+        "def _sanitize_apihunter_custom_target_line(",
+        "def _parse_apihunter_custom_targets_text(",
+        "def _open_apihunter_custom_targets_popup(",
+        "def _get_apihunter_custom_targets_override(",
+        "custom_override = self._get_apihunter_custom_targets_override()",
+        'if custom_override.get("enabled"):',
+        '"source_mode": "custom_targets"',
+        '"ApiHunter custom targets is enabled but no valid URLs are configured."',
+        "source_mode = self._ascii_safe(target_meta.get(\"source_mode\") or \"\", lower=True)",
+        'if source_mode == "custom_targets":',
+        '"[*] Target Source: Custom Targets popup\\n"',
+        "max_entries=20",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing ApiHunter custom targets token: {}".format(token)
+    print("[PASS] test_apihunter_custom_targets_popup_and_enforcement_are_wired")
+
+
 def test_balanced_runtime_defaults_and_safe_pipe_read_present():
     text = _source_text()
     required_tokens = [

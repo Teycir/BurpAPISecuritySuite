@@ -389,6 +389,9 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Runtime PATH Resolve**: On `Run ApiHunter`, the suite re-resolves `apihunter` from PATH (process + shell probe) and auto-updates the field to the resolved absolute binary when available
 - **Calibration**: `Quick (Desktop Preset)`, `Balanced (Desktop Preset)` (default), `Deep (Desktop Preset)`
 - **Top Findings Min**: Operator-configurable `Critical` / `High` / `Medium` threshold for summary triage noise control
+- **Use Custom Targets**: Checkbox to force ApiHunter input from the `Custom Targets...` popup instead of Recon-filtered scope
+- **Custom Targets Popup**: Multiline editor (`max 20` entries, one per line) with strict sanitization and canonical base URL normalization (`scheme://host[:port]/`), including de-duplication and invalid-line rejection
+- **Validation Enforcement**: When `Use Custom Targets` is enabled, runs fail fast if popup content is empty, exceeds limit, or contains invalid URL lines
 - **Always Filtered Source**: Consumes current Recon filtered view and emits de-duplicated host-base targets (`scheme://host[:port]/`) for ApiHunter
 - **Run ApiHunter**: Executes ApiHunter using ApiHunter-native command behavior (Burp acts as a thin launcher + result renderer)
 - **Default Command Model**: Burp does not apply extra runtime heuristics (no Burp-side watchdog caps or endpoint-expansion overrides); default flags mirror ApiHunter Desktop presets
@@ -1119,6 +1122,13 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 ### v1.4.4 - ApiHunter Integration + Stability Hardening
 - ✅ Added dedicated `ApiHunter` tab with Desktop-parity presets, PATH-aware runtime resolution, and parsed NDJSON summary rendering.
 - ✅ Added operator-configurable `Top Findings Min` filter (`Critical` / `High` / `Medium`) with persisted UI state.
+- ✅ Added ApiHunter `Use Custom Targets` workflow:
+  - `Custom Targets...` popup supports multiline input with strict URL sanitization,
+  - entries are normalized to canonical base URLs and de-duplicated,
+  - hard limit enforced at `20` entries.
+- ✅ Added strict run-time enforcement for custom targets:
+  - when enabled, ApiHunter uses popup targets only,
+  - empty/invalid/overflow target states now surface explicit in-tab errors and prevent launch.
 - ✅ Increased capture defaults for long-session usability:
   - body truncation default `5KB` -> `20KB`,
   - Logger max memory default `5,000` -> `20,000` rows.

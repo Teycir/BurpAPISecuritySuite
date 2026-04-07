@@ -67,6 +67,7 @@ _PERSISTED_CHECKBOX_ATTRS = (
     "httpx_custom_cmd_checkbox",
     "katana_custom_cmd_checkbox",
     "wayback_custom_cmd_checkbox",
+    "apihunter_use_custom_targets_checkbox",
     "auth_replay_check_unauth_checkbox",
     "graphql_raider_introspection_checkbox",
     "graphql_raider_batching_checkbox",
@@ -571,6 +572,7 @@ def _initialize_runtime_state(self):
     self.target_base_scope_hosts = set()
     self.target_base_scope_bases = set()
     self.target_base_scope_only_enabled = False
+    self.apihunter_custom_targets_lines = []
     self.target_scope_checkboxes = []
     self._syncing_target_scope_checkboxes = False
     self._tool_process_lock = threading.Lock()
@@ -816,6 +818,27 @@ def _restore_persisted_ui_state(self):
     self.target_base_scope_lines = parsed_scope["lines"]
     self.target_base_scope_hosts = parsed_scope["hosts"]
     self.target_base_scope_bases = parsed_scope["bases"]
+
+    apihunter_targets_default = "\n".join(
+        getattr(self, "apihunter_custom_targets_lines", []) or []
+    )
+    apihunter_targets_text = self._load_text_setting(
+        "apihunter_custom_targets_lines", apihunter_targets_default
+    )
+    parsed_apihunter_targets = self._parse_apihunter_custom_targets_text(
+        apihunter_targets_text, max_entries=20
+    )
+    self.apihunter_custom_targets_lines = list(
+        parsed_apihunter_targets.get("targets", [])
+    )
+    invalid_count = int(parsed_apihunter_targets.get("invalid_count", 0) or 0)
+    too_many_count = int(parsed_apihunter_targets.get("too_many_count", 0) or 0)
+    if invalid_count > 0 or too_many_count > 0:
+        self._callbacks.printError(
+            "ApiHunter custom targets restore ignored invalid/overflow lines (invalid={}, overflow={})".format(
+                invalid_count, too_many_count
+            )
+        )
 
     scope_default = bool(getattr(self, "target_base_scope_only_enabled", False))
     scope_restored = self._load_bool_setting("target_base_scope_only_enabled", scope_default)
@@ -4485,6 +4508,20 @@ def _create_apihunter_tab(self):
         "Controls the minimum severity shown in Top Findings (summary counts still include all severities)."
     )
     controls_line1.add(self.apihunter_top_findings_min_combo)
+    self.apihunter_use_custom_targets_checkbox = JCheckBox(
+        "Use Custom Targets", False
+    )
+    self.apihunter_use_custom_targets_checkbox.setToolTipText(
+        "Use only Custom Targets popup URLs (max 20 base URLs)."
+    )
+    controls_line1.add(self.apihunter_use_custom_targets_checkbox)
+    controls_line1.add(
+        self._create_action_button(
+            "Custom Targets...",
+            Color(96, 125, 139),
+            lambda e: self._open_apihunter_custom_targets_popup(),
+        )
+    )
     self.apihunter_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
     controls_line_cmd.add(self.apihunter_custom_cmd_checkbox)
     controls_line_cmd.add(JLabel("Command:"))

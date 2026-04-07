@@ -10,6 +10,10 @@ All notable changes to this project are documented in this file.
   - New tab: `ApiHunter` (placed before `Nuclei` in main workflow order).
   - New runner wiring: `_run_apihunter` via `src/heavy_runners.py`.
   - New target export action: `Export Targets` for ApiHunter-scoped input lists.
+- ApiHunter custom target workflow:
+  - Added `Use Custom Targets` checkbox to force ApiHunter input from popup-defined URLs.
+  - Added `Custom Targets...` multiline popup editor for explicit target control.
+  - Added strict parser/sanitizer that canonicalizes to base URLs (`scheme://host[:port]/`), de-duplicates entries, and enforces a hard max of `20`.
 - ApiHunter deep-calibration profiles tuned for complementary value:
   - `Deep Search (WAF Evasive Recommended)` (default)
   - `Deep (Fast)`
@@ -48,6 +52,7 @@ All notable changes to this project are documented in this file.
 - Capture defaults now retain more context:
   - request/response body capture truncation default increased from `5KB` to `20KB`.
   - Logger max memory default increased from `5,000` to `20,000` rows (UI + runtime fallback defaults).
+- ApiHunter runtime target source reporting now explicitly shows whether the run is using Recon filtered scope or `Custom Targets` popup input.
 
 ### Fixed
 - Removed unfiltered fallback behavior for ApiHunter target collection; scans now stay strictly scoped to filtered Recon data.
@@ -67,6 +72,8 @@ All notable changes to this project are documented in this file.
   - append path now re-checks sample cap to avoid over-cap races during concurrent capture.
 - Removed SSTI probe markers (`{{7*7}}`, `${7*7}`, `<%= 7*7 %>`, `#{7*7}`) from XSS payload list while keeping them in SSTI payloads.
 - Replaced remaining bare `except Exception:` in ApiHunter timeout-kill flow with explicit logged exception handling.
+- Fixed ApiHunter custom-target validation gaps:
+  - when `Use Custom Targets` is enabled, empty/invalid/overflow popup content now blocks execution with explicit operator-facing error messaging.
 
 ## [1.4.3] - 2026-04-07
 

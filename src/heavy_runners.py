@@ -2848,7 +2848,11 @@ def _run_apihunter(self, event):
     targets, target_meta = self._collect_apihunter_targets()
     if not targets:
         self._cleanup_temp_dir(temp_dir, "apihunter empty")
-        self.apihunter_area.setText("[!] No targets\n")
+        error_text = self._ascii_safe(target_meta.get("error") or "").strip()
+        if error_text:
+            self.apihunter_area.setText("[!] {}\n".format(error_text))
+        else:
+            self.apihunter_area.setText("[!] No targets\n")
         return
 
     writer = None
@@ -2886,7 +2890,11 @@ def _run_apihunter(self, event):
     self.apihunter_area.setText("[*] Running ApiHunter...\n")
     if not use_custom:
         self.apihunter_area.append("[*] Calibration: {}\n".format(calibration))
-    _ = target_meta
+    source_mode = self._ascii_safe(target_meta.get("source_mode") or "", lower=True)
+    if source_mode == "custom_targets":
+        self.apihunter_area.append("[*] Target Source: Custom Targets popup\n")
+    else:
+        self.apihunter_area.append("[*] Target Source: Recon filtered scope\n")
     self.apihunter_area.append("[*] Targets: {}\n\n".format(len(targets)))
     self._clear_tool_cancel("apihunter")
 

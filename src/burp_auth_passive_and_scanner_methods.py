@@ -3638,6 +3638,39 @@ def _apihunter_target_key(self, url_text):
 
 def _collect_apihunter_targets(self):
     """Collect scoped host-base targets for ApiHunter scans."""
+    custom_override = self._get_apihunter_custom_targets_override()
+    if custom_override.get("enabled"):
+        custom_targets = list(custom_override.get("targets", []) or [])
+        custom_error = self._ascii_safe(custom_override.get("error") or "").strip()
+        return custom_targets, {
+            "source_mode": "custom_targets",
+            "source_count": len(custom_targets),
+            "source_filter_error": "",
+            "inspected_entries": len(custom_targets),
+            "dedup_collisions": 0,
+            "raw_candidates": len(custom_targets),
+            "truncated": 0,
+            "dropped_scope_host": 0,
+            "dropped_noise_or_static": 0,
+            "dropped_missing_host": 0,
+            "force_host": False,
+            "selected_host": "custom_targets",
+            "manual_scope_enabled": False,
+            "manual_scope_line_count": 0,
+            "manual_scope_host_count": 0,
+            "manual_scope_base_count": 0,
+            "manual_scope_preview": [],
+            "custom_targets_enabled": True,
+            "custom_targets_count": len(custom_targets),
+            "custom_targets_invalid_count": int(
+                custom_override.get("invalid_count", 0) or 0
+            ),
+            "custom_targets_too_many_count": int(
+                custom_override.get("too_many_count", 0) or 0
+            ),
+            "error": custom_error,
+        }
+
     filtered_source = {}
     filter_eval_error = ""
     try:
@@ -3736,6 +3769,11 @@ def _collect_apihunter_targets(self):
         "manual_scope_host_count": len(scope_override.get("hosts", set())),
         "manual_scope_base_count": len(scope_override.get("bases", set())),
         "manual_scope_preview": list(scope_override.get("lines", []))[:3],
+        "custom_targets_enabled": False,
+        "custom_targets_count": 0,
+        "custom_targets_invalid_count": 0,
+        "custom_targets_too_many_count": 0,
+        "error": "",
     }
     return ordered, meta
 
