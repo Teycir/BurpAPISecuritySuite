@@ -2547,6 +2547,7 @@ Treat this as bug-bounty triage where duplicate reports are common.
 ## Mission
 Find exploit paths that lead to unauthorized sensitive-data access or unauthorized state changes.
 Prioritize non-obvious findings with strong proof over generic low-signal issues.
+The final goal is a working real-world non-destructive exploit narrative that leaves no wiggle room in severe triage.
 
 ## Priority Order
 1. Sensitive-data access via authz flaws (BOLA/IDOR, cross-account reads, token scope abuse)
@@ -2561,6 +2562,9 @@ Prioritize non-obvious findings with strong proof over generic low-signal issues
 3. For every finding, estimate duplicate risk and explain the novelty angle.
 4. Include proof deltas (status/body/header/timing/field-level differences) that demonstrate exploitability.
 5. Include false-positive guards and stop conditions.
+6. Require non-destructive PoCs only (no destructive writes/deletes/irreversible actions).
+7. If only destructive proof exists, mark Needs Verification and list exact missing safe validation artifacts.
+8. Every confirmed claim must cite exact request/response evidence, auth context, UTC timing, and artifact references.
 
 ## Output Requirements
 - Return JSON only.

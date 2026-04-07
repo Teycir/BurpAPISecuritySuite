@@ -749,6 +749,10 @@ Reasoning rules:
 - Use multi-hop graph reasoning over evidence_graph before concluding.
 - Correlate graph + invariant_hints + sequence_candidates.
 - Respect non_destructive findings as replay-safe by default.
+- Require non-destructive PoCs: prove exploitability without destructive writes, deletes, or irreversible business actions.
+- If only destructive proof exists, mark Needs Verification and describe the missing safe validation artifact.
+- Every confirmed finding must cite triage-proof evidence (request/response deltas, auth context, UTC timing, and artifact references).
+- Final goal: a working real-world non-destructive exploit narrative that leaves no wiggle room in severe triage.
 - If truncation.total_truncated > 0, include a truncation report and request overflow artifacts.
 - Assume duplicates are common; estimate duplicate_risk and explain why_novel.
 - Use only evidence from the bundle. Do not invent endpoints, parameters, or responses.
@@ -4291,6 +4295,9 @@ def _build_ai_request_analysis_prompt(self, endpoint_key, entry, source_label):
         "Analyze the supplied HTTP request and response context from Burp capture data.",
         "Primary objective: find paths that expose sensitive data cross-account or allow unauthorized state changes.",
         "Assume duplicates are common; prioritize non-obvious logic flaws before generic issues.",
+        "Require non-destructive PoCs that prove real exploitability and hold up in severe triage.",
+        "No destructive or irreversible business actions in proof steps; if unavoidable, mark Needs Verification and list missing safe artifacts.",
+        "Every confirmed claim must be backed by exact request/response deltas, auth context, UTC timing, and artifact references.",
         "Use this testing order:",
         "1) cross-account sensitive-data access (BOLA/IDOR/authz bypass)",
         "2) role/token privilege pivot and cross-resource reuse",
