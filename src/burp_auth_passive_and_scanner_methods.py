@@ -4815,6 +4815,7 @@ def _run_command_stage(
     output_area,
     timeout_seconds,
     heartbeat_seconds=0,
+    input_text=None,
 ):
     """Run one subprocess stage with cancellation and timeout."""
     import subprocess
@@ -4823,8 +4824,29 @@ def _run_command_stage(
     process = None
     try:
         process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=(subprocess.PIPE if input_text is not None else None),
+            shell=False,
         )
+        if input_text is not None and process.stdin is not None:
+            payload = self._ascii_safe(input_text)
+            if payload and (not payload.endswith("\n")):
+                payload += "\n"
+            try:
+                process.stdin.write(payload)
+            except TypeError:
+                process.stdin.write(payload.encode("utf-8"))
+            finally:
+                try:
+                    process.stdin.close()
+                except Exception as stdin_close_err:
+                    self._callbacks.printError(
+                        "{} stdin close error: {}".format(
+                            tool_name, self._ascii_safe(stdin_close_err)
+                        )
+                    )
         self._set_active_tool_process(tool_key, process)
         start_wait = time_module.time()
         last_heartbeat = start_wait

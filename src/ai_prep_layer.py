@@ -3,6 +3,11 @@
 
 import time
 
+AI_PREP_MAX_HINTS = 300
+AI_PREP_MAX_SEQUENCE_CANDIDATES = 220
+AI_PREP_MAX_GRAPH_NODES = 900
+AI_PREP_MAX_GRAPH_EDGES = 2400
+
 
 def build_ai_prep_layer(extender, data_snapshot, attacks_snapshot):
     """Build non-destructive AI prep artifacts for post-collection triage."""
@@ -22,7 +27,21 @@ def build_ai_prep_layer(extender, data_snapshot, attacks_snapshot):
         "invariant_hints": invariant_hints,
         "sequence_candidates": sequence_candidates,
         "evidence_graph": evidence_graph,
+        "truncation": {
+            "hints": int(invariant_hints.get("truncated_hints", 0) or 0),
+            "sequence_candidates": int(
+                sequence_candidates.get("truncated_candidates", 0) or 0
+            ),
+            "graph_nodes": int(evidence_graph.get("truncated_nodes", 0) or 0),
+            "graph_edges": int(evidence_graph.get("truncated_edges", 0) or 0),
+        },
     }
+    payload["truncation"]["total_truncated"] = (
+        int(payload["truncation"].get("hints", 0) or 0)
+        + int(payload["truncation"].get("sequence_candidates", 0) or 0)
+        + int(payload["truncation"].get("graph_nodes", 0) or 0)
+        + int(payload["truncation"].get("graph_edges", 0) or 0)
+    )
     return extender._sanitize_for_ai_payload(payload)
 
 
@@ -177,11 +196,15 @@ def build_ai_prep_invariant_hints(extender, data_snapshot):
                 [],
             )
 
+    hints_total = len(hints)
+    hints_trimmed = max(0, hints_total - AI_PREP_MAX_HINTS)
     return {
         "schema_version": "1.0",
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "total_hints": len(hints),
-        "hints": hints[:300],
+        "total_hints": hints_total,
+        "max_hints": AI_PREP_MAX_HINTS,
+        "truncated_hints": hints_trimmed,
+        "hints": hints[:AI_PREP_MAX_HINTS],
     }
 
 
@@ -302,11 +325,15 @@ def build_ai_prep_sequence_candidates(extender, data_snapshot):
                 }
             )
 
+    candidate_count = len(candidates)
+    candidate_trimmed = max(0, candidate_count - AI_PREP_MAX_SEQUENCE_CANDIDATES)
     return {
         "schema_version": "1.0",
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "candidate_count": len(candidates),
-        "candidates": candidates[:220],
+        "candidate_count": candidate_count,
+        "max_candidates": AI_PREP_MAX_SEQUENCE_CANDIDATES,
+        "truncated_candidates": candidate_trimmed,
+        "candidates": candidates[:AI_PREP_MAX_SEQUENCE_CANDIDATES],
     }
 
 
@@ -391,11 +418,19 @@ def build_ai_prep_evidence_graph(extender, data_snapshot, attacks_snapshot):
             add_node(attack_node, "attack_candidate", attack_type, {})
             add_edge(endpoint_node, attack_node, "flagged_as")
 
+    node_count = len(nodes)
+    edge_count = len(edges)
+    node_trimmed = max(0, node_count - AI_PREP_MAX_GRAPH_NODES)
+    edge_trimmed = max(0, edge_count - AI_PREP_MAX_GRAPH_EDGES)
     return {
         "schema_version": "1.0",
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "node_count": len(nodes),
-        "edge_count": len(edges),
-        "nodes": nodes[:900],
-        "edges": edges[:2400],
+        "node_count": node_count,
+        "edge_count": edge_count,
+        "max_nodes": AI_PREP_MAX_GRAPH_NODES,
+        "max_edges": AI_PREP_MAX_GRAPH_EDGES,
+        "truncated_nodes": node_trimmed,
+        "truncated_edges": edge_trimmed,
+        "nodes": nodes[:AI_PREP_MAX_GRAPH_NODES],
+        "edges": edges[:AI_PREP_MAX_GRAPH_EDGES],
     }

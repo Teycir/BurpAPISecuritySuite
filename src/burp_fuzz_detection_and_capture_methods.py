@@ -1347,9 +1347,29 @@ def _ai_prep_layer_enabled(self):
 def _build_ai_prep_layer(self, data_snapshot, attacks_snapshot):
     """Build non-destructive AI prep artifacts for post-collection triage."""
     # No endpoint filtering or suppression is applied in runtime scanning.
-    return ai_prep_layer.build_ai_prep_layer(
+    payload = ai_prep_layer.build_ai_prep_layer(
         self, data_snapshot, attacks_snapshot
     )
+    truncation = payload.get("truncation", {}) or {}
+    total_trimmed = int(truncation.get("total_truncated", 0) or 0)
+    if total_trimmed > 0:
+        notice = (
+            "[*] AI prep caps applied: hints={} sequence_candidates={} "
+            "graph_nodes={} graph_edges={} (total truncated: {})\n"
+        ).format(
+            int(truncation.get("hints", 0) or 0),
+            int(truncation.get("sequence_candidates", 0) or 0),
+            int(truncation.get("graph_nodes", 0) or 0),
+            int(truncation.get("graph_edges", 0) or 0),
+            total_trimmed,
+        )
+        area = getattr(self, "fuzzer_area", None)
+        if area is not None:
+            SwingUtilities.invokeLater(lambda t=notice: area.append(t))
+        self.log_to_ui(
+            "[*] AI prep truncation visible: total trimmed {}".format(total_trimmed)
+        )
+    return payload
 
 def _build_ai_prep_invariant_hints(self, data_snapshot):
     """Infer business/workflow invariants auditors often miss in request-level review."""

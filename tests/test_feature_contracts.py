@@ -1193,6 +1193,27 @@ def test_wayback_uses_dedicated_noise_host_filter():
     assert "self._is_wayback_noise_host(host)" in text
     print("[PASS] test_wayback_uses_dedicated_noise_host_filter")
 
+def test_wayback_to_ai_button_is_last_after_clear():
+    text = _source_text()
+    clear_token = '"Clear", Color(220, 53, 69), lambda e: self.wayback_area.setText("")'
+    ai_token = 'lambda e: self._export_text_output_to_ai("Wayback", self.wayback_area.getText())'
+    assert clear_token in text
+    assert ai_token in text
+    assert text.index(clear_token) < text.index(ai_token), "Wayback To AI should come after Clear"
+    print("[PASS] test_wayback_to_ai_button_is_last_after_clear")
+
+def test_fuzzer_to_ai_button_is_last_after_clear():
+    text = _source_text()
+    clear_token = '"Clear", Color(220, 53, 69), lambda e: self.fuzzer_area.setText("")'
+    ai_token = 'lambda e: self._export_text_output_to_ai("Fuzzer", self.fuzzer_area.getText())'
+    copy_curl_token = '"Copy as cURL",'
+    assert clear_token in text
+    assert ai_token in text
+    assert copy_curl_token in text
+    assert text.index(copy_curl_token) < text.index(clear_token), "Fuzzer Copy as cURL should come before Clear"
+    assert text.index(clear_token) < text.index(ai_token), "Fuzzer To AI should come after Clear"
+    print("[PASS] test_fuzzer_to_ai_button_is_last_after_clear")
+
 
 def test_emergency_pkill_button_and_handler_present():
     text = _source_text()
@@ -1230,6 +1251,10 @@ def test_external_tool_commands_are_cross_platform_safe():
         "cmd = self._build_shell_command(custom_httpx_command)",
         "cmd = self._build_shell_command(custom_katana_command)",
         "cmd = self._build_shell_command(custom_wayback_command)",
+        "wayback_path,",
+        '"-dates",',
+        '"-no-subs",',
+        "input_text=safe_domain,",
         '"{apihunter_path} --urls {targets_file} --format ndjson --output {results_file}',
         '"{httpx_path} -l {urls_file} -status-code -nc -silent"',
         '"{katana_path} -list {urls_file} -d 1 -jc -silent"',
@@ -1249,6 +1274,7 @@ def test_external_tool_commands_are_cross_platform_safe():
         '["bash", "-c", custom_httpx_command]',
         '["bash", "-c", custom_katana_command]',
         '["bash", "-c", custom_wayback_command]',
+        '"echo \'{}\' | {} | head -n 200".format(',
         '"cat {urls_file} | {httpx_path}',
         '"cat {urls_file} | {katana_path}',
     ]
@@ -1264,6 +1290,11 @@ def test_runtime_helpers_cover_python3_and_windows_edge_cases():
         "except NameError:",
         'shlex.split(rendered_command, posix=(os.name != "nt"))',
         'shlex.split(command_text, posix=(os.name != "nt"))',
+        "def _validate_custom_command_safety(",
+        "forbidden_fragments = [",
+        "token_allow_pattern = re.compile(",
+        "custom command blocked by safety policy",
+        "trusted operator mode, strict safety checks active",
     ]
     for token in required_tokens:
         assert token in text, "Missing runtime compatibility token: {}".format(token)
@@ -1385,6 +1416,10 @@ def test_ai_prep_layer_exports_are_additive_and_non_destructive():
     text = _source_text()
     required_tokens = [
         "AI_PREP_LAYER_ENV_VAR = \"AI_PREP_LAYER\"",
+        "AI_PREP_MAX_HINTS = 300",
+        "AI_PREP_MAX_SEQUENCE_CANDIDATES = 220",
+        "AI_PREP_MAX_GRAPH_NODES = 900",
+        "AI_PREP_MAX_GRAPH_EDGES = 2400",
         "def _ai_prep_layer_enabled(",
         "def _build_ai_prep_layer(",
         "def _build_ai_prep_invariant_hints(",
@@ -1395,6 +1430,17 @@ def test_ai_prep_layer_exports_are_additive_and_non_destructive():
         "ai_prep_invariant_hints.json",
         "ai_prep_sequence_candidates.json",
         "ai_prep_evidence_graph.json",
+        '"max_hints": AI_PREP_MAX_HINTS,',
+        '"truncated_hints": hints_trimmed,',
+        '"max_candidates": AI_PREP_MAX_SEQUENCE_CANDIDATES,',
+        '"truncated_candidates": candidate_trimmed,',
+        '"max_nodes": AI_PREP_MAX_GRAPH_NODES,',
+        '"truncated_nodes": node_trimmed,',
+        '"max_edges": AI_PREP_MAX_GRAPH_EDGES,',
+        '"truncated_edges": edge_trimmed,',
+        '"total_truncated"',
+        "AI prep caps applied:",
+        "AI prep truncation visible: total trimmed",
         "No endpoint filtering or suppression is applied in runtime scanning.",
     ]
     for token in required_tokens:
@@ -1427,6 +1473,8 @@ def test_sequence_invariants_and_ledger_are_wired():
         '"Proof Mode",',
         '"Spec Guardrails",',
         '"Role Delta",',
+        '"Passive Discovery Deep Logic", self.passive_area.getText()',
+        '"Passive Discovery Advanced Logic", self.passive_area.getText()',
         "def _run_counterfactual_differentials(",
         "def _build_counterfactual_differential_package(",
         "def _sort_and_store_counterfactual_payload(",

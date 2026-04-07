@@ -8586,6 +8586,25 @@ def _resolve_custom_command(self, tool_name, checkbox, field, context, output_ar
         )
         return True, None
 
+    # Custom command mode is intentionally strict: no shell control operators,
+    # no command substitution, and token-level safe-character allow-list.
+    is_safe, blocked_reason = self._validate_custom_command_safety(rendered_command)
+    if not is_safe:
+        output_area.setText(
+            "[!] {} custom command blocked by safety policy\n".format(tool_name)
+        )
+        output_area.append("[!] Reason: {}\n".format(blocked_reason))
+        output_area.append(
+            "[*] Allowed: direct command tokens and simple pipelines only; chaining/redirection/subshell are blocked.\n"
+        )
+        output_area.append(
+            "[*] If you need complex pipelines, run them manually outside extension custom mode.\n"
+        )
+        self.log_to_ui(
+            "[!] {} custom command blocked by safety policy".format(tool_name)
+        )
+        return True, None
+
     try:
         shlex.split(rendered_command, posix=(os.name != "nt"))
     except Exception as e:
@@ -8594,7 +8613,65 @@ def _resolve_custom_command(self, tool_name, checkbox, field, context, output_ar
         )
         return True, None
 
+    self.log_to_ui(
+        "[*] {} custom command enabled (trusted operator mode, strict safety checks active)".format(
+            tool_name
+        )
+    )
     return True, rendered_command
+
+def _validate_custom_command_safety(self, command_text):
+    """Validate custom command text against strict shell-safety policy."""
+    import os
+
+    text = self._ascii_safe(command_text or "").strip()
+    if not text:
+        return False, "Command text is empty"
+
+    forbidden_fragments = [
+        "`",
+        "$(",
+        "${",
+        "&&",
+        "||",
+        ";",
+        ">",
+        "<",
+        "\n",
+        "\r",
+    ]
+    for fragment in forbidden_fragments:
+        if fragment in text:
+            return False, "Forbidden shell fragment: {}".format(fragment)
+
+    try:
+        tokens = shlex.split(text, posix=(os.name != "nt"))
+    except Exception as e:
+        return False, "Unable to parse command tokens: {}".format(self._ascii_safe(e))
+
+    if not tokens:
+        return False, "No executable token found"
+    if tokens[0] == "|" or tokens[-1] == "|":
+        return False, "Pipeline separator cannot start or end command"
+    for idx in range(1, len(tokens)):
+        if tokens[idx] == "|" and tokens[idx - 1] == "|":
+            return False, "Consecutive pipeline separators are not allowed"
+
+    token_allow_pattern = re.compile(r"^[A-Za-z0-9_./:@%+=,?\\\- ()]+$")
+    allowed_separator_tokens = set(["|"])
+    for token in tokens:
+        token_text = self._ascii_safe(token).strip()
+        if not token_text:
+            return False, "Command includes empty token"
+        if token_text in allowed_separator_tokens:
+            continue
+        if not token_allow_pattern.match(token_text):
+            return (
+                False,
+                "Token has unsupported characters: {}".format(token_text[:120]),
+            )
+
+    return True, ""
 
 def _build_shell_command(self, command_text):
     """Build OS-aware shell command wrapper for custom command execution."""

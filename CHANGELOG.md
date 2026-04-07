@@ -70,6 +70,18 @@ All notable changes to this project are documented in this file.
   - default Recon/Logger request/response body capture truncation is now `15KB`.
   - Logger max rows default increased from `5,000` to `20,000` (UI + runtime fallback defaults).
 - ApiHunter runtime target source reporting now explicitly shows whether the run is using Recon filtered scope or `Custom Targets` popup input.
+- GraphQL analysis Wayback stage now avoids shell pipelines:
+  - removed inline `bash -lc "echo ... | waybackurls | head"` execution path,
+  - now runs Wayback binary directly with `shell=False` and stdin-fed domain input.
+- Custom external-tool command override mode now enforces stricter safety validation:
+  - blocks shell chaining/redirection/subshell operators (for example: `&&`, `||`, `;`, `<`, `>`, backticks, `$()`),
+  - allows only tokenized command syntax with simple pipeline support,
+  - logs explicit trusted-operator warning when override mode is active.
+- AI prep export caps are now centralized and explicit:
+  - `hints=300`, `sequence_candidates=220`, `graph_nodes=900`, `graph_edges=2400`,
+  - export payload now carries truncation metadata (`truncated_*`, `max_*`, `total_truncated`).
+- Passive/Fuzzer/Wayback `To AI` action ordering was standardized for operator consistency:
+  - `To AI` now appears as the final action button and is placed directly to the right of `Clear`.
 
 ### Fixed
 - Removed unfiltered fallback behavior for ApiHunter target collection; scans now stay strictly scoped to filtered Recon data.
@@ -91,6 +103,7 @@ All notable changes to this project are documented in this file.
 - Replaced remaining bare `except Exception:` in ApiHunter timeout-kill flow with explicit logged exception handling.
 - Fixed ApiHunter custom-target validation gaps:
   - when `Use Custom Targets` is enabled, empty/invalid/overflow popup content now blocks execution with explicit operator-facing error messaging.
+- Fixed silent AI-prep clipping ambiguity by surfacing cap/truncation notices in Fuzzer output/logs when prep artifacts are trimmed.
 
 ## [1.4.3] - 2026-04-07
 

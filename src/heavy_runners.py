@@ -428,25 +428,34 @@ def _run_graphql_analysis(self, event):
                         )
                         continue
                 for domain in domains[:5]:
+                    safe_domain = self._ascii_safe(domain, lower=True).strip()
+                    if not safe_domain:
+                        continue
                     cmd = [
-                        "bash",
-                        "-lc",
-                        "echo '{}' | {} | head -n 200".format(
-                            domain.replace("'", ""),
-                            wayback_path,
-                        ),
+                        wayback_path,
+                        "-dates",
+                        "-no-subs",
                     ]
                     append_line("[*] Tool: Wayback\n")
-                    append_line("[*] CMD: {}\n".format(" ".join(cmd)))
+                    append_line("[*] CMD: {} (stdin: {})\n".format(" ".join(cmd), safe_domain))
                     ok, cancelled, stdout_data, err = self._run_command_stage(
-                        "graphqlanalysis", "Wayback", cmd, self.graphql_area, 60
+                        "graphqlanalysis",
+                        "Wayback",
+                        cmd,
+                        self.graphql_area,
+                        60,
+                        input_text=safe_domain,
                     )
                     if cancelled:
                         append_line("[!] GraphQL analysis cancelled by user\n")
                         return
                     if not ok:
                         append_line("[!] Wayback error: {}\n".format(self._ascii_safe(err)))
+                    line_count = 0
                     for line in self._ascii_safe(stdout_data).splitlines():
+                        if line_count >= 200:
+                            break
+                        line_count += 1
                         url_value = self._clean_url(line)
                         if url_value and "graphql" in self._ascii_safe(
                             url_value, lower=True

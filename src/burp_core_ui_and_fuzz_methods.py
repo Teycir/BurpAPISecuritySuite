@@ -2484,7 +2484,8 @@ def _create_preset_help_button(
             lines.append("  - {}".format(placeholder))
         lines.append("")
         lines.append("Override Rules:")
-        lines.append("  - Custom command must be valid shell syntax.")
+        lines.append("  - Custom command must be valid command syntax.")
+        lines.append("  - Shell chaining/redirection/subshell operators are blocked.")
         lines.append("  - Unknown placeholders are rejected.")
         lines.append("  - Empty custom command is rejected when override is enabled.")
         if override_notes:
@@ -3340,11 +3341,6 @@ def _create_fuzzer_tab(self):
     )
     controls.add(
         self._create_action_button(
-            "Clear", Color(220, 53, 69), lambda e: self.fuzzer_area.setText("")
-        )
-    )
-    controls.add(
-        self._create_action_button(
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.fuzzer_area.getText()),
@@ -3352,16 +3348,21 @@ def _create_fuzzer_tab(self):
     )
     controls.add(
         self._create_action_button(
-            "To AI",
-            Color(33, 150, 243),
-            lambda e: self._export_text_output_to_ai("Fuzzer", self.fuzzer_area.getText()),
+            "Copy as cURL",
+            Color(76, 175, 80),
+            lambda e: self._copy_attack_as_curl(),
         )
     )
     controls.add(
         self._create_action_button(
-            "Copy as cURL",
-            Color(76, 175, 80),
-            lambda e: self._copy_attack_as_curl(),
+            "Clear", Color(220, 53, 69), lambda e: self.fuzzer_area.setText("")
+        )
+    )
+    controls.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("Fuzzer", self.fuzzer_area.getText()),
         )
     )
 
@@ -3914,6 +3915,15 @@ def _create_passive_discovery_tab(self):
         )
     )
     deep_logic_row.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Passive Discovery Deep Logic", self.passive_area.getText()
+            ),
+        )
+    )
+    deep_logic_row.add(
         JLabel(
             "Non-destructive deep logic checks. Includes scoreless differential invariants plus Sequence/Golden/State/Token Lineage/Parity Drift analysis."
         )
@@ -3954,6 +3964,15 @@ def _create_passive_discovery_tab(self):
             "Role Delta",
             Color(123, 104, 238),
             lambda e: self._run_role_delta_engine(e),
+        )
+    )
+    advanced_logic_row.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Passive Discovery Advanced Logic", self.passive_area.getText()
+            ),
         )
     )
     advanced_logic_row.add(
@@ -4531,13 +4550,6 @@ def _create_wayback_tab(self):
             lambda e: self._copy_to_clipboard(self.wayback_area.getText()),
         )
     )
-    controls_line2.add(
-        self._create_action_button(
-            "To AI",
-            Color(33, 150, 243),
-            lambda e: self._export_text_output_to_ai("Wayback", self.wayback_area.getText()),
-        )
-    )
     controls_line1.add(JLabel(" | From:"))
     self.wayback_from_field = JTextField("2020", 4)
     controls_line1.add(self.wayback_from_field)
@@ -4605,6 +4617,13 @@ def _create_wayback_tab(self):
     controls_line2.add(
         self._create_action_button(
             "Clear", Color(220, 53, 69), lambda e: self.wayback_area.setText("")
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("Wayback", self.wayback_area.getText()),
         )
     )
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
