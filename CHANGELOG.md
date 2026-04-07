@@ -35,7 +35,7 @@ All notable changes to this project are documented in this file.
   - `TOP FINDINGS` defaults to `>= MEDIUM` display (suppresses low/info noise in high-volume runs).
   - entries include richer context when available: `confidence`, `scanner`, `evidence`, and `remediation`.
   - runtime meta context now includes HTTP request/retry stats and scanner finding distribution.
-- ApiHunter `Top Findings Min Severity` is now operator-configurable (`Critical` / `High` / `Medium`) and persisted across extension restarts.
+- ApiHunter `Top Findings Min` is now operator-configurable (`Critical` / `High` / `Medium`) and persisted across extension restarts.
 - ApiHunter default preset commands now mirror Desktop flags without Burp-injected `--min-severity` / `--no-auto-report` additions.
 - ApiHunter default overlap-trim set now disables only `CORS` and `OpenAPI` checks (no longer disables CSP/GraphQL/API versioning by default).
 - ApiHunter run header now uses one non-redundant severity line: `Top Findings Min` (Burp display filter).
@@ -45,6 +45,9 @@ All notable changes to this project are documented in this file.
 - ApiHunter runner was simplified to an ApiHunter-native execution model:
   - Burp now launches the selected ApiHunter command and renders results, without Burp-side runtime guardrails/tuning heuristics.
   - Deep/Gap-Fill presets now use concise ApiHunter-native flags (no Burp-injected watchdog/max-endpoints runtime controls).
+- Capture defaults now retain more context:
+  - request/response body capture truncation default increased from `5KB` to `20KB`.
+  - Logger max memory default increased from `5,000` to `20,000` rows (UI + runtime fallback defaults).
 
 ### Fixed
 - Removed unfiltered fallback behavior for ApiHunter target collection; scans now stay strictly scoped to filtered Recon data.
@@ -57,6 +60,13 @@ All notable changes to this project are documented in this file.
 - Split ApiHunter toolbar into an additional command/preset row so `Preset` controls are not truncated on common screen widths.
 - Fixed ApiHunter timeout parse gap: when `results.ndjson` exists but is empty/partial, Burp now also parses streamed stdout NDJSON and merges/deduplicates findings/errors.
 - Fixed result-loss edge case by parsing both `results.ndjson` and stdout JSON output sources, then deduplicating merged findings/error records before summary rendering.
+- Added startup collision guard for split-module method injection:
+  - duplicate `__all__` exports across modules now raise a clear `RuntimeError` instead of silently shadowing methods.
+- Tightened `process_traffic` synchronization:
+  - memory-rotation and sample-cap checks now share one pre-extraction lock window,
+  - append path now re-checks sample cap to avoid over-cap races during concurrent capture.
+- Removed SSTI probe markers (`{{7*7}}`, `${7*7}`, `<%= 7*7 %>`, `#{7*7}`) from XSS payload list while keeping them in SSTI payloads.
+- Replaced remaining bare `except Exception:` in ApiHunter timeout-kill flow with explicit logged exception handling.
 
 ## [1.4.3] - 2026-04-07
 

@@ -6363,6 +6363,11 @@ def _process_apihunter_ndjson_results(self, results_file, output_area):
         summary.append("[*] Medium: {}".format(severity_counts["medium"]))
         summary.append("[*] Low: {}".format(severity_counts["low"]))
         summary.append("[*] Info: {}".format(severity_counts["info"]))
+        summary.append(
+            "[*] Top Findings Min: {} (Burp display filter)".format(
+                top_findings_min_severity.upper()
+            )
+        )
         summary.append("")
         
         if scanner_counts:

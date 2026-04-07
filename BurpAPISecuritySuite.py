@@ -1223,14 +1223,24 @@ _BURP_METHOD_MODULES = [
     burp_auth_passive_and_scanner_methods,
     burp_wayback_import_and_logging_methods,
 ]
+_burp_export_owners = {}
 for _burp_module in _BURP_METHOD_MODULES:
     _burp_module.SearchListener = SearchListener
     _burp_module.EndpointClickListener = EndpointClickListener
     _burp_module.EndpointSelectionListener = EndpointSelectionListener
     _burp_module.EndpointRenderer = EndpointRenderer
     for _burp_name in _burp_module.__all__:
+        _previous_owner = _burp_export_owners.get(_burp_name)
+        if _previous_owner:
+            raise RuntimeError(
+                "Duplicate BurpExtender export '{}' found in {} and {}".format(
+                    _burp_name, _previous_owner, _burp_module.__name__
+                )
+            )
         setattr(BurpExtender, _burp_name, getattr(_burp_module, _burp_name))
+        _burp_export_owners[_burp_name] = _burp_module.__name__
 
 del _BURP_METHOD_MODULES
+del _burp_export_owners
 del _burp_module
 del _burp_name

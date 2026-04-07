@@ -44,6 +44,17 @@ def _source_text():
     return "\n".join(chunks)
 
 
+def _repo_file_text(filename):
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src_path = os.path.join(base_dir, "src", filename)
+    if os.path.exists(src_path):
+        target_path = src_path
+    else:
+        target_path = os.path.join(base_dir, filename)
+    with open(target_path, "r") as handle:
+        return handle.read()
+
+
 def test_fuzzer_dropdown_includes_extended_modes():
     text = _source_text()
     required = [
@@ -1619,3 +1630,53 @@ def test_ai_export_actions_are_wired_across_outputs():
         assert token in text, "Missing AI export token: {}".format(token)
     assert text.count('"To AI"') >= 12
     print("[PASS] test_ai_export_actions_are_wired_across_outputs")
+
+
+def test_method_injection_rejects_duplicate_exports():
+    text = _repo_file_text("BurpAPISecuritySuite.py")
+    required_tokens = [
+        "_burp_export_owners = {}",
+        "_previous_owner = _burp_export_owners.get(_burp_name)",
+        "if _previous_owner:",
+        "Duplicate BurpExtender export",
+        "_burp_export_owners[_burp_name] = _burp_module.__name__",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing duplicate export guard token: {}".format(token)
+    print("[PASS] test_method_injection_rejects_duplicate_exports")
+
+
+def test_process_traffic_uses_single_pre_extract_lock_window():
+    text = _repo_file_text("jython_size_helpers.py")
+    start = text.index("def process_traffic(extender, messageInfo, source_tool=\"Unknown\"):")
+    end = text.index("def show_endpoint_details(extender, endpoint_key):", start)
+    section = text[start:end]
+    pre_extract = section.split("# Extract comprehensive data", 1)[0]
+
+    assert (
+        "Memory limit check + sample-cap gate under one lock window." in pre_extract
+    )
+    assert pre_extract.count("with self.lock:") == 1
+    assert "Limit samples per endpoint" not in pre_extract
+    print("[PASS] test_process_traffic_uses_single_pre_extract_lock_window")
+
+
+def test_xss_payloads_exclude_ssti_probe_markers():
+    text = _repo_file_text("burp_core_ui_and_fuzz_methods.py")
+    xss_start = text.index("def _get_xss_payloads(self):")
+    ssti_start = text.index("def _get_ssti_payloads(self):", xss_start)
+    xss_block = text[xss_start:ssti_start]
+    ssti_end = text.find("\ndef _get_", ssti_start + 1)
+    if ssti_end == -1:
+        ssti_end = len(text)
+    ssti_block = text[ssti_start:ssti_end]
+
+    ssti_markers = ['"{{7*7}}"', '"${7*7}"', '"<%= 7*7 %>"', '"#{7*7}"']
+    for marker in ssti_markers:
+        assert marker not in xss_block, "SSTI marker leaked into XSS list: {}".format(
+            marker
+        )
+        assert marker in ssti_block, "Missing SSTI marker in SSTI list: {}".format(
+            marker
+        )
+    print("[PASS] test_xss_payloads_exclude_ssti_probe_markers")

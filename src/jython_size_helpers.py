@@ -617,7 +617,8 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
         normalized_path = self._normalize_path(path)
         endpoint_key = "{}:{}".format(method, normalized_path)
 
-        # Memory limit check with rotation
+        # Memory limit check + sample-cap gate under one lock window.
+        max_samples = int(str(self.sample_limit.getSelectedItem()))
         with self.lock:
             if len(self.api_data) >= self.max_endpoints:
                 # Remove 10% oldest endpoints
@@ -637,10 +638,6 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
                         to_remove, self.max_endpoints
                     )
                 )
-
-        # Limit samples per endpoint
-        max_samples = int(str(self.sample_limit.getSelectedItem()))
-        with self.lock:
             if (
                 endpoint_key in self.api_data
                 and len(self.api_data[endpoint_key]) >= max_samples
@@ -693,6 +690,11 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
         logger_tags = []
         auto_tags = list(self._auto_tag(api_entry) or [])
         with self.lock:
+            if (
+                endpoint_key in self.api_data
+                and len(self.api_data[endpoint_key]) >= max_samples
+            ):
+                return
             if endpoint_key not in self.api_data:
                 self.api_data[endpoint_key] = []
                 self.endpoint_tags[endpoint_key] = list(auto_tags)

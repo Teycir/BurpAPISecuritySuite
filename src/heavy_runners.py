@@ -2845,7 +2845,7 @@ def _run_apihunter(self, event):
     targets_file = os.path.join(temp_dir, "targets.txt")
     results_file = os.path.join(temp_dir, "results.ndjson")
 
-    targets, _ = self._collect_apihunter_targets()
+    targets, target_meta = self._collect_apihunter_targets()
     if not targets:
         self._cleanup_temp_dir(temp_dir, "apihunter empty")
         self.apihunter_area.setText("[!] No targets\n")
@@ -2868,7 +2868,7 @@ def _run_apihunter(self, event):
         self._callbacks.printError("ApiHunter calibration read error: {}".format(str(e)))
 
     # Check for custom command override
-    use_custom, custom_command = self._resolve_custom_command(
+    use_custom, custom_apihunter_command = self._resolve_custom_command(
         "ApiHunter",
         self.apihunter_custom_cmd_checkbox,
         self.apihunter_custom_cmd_field,
@@ -2879,22 +2879,23 @@ def _run_apihunter(self, event):
         },
         self.apihunter_area,
     )
-    if use_custom and not custom_command:
+    if use_custom and not custom_apihunter_command:
         self._cleanup_temp_dir(temp_dir, "apihunter custom command validation")
         return
 
     self.apihunter_area.setText("[*] Running ApiHunter...\n")
     if not use_custom:
         self.apihunter_area.append("[*] Calibration: {}\n".format(calibration))
+    _ = target_meta
     self.apihunter_area.append("[*] Targets: {}\n\n".format(len(targets)))
     self._clear_tool_cancel("apihunter")
 
     def run_scan():
         process = None
         try:
-            if use_custom and custom_command:
-                cmd = self._build_shell_command(custom_command)
-                display_cmd = custom_command
+            if use_custom and custom_apihunter_command:
+                cmd = self._build_shell_command(custom_apihunter_command)
+                display_cmd = custom_apihunter_command
                 SwingUtilities.invokeLater(
                     lambda: self.apihunter_area.append(
                         "[*] Custom command override enabled\n"
@@ -2984,8 +2985,10 @@ def _run_apihunter(self, event):
                     try:
                         process.kill()
                         process.wait()
-                    except Exception:
-                        pass
+                    except Exception as kill_err:
+                        self._callbacks.printError(
+                            "ApiHunter timeout kill error: {}".format(str(kill_err))
+                        )
                     SwingUtilities.invokeLater(
                         lambda: self.apihunter_area.append("\n[!] Timeout after {}s\n".format(max_timeout))
                     )

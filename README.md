@@ -323,7 +323,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Timeline View**: High-signal request timeline (`tool`, `method`, `host/path`, `status`, `len`, `type`, `tags`).
 - **Two-Line Toolbar**: Controls are split across two rows to avoid hidden/clipped actions.
 - **Noise Filter**: Shared noise suppression aligned with Recon filtering heuristics.
-- **Auto Prune**: Trims oldest Logger rows when `Max Memory` is exceeded.
+- **Auto Prune**: Trims oldest Logger rows when `Max Memory` is exceeded (default `20,000` rows).
 - **Logging Off**: Single capture toggle for Logger ingestion (`on/off` model).
 - **Clear Data**: Shared clear action that resets both Logger events and Recon captured data.
 - **ReqM / RespM**: Useful marker counts by default, and regex hit counts when regex is active.
@@ -388,7 +388,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **ApiHunter Path**: Configure `apihunter` binary path (default auto-detection searches runtime `PATH`, then shell probes (`bash -lc` and `bash -ic`) via `command -v`, and copies the discovered absolute path; no static fallback candidates)
 - **Runtime PATH Resolve**: On `Run ApiHunter`, the suite re-resolves `apihunter` from PATH (process + shell probe) and auto-updates the field to the resolved absolute binary when available
 - **Calibration**: `Quick (Desktop Preset)`, `Balanced (Desktop Preset)` (default), `Deep (Desktop Preset)`
-- **Top Findings Min Severity**: Operator-configurable `Critical` / `High` / `Medium` threshold for summary triage noise control
+- **Top Findings Min**: Operator-configurable `Critical` / `High` / `Medium` threshold for summary triage noise control
 - **Always Filtered Source**: Consumes current Recon filtered view and emits de-duplicated host-base targets (`scheme://host[:port]/`) for ApiHunter
 - **Run ApiHunter**: Executes ApiHunter using ApiHunter-native command behavior (Burp acts as a thin launcher + result renderer)
 - **Default Command Model**: Burp does not apply extra runtime heuristics (no Burp-side watchdog caps or endpoint-expansion overrides); default flags mirror ApiHunter Desktop presets
@@ -661,7 +661,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - Host, protocol, port
 - Query string and all parameter types (URL, body, cookie, JSON)
 - Request/response headers
-- Request/response bodies (truncated to 5KB)
+- Request/response bodies (truncated to 20KB)
 - Response status codes
 - Content types
 - Authentication methods detected
@@ -816,7 +816,7 @@ vulnerability type. Focus on:
 
 - **Normalization**: Replaces numeric IDs, UUIDs, ObjectIDs with placeholders
 - **Deduplication**: Tracks unique endpoints by method + normalized path
-- **Truncation**: Bodies limited to 5KB, samples limited to 3 per endpoint
+- **Truncation**: Bodies limited to 20KB, samples limited to 3 per endpoint
 - **Auth Detection**: Identifies Bearer, Basic, API Key, Session Cookie
 - **Pattern Matching**: Regex-based detection for REST, GraphQL, SOAP
 
@@ -824,7 +824,7 @@ vulnerability type. Focus on:
 
 - Does not capture WebSocket traffic
 - Binary responses not fully analyzed
-- Large responses truncated (5KB limit)
+- Large responses truncated (20KB limit)
 - Requires Jython (Python 2.7 syntax)
 
 ## Use Cases
@@ -870,9 +870,9 @@ A: Download Jython Standalone JAR from https://www.jython.org/download, then in 
 
 A: The extension efficiently handles 500+ endpoints with automatic rotation when the limit (800) is reached. Older endpoints are automatically removed.
 
-**Q: Why are responses truncated to 5KB?**
+**Q: Why are responses truncated to 20KB?**
 
-A: To prevent memory issues with large responses. This is sufficient for security analysis while maintaining performance.
+A: To prevent memory issues with large responses while preserving useful analysis context. The current default body capture cap is 20KB.
 
 **Q: Can I increase the sample limit per endpoint?**
 
@@ -1115,6 +1115,17 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 ## Updates & Roadmap
 
 ### Recent Updates
+
+### v1.4.4 - ApiHunter Integration + Stability Hardening
+- ✅ Added dedicated `ApiHunter` tab with Desktop-parity presets, PATH-aware runtime resolution, and parsed NDJSON summary rendering.
+- ✅ Added operator-configurable `Top Findings Min` filter (`Critical` / `High` / `Medium`) with persisted UI state.
+- ✅ Increased capture defaults for long-session usability:
+  - body truncation default `5KB` -> `20KB`,
+  - Logger max memory default `5,000` -> `20,000` rows.
+- ✅ Hardened split-module runtime wiring and capture safety:
+  - duplicate `__all__` export names now fail fast at startup,
+  - `process_traffic` lock window tightened to reduce sample-cap race edges.
+- ✅ Cleaned payload categorization by removing SSTI probe markers from XSS payload list (SSTI list remains intact).
 
 ### v1.4.3 - Token Lineage + Cross-Interface Parity Drift
 - ✅ Added standalone Passive deep-logic actions:
