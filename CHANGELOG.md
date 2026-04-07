@@ -3,6 +3,61 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.4.4] - 2026-04-07
+
+### Added
+- Native ApiHunter integration tab:
+  - New tab: `ApiHunter` (placed before `Nuclei` in main workflow order).
+  - New runner wiring: `_run_apihunter` via `src/heavy_runners.py`.
+  - New target export action: `Export Targets` for ApiHunter-scoped input lists.
+- ApiHunter deep-calibration profiles tuned for complementary value:
+  - `Deep Search (WAF Evasive Recommended)` (default)
+  - `Deep (Fast)`
+  - `Gap-Fill (Balanced)`
+  - `Passive Drift`
+- WAF-evasive deep defaults:
+  - Adds `--waf-evasion`, custom `--user-agents`, lower concurrency, higher delay, adaptive/per-host controls, and active deep-response checks.
+
+### Changed
+- ApiHunter calibration profiles were realigned to ApiHunter Desktop defaults:
+  - `Quick (Desktop Preset)`
+  - `Balanced (Desktop Preset)` (default)
+  - `Deep (Desktop Preset)`
+- ApiHunter target feed now emits filtered/deduped host-base targets (`scheme://host[:port]/`) from filtered Recon scope.
+- ApiHunter default command assembly now mirrors desktop preset flags (including `--filter-timeout`, endpoint caps, and per-profile active/dry-run/WAF settings) without Burp-side runtime tuning logic.
+- ApiHunter target source now always uses Recon filtered view (whether filters are actively narrowed or at default state).
+- ApiHunter targets are now canonically de-duplicated before execution (including normalization for equivalent URL variants).
+- ApiHunter path defaults now use strict PATH discovery: find `apihunter` in `PATH` and prefill the discovered absolute binary path (no fallback candidates).
+- ApiHunter strict PATH discovery now probes process `PATH` plus shell modes (`bash -lc` and `bash -ic` with `command -v apihunter`) to handle GUI-launched Burp environment gaps.
+- Tool-health coverage now includes ApiHunter binary signature checks.
+- External stop/emergency-kill coverage now includes ApiHunter (`Stop`, tracked process stop, and pkill/taskkill sweeps).
+- ApiHunter report formatter now produces higher-signal summaries:
+  - `TOP FINDINGS` defaults to `>= MEDIUM` display (suppresses low/info noise in high-volume runs).
+  - entries include richer context when available: `confidence`, `scanner`, `evidence`, and `remediation`.
+  - runtime meta context now includes HTTP request/retry stats and scanner finding distribution.
+- ApiHunter `Top Findings Min Severity` is now operator-configurable (`Critical` / `High` / `Medium`) and persisted across extension restarts.
+- ApiHunter default preset commands now mirror Desktop flags without Burp-injected `--min-severity` / `--no-auto-report` additions.
+- ApiHunter default overlap-trim set now disables only `CORS` and `OpenAPI` checks (no longer disables CSP/GraphQL/API versioning by default).
+- ApiHunter run header now uses one non-redundant severity line: `Top Findings Min` (Burp display filter).
+- ApiHunter default calibrations now allow overlap scanners by default while relying on ApiHunter-native runtime behavior.
+- Added explicit `Deep (Fast)` calibration profile for speed-first deep scans.
+- ApiHunter launch now auto-resolves `apihunter` from PATH at run-time (process PATH + shell `command -v` probe) and auto-fills the field with the resolved absolute binary.
+- ApiHunter runner was simplified to an ApiHunter-native execution model:
+  - Burp now launches the selected ApiHunter command and renders results, without Burp-side runtime guardrails/tuning heuristics.
+  - Deep/Gap-Fill presets now use concise ApiHunter-native flags (no Burp-injected watchdog/max-endpoints runtime controls).
+
+### Fixed
+- Removed unfiltered fallback behavior for ApiHunter target collection; scans now stay strictly scoped to filtered Recon data.
+- Strengthened ApiHunter output clarity with explicit source/de-dup metadata and surfaced parse/runtime errors.
+- Hardened external binary validation: if all expected flags appear missing, the help probe now force-refreshes cache and retries once before reporting incompatibility.
+- Fixed ApiHunter no-op launch path: target-filter config now reads from filtered Recon snapshot format (no list/dict mismatch crash).
+- Fixed silent ApiHunter failures: launcher and target collection errors are now always surfaced in-tab and in Burp error logs.
+- Fixed ApiHunter preset UX: preset dropdown now has stable display width and preloads the default deep-search template text for immediate visibility.
+- Standardized AI export popups to reusable `Copy`/`Exit` two-button dialogs across tab `To AI` actions and Logger AI request export.
+- Split ApiHunter toolbar into an additional command/preset row so `Preset` controls are not truncated on common screen widths.
+- Fixed ApiHunter timeout parse gap: when `results.ndjson` exists but is empty/partial, Burp now also parses streamed stdout NDJSON and merges/deduplicates findings/errors.
+- Fixed result-loss edge case by parsing both `results.ndjson` and stdout JSON output sources, then deduplicating merged findings/error records before summary rendering.
+
 ## [1.4.3] - 2026-04-07
 
 ### Added
@@ -37,6 +92,14 @@ All notable changes to this project are documented in this file.
   - `parity_drift_ledger.json`
   - `ai_parity_drift_findings.json`
   - `ai_parity_drift_ledger.json`
+- Excalibur bridge interoperability:
+  - Added shared export artifact `excalibur_bridge_bundle.json` with schema `excalibur-burp-bridge/v1`.
+  - Added import support for Excalibur session exports:
+    - `.har`
+    - `-replay-studio.json`
+    - `-cookies.json`
+    - `-insights.json`
+    - bridge bundles (`schema: excalibur-burp-bridge/v1`)
 
 ### Changed
 - `Run Invariants` and Recon `Refresh Invariants` now include Token Lineage generation/storage alongside Differential + Sequence + Golden + State flows.
@@ -46,6 +109,7 @@ All notable changes to this project are documented in this file.
 - Recon invariant footer status now includes `Parity=` cached count.
 - AI bundle/schema/all-tabs context now include `parity_drift` block and `parity_drift_count` metadata.
 - Captured endpoint samples now include additive timing metadata (`captured_at`, `captured_at_epoch_ms`) for time-window drift analysis.
+- Recon `Import` now auto-discovers Excalibur sidecars by session prefix and auto-runs deep-logic invariant refresh after Excalibur imports.
 
 ## [1.4.2] - 2026-04-07
 

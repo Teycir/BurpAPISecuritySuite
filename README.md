@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.4.3-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.4.4-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -49,6 +49,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
     - [Fuzzer Tab](#fuzzer-tab)
     - [Parameter Analysis](#parameter-analysis)
     - [Diff View](#diff-view)
+    - [ApiHunter Tab](#apihunter-tab)
     - [Nuclei Tab](#nuclei-tab)
     - [Katana Tab](#katana-tab)
     - [HTTPX Tab](#httpx-tab)
@@ -77,16 +78,17 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
       - [5. Fuzzer Tab](#5-fuzzer-tab)
       - [6. Auth Replay Tab](#6-auth-replay-tab)
       - [7. Passive Discovery Tab](#7-passive-discovery-tab)
-      - [8. Nuclei Tab](#8-nuclei-tab)
-      - [9. HTTPX Tab](#9-httpx-tab)
-      - [10. Katana Tab](#10-katana-tab)
-      - [11. FFUF Tab](#11-ffuf-tab)
-      - [12. Wayback Tab](#12-wayback-tab)
-      - [13. SQLMap Verify Tab](#13-sqlmap-verify-tab)
-      - [14. Dalfox Verify Tab](#14-dalfox-verify-tab)
-      - [15. API Assets Tab](#15-api-assets-tab)
-      - [16. OpenAPI Drift Tab](#16-openapi-drift-tab)
-      - [17. GraphQL Tab](#17-graphql-tab)
+      - [8. ApiHunter Tab](#8-apihunter-tab)
+      - [9. Nuclei Tab](#9-nuclei-tab)
+      - [10. HTTPX Tab](#10-httpx-tab)
+      - [11. Katana Tab](#11-katana-tab)
+      - [12. FFUF Tab](#12-ffuf-tab)
+      - [13. Wayback Tab](#13-wayback-tab)
+      - [14. SQLMap Verify Tab](#14-sqlmap-verify-tab)
+      - [15. Dalfox Verify Tab](#15-dalfox-verify-tab)
+      - [16. API Assets Tab](#16-api-assets-tab)
+      - [17. OpenAPI Drift Tab](#17-openapi-drift-tab)
+      - [18. GraphQL Tab](#18-graphql-tab)
   - [Advanced Fuzzing Capabilities](#advanced-fuzzing-capabilities)
     - [Attack Types Detected](#attack-types-detected)
     - [Exported Data Structure](#exported-data-structure)
@@ -158,6 +160,9 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
 ### Diff View
 ![Diff Analysis](public/diff.png)
 
+### ApiHunter Tab
+Integrated gap-fill + deep-search runner calibrated to complement Nuclei/HTTPX/Katana coverage.
+
 ### Nuclei Tab
 ![Nuclei Integration](public/nuclei.png)
 
@@ -211,6 +216,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **WAF Evasion**: Header injection, encoding bypass, method override, path manipulation
 
 ### 🔍 Discovery Tools
+- **ApiHunter Deep Search**: Filtered/deduped endpoint scans with WAF-evasive gap-fill calibration for auth/workflow/API-logic issues
 - **Version Scanner**: Test API version variations (v1, v2, dev, staging, legacy)
 - **Param Miner**: Discover hidden parameters (admin, debug, internal, callback)
 - **SQLMap Verify**: Confirm SQL injection candidates with evidence-driven sqlmap checks
@@ -251,7 +257,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 | **Version Scanner** | ✅ Built-in | ❌ No | ❌ No | ❌ No |
 | **Parameter Mining** | ✅ Built-in | ⚠️ Extension needed | ❌ No | ❌ No |
 | **Wayback Discovery** | ✅ Built-in | ❌ No | ❌ No | ❌ No |
-| **External Tool Integration** | ✅ Nuclei, SQLMap, Dalfox, HTTPX, Katana, FFUF, Subfinder, DNSX | ❌ No | ⚠️ Limited | ⚠️ Limited |
+| **External Tool Integration** | ✅ ApiHunter, Nuclei, SQLMap, Dalfox, HTTPX, Katana, FFUF, Subfinder, DNSX | ❌ No | ⚠️ Limited | ⚠️ Limited |
 | **WAF Bypass Techniques** | ✅ 20+ methods | ⚠️ Some | ⚠️ Some | ❌ No |
 | **Export Formats** | JSON, Intruder, Turbo, Nuclei, cURL | XML, HTML | XML, HTML, JSON | JSON, cURL |
 | **Burp Community Support** | ✅ Yes | ❌ Pro only | N/A | N/A |
@@ -267,7 +273,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Differential-First Logic Coverage**: Includes scoreless counterfactual drift checks that many signature scanners miss
 - **Token Lifecycle Drift Coverage**: Adds passive token-lineage analysis for logout/refresh/session-rotation gaps many scanners ignore
 - **Comprehensive Coverage**: 15 attack types with 108+ API-specific payloads
-- **External Tool Integration**: Seamlessly integrates with Nuclei, SQLMap, Dalfox, HTTPX, Katana, FFUF, Subfinder, and DNSX
+- **External Tool Integration**: Seamlessly integrates with ApiHunter, Nuclei, SQLMap, Dalfox, HTTPX, Katana, FFUF, Subfinder, and DNSX
 - **Works with Burp Community**: No need for expensive Burp Pro license
 - **Active Development**: Regular updates with new attack vectors and features
 
@@ -304,10 +310,10 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export All**: Export complete API analysis to JSON
 - **Export Host**: Export specific host endpoints
 - **Export AI Bundle**: Export all-tab AI-ready context + LLM request payloads
-- **Import**: Load previously exported data
+- **Import**: Load Suite exports, Excalibur HAR/session sidecars, or `excalibur-burp-bridge/v1` bundles
 - **Postman**: Export scoped endpoints to Postman Collection v2.1
 - **Insomnia**: Export scoped endpoints to Insomnia import JSON
-- **Tool Health**: One-click diagnostics for Nuclei/HTTPX/Katana/FFUF/Wayback/SQLMap/Dalfox/Subfinder/DNSX binary compatibility
+- **Tool Health**: One-click diagnostics for ApiHunter/Nuclei/HTTPX/Katana/FFUF/Wayback/SQLMap/Dalfox/Subfinder/DNSX binary compatibility
 - **Button Help**: Quick guide for Recon buttons and expected outputs
 - **Refresh Invariants**: Refresh Differential + Sequence + Golden + State Matrix + Token Lineage + Parity Drift analysis from captured endpoints before AI export
 - **Invariant Status Line**: Shows Differential, Sequence, Golden, State Matrix, Token Lineage, and Parity Drift cache counts with source/update time
@@ -378,7 +384,27 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Advanced Exports**: Also writes `abuse_chain_*`, `proof_mode_packet_sets`, `spec_guardrails_*`, and `role_delta_*` JSON artifacts
 - **Output**: Severity/categorical summary plus top findings for triage
 
-#### 8. Nuclei Tab
+#### 8. ApiHunter Tab
+- **ApiHunter Path**: Configure `apihunter` binary path (default auto-detection searches runtime `PATH`, then shell probes (`bash -lc` and `bash -ic`) via `command -v`, and copies the discovered absolute path; no static fallback candidates)
+- **Runtime PATH Resolve**: On `Run ApiHunter`, the suite re-resolves `apihunter` from PATH (process + shell probe) and auto-updates the field to the resolved absolute binary when available
+- **Calibration**: `Quick (Desktop Preset)`, `Balanced (Desktop Preset)` (default), `Deep (Desktop Preset)`
+- **Top Findings Min Severity**: Operator-configurable `Critical` / `High` / `Medium` threshold for summary triage noise control
+- **Always Filtered Source**: Consumes current Recon filtered view and emits de-duplicated host-base targets (`scheme://host[:port]/`) for ApiHunter
+- **Run ApiHunter**: Executes ApiHunter using ApiHunter-native command behavior (Burp acts as a thin launcher + result renderer)
+- **Default Command Model**: Burp does not apply extra runtime heuristics (no Burp-side watchdog caps or endpoint-expansion overrides); default flags mirror ApiHunter Desktop presets
+- **Desktop Preset Parity**:
+  - `Quick`: `--no-discovery`, `--max-endpoints 40`, `--concurrency 4`, `--timeout-secs 12`, `--retries 1`, `--delay-ms 0`, and disables heavy scanners (mass-assignment, oauth-oidc, rate-limit, cve-templates, websocket)
+  - `Balanced`: `--no-discovery`, `--max-endpoints 80`, `--concurrency 5`, `--timeout-secs 15`, `--retries 1`, `--delay-ms 50`
+  - `Deep`: `--active-checks --response-diff-deep --no-discovery`, `--max-endpoints 0`, `--concurrency 6`, `--timeout-secs 20`, `--retries 2`, `--delay-ms 100`, `--waf-evasion`, `--per-host-clients`, `--adaptive-concurrency`
+- **Enable Custom**: Opt in to full command override with placeholders (`{apihunter_path}`, `{targets_file}`, `{results_file}`)
+- **Preset Visibility**: Preset dropdown is always visible and seeded with Desktop-equivalent templates
+- **Stop / PKill Tools**: Cancel active runs safely or emergency-stop external scanner processes
+- **Export Targets**: Save filtered/deduped host-base target list for offline ApiHunter usage
+- **Output**: Parsed NDJSON findings summary with severity/scanner/runtime breakdown plus surfaced launcher/parse/runtime errors
+- **Top Findings Signal Mode**: Shows findings returned by ApiHunter command output (sorted by severity with evidence/remediation context)
+- **Top Findings Display Filtering**: Selected minimum severity is applied to Burp Top Findings rendering (`Critical` / `High` / `Medium`), while scanner output statistics remain complete.
+
+#### 9. Nuclei Tab
 - **Nuclei Path**: Configure path to nuclei binary
 - **Profile**: `Fast`, `Balanced`, `Deep` API-discovery scan presets
 - **Run Nuclei**: Execute Nuclei scanner with WAF evasion
@@ -393,7 +419,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Targets**: Save target list for external scanning
 - **Features**: Header-based spoofing, rate limiting, clear error reporting
 
-#### 9. HTTPX Tab
+#### 10. HTTPX Tab
 - **HTTPX Path**: Configure path to httpx binary
 - **Probe Endpoints**: Fast HTTP probing with technology detection
 - **Enable Custom**: Opt in to override default command with your own template
@@ -402,7 +428,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **PKill Tools**: Emergency kill for scanner processes
 - **Export URLs**: Save URLs for external tools
 
-#### 10. Katana Tab
+#### 11. Katana Tab
 - **Katana Path**: Configure path to katana binary
 - **Crawl Endpoints**: Deep web crawling for endpoint discovery
 - **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
@@ -414,7 +440,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Discovered**: Save discovered endpoints
 - **Send to Recon**: Import discovered endpoints to Recon tab
 
-#### 11. FFUF Tab
+#### 12. FFUF Tab
 - **FFUF Path**: Configure path to ffuf binary
 - **Wordlist**: Select wordlist for fuzzing
 - **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
@@ -425,7 +451,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Results**: Save fuzzing results
 - **Send to Intruder**: Export results to Burp Intruder
 
-#### 12. Wayback Tab
+#### 13. Wayback Tab
 - **Date Range**: Configure from/to years for historical search
 - **Limit**: Set maximum results to retrieve
 - **Discover**: Query Wayback Machine for historical endpoints
@@ -440,7 +466,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import discovered endpoints to Recon tab
 - **Export Results**: Save discovered endpoints
 
-#### 13. SQLMap Verify Tab
+#### 14. SQLMap Verify Tab
 - **SQLMap Path**: Configure path to local `sqlmap`
 - **Profile**: `Fast`, `Balanced`, `Deep` command tuning presets
 - **Run Verify**: Replay SQLi-priority targets and collect evidence-backed confirmations
@@ -449,7 +475,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import verified SQLi endpoints back into Recon for follow-up
 - **Export Results**: Save verification output to file
 
-#### 14. Dalfox Verify Tab
+#### 15. Dalfox Verify Tab
 - **Dalfox Path**: Configure path to local `dalfox`
 - **Profile**: `Fast`, `Balanced`, `Deep` command tuning presets
 - **Run Verify**: Replay XSS-priority targets and capture Dalfox confirmation output
@@ -458,7 +484,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import verified XSS candidates to Recon
 - **Export Results**: Save Dalfox findings to file
 
-#### 15. API Assets Tab
+#### 16. API Assets Tab
 - **Domains Input**: Optional manual domains list (comma/newline); auto-derives from Recon when empty
 - **Profile**: `Fast`, `Balanced`, `Deep` stage tuning for `subfinder`/`dnsx`/`httpx`
 - **Pipeline**: Runs `subfinder` → `dnsx` → `httpx` for alive API asset discovery
@@ -467,7 +493,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import discovered assets into Recon
 - **Export Results**: Save discovered URLs
 
-#### 16. OpenAPI Drift Tab
+#### 17. OpenAPI Drift Tab
 - **Spec Source**: Load OpenAPI/Swagger file from local path or URL
 - **Generate OpenAPI**: One-click OpenAPI 3.0.3 generation from captured Recon traffic
 - **Run Drift**: Compare observed traffic vs spec and report endpoint/parameter drift
@@ -476,7 +502,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import spec-missing candidates into Recon for probing
 - **Export Results**: Save drift output report
 
-#### 17. GraphQL Tab
+#### 18. GraphQL Tab
 - **Targets Input**: Optional manual GraphQL targets (auto-detects from Recon if empty)
 - **Show Targets**: Preview candidate GraphQL endpoints before execution
 - **Run Analysis**: Run GraphQL-focused multi-tool analysis workflow
@@ -706,9 +732,11 @@ vulnerability type. Focus on:
 ```
 ~/burp_APIRecon/
 ├── FullExport_TIMESTAMP/
-│   └── api_analysis.json
+│   ├── api_analysis.json
+│   └── excalibur_bridge_bundle.json
 ├── HostExport_HOSTNAME_TIMESTAMP/
-│   └── api_analysis.json
+│   ├── api_analysis.json
+│   └── excalibur_bridge_bundle.json
 ├── Payloads_TIMESTAMP/
 │   └── payloads.json (idor, sqli, xss, nosqli, ssrf, xxe, ssti, deserialization, waf_bypass)
 ├── AI_Context_TIMESTAMP/
@@ -887,9 +915,10 @@ The Fuzzer detects GraphQL endpoints automatically and generates attacks for:
 
 ### External Tools
 
-**Q: Do I need to install Nuclei/HTTPX/Katana/FFUF?**
+**Q: Do I need to install ApiHunter/Nuclei/HTTPX/Katana/FFUF?**
 
 A: Only if you want to use those specific tabs. The core extension works without them. Install from:
+- ApiHunter: https://github.com/Teycir/ApiHunter (or local clone at `~/Repos/ApiHunter`, then build `target/release/apihunter`)
 - Nuclei: https://github.com/projectdiscovery/nuclei
 - HTTPX: https://github.com/projectdiscovery/httpx
 - Katana: https://github.com/projectdiscovery/katana
@@ -898,6 +927,7 @@ A: Only if you want to use those specific tabs. The core extension works without
 **Q: Where should I install these tools?**
 
 A: Default paths:
+- `~/Repos/ApiHunter/target/release/apihunter`
 - `~/go/bin/nuclei`
 - `~/go/bin/httpx`
 - `~/go/bin/katana`
@@ -949,7 +979,13 @@ A:
 
 **Q: Can I import previously exported data?**
 
-A: Yes! Use the "Import" button in the Recon tab to load any previously exported `api_analysis.json` file.
+A: Yes. `Import` accepts:
+- `api_analysis.json` (BurpAPISecuritySuite export)
+- Excalibur `.har` exports
+- Excalibur `-replay-studio.json` / `-cookies.json` / `-insights.json` sidecars (auto-discovered from the same session prefix)
+- `excalibur_bridge_bundle.json` (`schema: excalibur-burp-bridge/v1`)
+
+If Excalibur artifacts are detected, the tool auto-runs `Refresh Invariants` after import so Differential + Sequence + Golden + State + Token Lineage + Parity Drift caches are immediately ready.
 
 **Q: Can I send captured requests to Postman or Insomnia?**
 
@@ -1102,6 +1138,10 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
   - `captured_at`
   - `captured_at_epoch_ms`
 - ✅ Extended `Run Invariants`, `Refresh Invariants`, and Recon status line with `Parity` cache coverage.
+- ✅ Added Excalibur bridge interoperability:
+  - `Import` now parses Excalibur `.har` plus session sidecars (`-replay-studio.json`, `-cookies.json`, `-insights.json`).
+  - `Import` auto-runs deep-logic invariant refresh when Excalibur artifacts are detected.
+  - `Export All` / `Export Host` now write `excalibur_bridge_bundle.json` using schema `excalibur-burp-bridge/v1`.
 
 ### v1.4.2 - Counterfactual Differential Pipeline + Deep-Logic Expansion
 - ✅ Added scoreless, non-destructive `Run Differential` workflow in `Passive Discovery`.
@@ -1182,6 +1222,10 @@ What is already shipped:
   - `ai_prep_evidence_graph.json`
 - ✅ **New verification/discovery coverage**:
   - `SQLMap Verify`, `Dalfox Verify`, `API Assets`, `OpenAPI Drift`, `GraphQL` tab wiring and exports.
+- ✅ **ApiHunter integration shipped**:
+  - Dedicated `ApiHunter` tab placed before `Nuclei`.
+  - Default calibration is `Deep Search (WAF Evasive Recommended)`.
+  - Runner always consumes filtered Recon endpoints and canonical de-duplicated targets.
 - ✅ **Operator UX upgrades**:
   - Recon `Button Help`
   - Tooltip coverage across tabs with simpler invariant wording
@@ -1208,7 +1252,7 @@ What is already shipped:
 
 ### v1.3.1 - Tab Order and External Tool UX Alignment
 - ✅ Reordered tabs to keep internal workflow tabs first and external tooling tabs last
-- ✅ External tab order aligned to: `Nuclei → HTTPX → Katana → FFUF → Wayback → SQLMap Verify → Dalfox Verify → API Assets → OpenAPI Drift`
+- ✅ External tab order aligned to: `ApiHunter → Nuclei → HTTPX → Katana → FFUF → Wayback → SQLMap Verify → Dalfox Verify → API Assets → OpenAPI Drift`
 - ✅ Updated Tab Overview documentation to match the actual in-app tab order
 - ✅ Added `Passive Discovery` to the Tab Overview section for full coverage
 

@@ -156,6 +156,7 @@ _PERSISTED_COMBO_ATTRS = (
     "asset_profile_combo",
     "passive_scope_combo",
     "passive_mode_combo",
+    "apihunter_top_findings_min_combo",
     "nuclei_profile_combo",
     "graphql_profile_combo",
     "graphql_request_mode_combo",
@@ -653,6 +654,7 @@ def _initialize_runtime_state(self):
     self.recon_logger_backfill_pipeline_force_pending = False
     self.recon_autopopulate_on_open = True
     self.recon_noise_filter_enabled = True
+    self.excalibur_auto_pipeline_enabled = True
     self._suspend_logger_capture_during_recon_backfill = False
     self._applying_graphql_profile = False
     self.logger_import_on_open = True
@@ -1086,7 +1088,7 @@ def _build_recon_button_panel(self):
             export_host_btn: "Export only endpoints for the selected host filter",
             ai_export_btn: "Export all-tab AI context bundle (Recon, scanners, findings, and LLM-ready files)",
             openapi_generate_btn: "Generate an OpenAPI 3 spec directly from captured Recon traffic in one click",
-            import_btn: "Import previously exported Recon JSON data",
+            import_btn: "Import Recon JSON, Excalibur HAR/session sidecars, or shared bridge bundles (auto-runs invariant refresh for Excalibur imports)",
             postman_btn: "Export scoped endpoints as a Postman Collection v2.1 file",
             insomnia_btn: "Export scoped endpoints as an Insomnia import JSON file",
             tool_health_btn: "Run local CLI compatibility checks for integrated external tools",
@@ -1155,6 +1157,7 @@ def _create_tabs(self, recon_panel):
     openapi_drift_panel = self._create_openapi_drift_tab()
     auth_replay_panel = self._create_auth_replay_tab()
     passive_discovery_panel = self._create_passive_discovery_tab()
+    apihunter_panel = self._create_apihunter_tab()
     nuclei_panel = self._create_nuclei_tab()
     httpx_panel = self._create_httpx_tab()
     katana_panel = self._create_katana_tab()
@@ -1170,6 +1173,7 @@ def _create_tabs(self, recon_panel):
     self.tabbed_pane.addTab("Fuzzer", fuzzer_panel)
     self.tabbed_pane.addTab("Auth Replay", auth_replay_panel)
     self.tabbed_pane.addTab("Passive Discovery", passive_discovery_panel)
+    self.tabbed_pane.addTab("ApiHunter", apihunter_panel)
     self.tabbed_pane.addTab("Nuclei", nuclei_panel)
     self.tabbed_pane.addTab("HTTPX", httpx_panel)
     self.tabbed_pane.addTab("Katana", katana_panel)
@@ -2248,6 +2252,8 @@ def _create_command_preset_combo(
     labels = ["Preset Cmd..."]
     labels.extend([label for label, _, _ in presets])
     combo = JComboBox(labels)
+    if labels:
+        combo.setPrototypeDisplayValue(max(labels, key=len))
     combo.setToolTipText(
         "Select a preset to auto-fill the command textbox"
     )
@@ -2351,7 +2357,8 @@ def _show_recon_button_help(self, _event=None):
     lines.append("Export AI Bundle:")
     lines.append("  Export all-tab AI bundle (includes Differential, Sequence, Golden, State Matrix, Token Lineage, and Parity Drift findings).")
     lines.append("Import:")
-    lines.append("  Import a previous Recon JSON export.")
+    lines.append("  Import Recon JSON, Excalibur HAR/replay/cookies sidecars, or bridge bundle JSON.")
+    lines.append("  Excalibur imports auto-trigger deep-logic invariant refresh.")
     lines.append("Postman:")
     lines.append("  Export scoped endpoints to Postman Collection v2.1.")
     lines.append("Insomnia:")
@@ -2428,9 +2435,13 @@ def _export_text_output_to_ai(self, source_label, output_text):
         content,
     ]
     payload = "\n".join(export_lines)
-    self._copy_to_clipboard(payload)
-    if hasattr(self, "_show_text_dialog"):
+    if hasattr(self, "_show_ai_copy_exit_dialog"):
+        self._show_ai_copy_exit_dialog("AI Export - {}".format(title), payload, rows=30, cols=140)
+    elif hasattr(self, "_show_text_dialog"):
         self._show_text_dialog("AI Export - {}".format(title), payload, rows=30, cols=140)
+        self._copy_to_clipboard(payload)
+    else:
+        self._copy_to_clipboard(payload)
     self.log_to_ui("[+] AI export ready for {}".format(title))
 
 def _create_diff_tab(self):
@@ -4437,6 +4448,158 @@ def _create_wayback_tab(self):
     self.wayback_lock = threading.Lock()
     return panel
 
+def _create_apihunter_tab(self):
+    """Create ApiHunter tab aligned to Desktop Quick/Balanced/Deep presets."""
+    panel = JPanel(BorderLayout())
+    top_panel = JPanel()
+    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line_cmd = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("ApiHunter Path:"))
+    default_apihunter = ""
+    if hasattr(self, "_resolve_executable_from_path"):
+        try:
+            default_apihunter = self._resolve_executable_from_path("apihunter", "")
+        except Exception as e:
+            self._callbacks.printError(
+                "ApiHunter default PATH resolve error: {}".format(str(e))
+            )
+    self.apihunter_path_field = JTextField(default_apihunter, 30)
+    controls_line1.add(self.apihunter_path_field)
+    controls_line1.add(JLabel("Calibration:"))
+    self.apihunter_calibration_combo = JComboBox(
+        [
+            "Quick (Desktop Preset)",
+            "Balanced (Desktop Preset)",
+            "Deep (Desktop Preset)",
+        ]
+    )
+    self.apihunter_calibration_combo.setSelectedItem("Balanced (Desktop Preset)")
+    controls_line1.add(self.apihunter_calibration_combo)
+    controls_line1.add(JLabel("Top Findings Min:"))
+    self.apihunter_top_findings_min_combo = JComboBox(["Critical", "High", "Medium"])
+    self.apihunter_top_findings_min_combo.setSelectedItem("Medium")
+    self.apihunter_top_findings_min_combo.setToolTipText(
+        "Controls the minimum severity shown in Top Findings (summary counts still include all severities)."
+    )
+    controls_line1.add(self.apihunter_top_findings_min_combo)
+    self.apihunter_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
+    controls_line_cmd.add(self.apihunter_custom_cmd_checkbox)
+    controls_line_cmd.add(JLabel("Command:"))
+    self.apihunter_custom_cmd_field = JTextField("", 32)
+    self.apihunter_custom_cmd_field.setToolTipText(
+        "Example: {apihunter_path} --urls {targets_file} --format ndjson --output {results_file}"
+    )
+    controls_line_cmd.add(self.apihunter_custom_cmd_field)
+    controls_line_cmd.add(JLabel("Preset:"))
+    self.apihunter_preset_help_label = JLabel(
+        "Preset Help: Desktop-equivalent Quick/Balanced/Deep command templates."
+    )
+    apihunter_presets = [
+        (
+            "Quick (Desktop Preset)",
+            "{apihunter_path} --urls {targets_file} --format ndjson --output {results_file} --no-discovery --filter-timeout 3 --max-endpoints 40 --concurrency 4 --timeout-secs 12 --retries 1 --delay-ms 0 --no-mass-assignment --no-oauth-oidc --no-rate-limit --no-cve-templates --no-websocket",
+            "Desktop quick preset: low-impact, dry-run style coverage with active-heavy scanners trimmed.",
+        ),
+        (
+            "Balanced (Desktop Preset)",
+            "{apihunter_path} --urls {targets_file} --format ndjson --output {results_file} --active-checks --dry-run --response-diff-deep --filter-timeout 3 --max-endpoints 80 --concurrency 5 --timeout-secs 15 --retries 1 --delay-ms 50 --per-host-clients",
+            "Desktop balanced preset: active checks in dry-run mode with moderate throughput controls.",
+        ),
+        (
+            "Deep (Desktop Preset)",
+            "{apihunter_path} --urls {targets_file} --format ndjson --output {results_file} --active-checks --response-diff-deep --filter-timeout 4 --max-endpoints 0 --concurrency 6 --timeout-secs 20 --retries 2 --delay-ms 100 --waf-evasion --per-host-clients --adaptive-concurrency",
+            "Desktop deep preset: full active mode with WAF-evasion posture and adaptive concurrency.",
+        ),
+    ]
+    self.apihunter_custom_cmd_field.setText(apihunter_presets[0][1])
+    self.apihunter_preset_help_label.setText(
+        "Preset Help: {} Check 'Enable Custom' to run it.".format(
+            apihunter_presets[0][2]
+        )
+    )
+    self.apihunter_preset_combo = self._create_command_preset_combo(
+        self.apihunter_custom_cmd_field,
+        self.apihunter_custom_cmd_checkbox,
+        apihunter_presets,
+        self.apihunter_preset_help_label,
+    )
+    controls_line_cmd.add(self.apihunter_preset_combo)
+    controls_line_cmd.add(
+        self._create_preset_help_button(
+            "ApiHunter",
+            ["{apihunter_path}", "{targets_file}", "{results_file}"],
+            apihunter_presets,
+            usage_notes=[
+                "These presets mirror ApiHunter Desktop defaults (Quick, Balanced, Deep).",
+                "Targets are fed as base URLs so ApiHunter native discovery/check flow owns coverage strategy.",
+                "Custom mode stays opt-in; preset fills command text without forcing custom execution.",
+            ],
+            override_notes=[
+                "Include {targets_file} to keep Burp Recon scope.",
+                "Include {results_file} and ndjson format so this tab can parse findings.",
+                "Presets mirror desktop behavior; add extra CLI flags only if your engagement requires it.",
+            ],
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Run ApiHunter", Color(0, 121, 107), lambda e: self._run_apihunter(e)
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Stop", Color(255, 140, 0), lambda e: self._stop_apihunter(e)
+        )
+    )
+    self._add_target_scope_controls(controls_line2)
+    self._add_force_kill_button(
+        controls_line2, lambda: getattr(self, "apihunter_area", None)
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Export Targets",
+            Color(70, 130, 180),
+            lambda e: self._export_apihunter_targets(),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Clear", Color(220, 53, 69), lambda e: self.apihunter_area.setText("")
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Copy",
+            Color(108, 117, 125),
+            lambda e: self._copy_to_clipboard(self.apihunter_area.getText()),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "ApiHunter", self.apihunter_area.getText()
+            ),
+        )
+    )
+    help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+    help_row.add(self.apihunter_preset_help_label)
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line_cmd)
+    top_panel.add(controls_line2)
+    top_panel.add(help_row)
+    panel.add(top_panel, BorderLayout.NORTH)
+
+    self.apihunter_area, scroll = self._create_text_area_panel()
+    panel.add(scroll, BorderLayout.CENTER)
+    self.apihunter_findings = []
+    self.apihunter_lock = threading.Lock()
+    return panel
+
 def _create_graphql_tab(self):
     """Create GraphQL analysis tab orchestrating external tool checks."""
     panel = JPanel(BorderLayout())
@@ -6428,6 +6591,7 @@ __all__ = [
     "_create_katana_tab",
     "_create_ffuf_tab",
     "_create_wayback_tab",
+    "_create_apihunter_tab",
     "_create_graphql_tab",
     "_get_idor_payloads",
     "_get_bola_techniques",

@@ -3908,13 +3908,20 @@ def _send_endpoint_to_ai(self, endpoint_key, source_label="Recon", entry_overrid
         return
 
     package_text = self._build_ai_request_export(endpoint, selected_entry, source_label)
-    self._copy_to_clipboard(package_text)
-    self._show_text_dialog(
-        "AI Request Export - {}".format(endpoint),
-        package_text,
-        rows=30,
-        cols=140,
-    )
+    if hasattr(self, "_show_ai_copy_exit_dialog"):
+        self._show_ai_copy_exit_dialog(
+            "AI Request Export - {}".format(endpoint),
+            package_text,
+            rows=30,
+            cols=140,
+        )
+    else:
+        self._show_text_dialog(
+            "AI Request Export - {}".format(endpoint),
+            package_text,
+            rows=30,
+            cols=140,
+        )
     self.log_to_ui("[+] AI request export ready for {}".format(endpoint))
 
 def _logger_send_selected_to_ai(self):
@@ -5234,6 +5241,31 @@ def _show_text_dialog(self, title, text, rows=26, cols=120):
         JOptionPane.INFORMATION_MESSAGE,
     )
 
+def _show_ai_copy_exit_dialog(self, title, text, rows=30, cols=140):
+    """Show standardized AI export popup with Copy + Exit actions."""
+    area = JTextArea(int(rows), int(cols))
+    area.setEditable(False)
+    area.setFont(Font("Monospaced", Font.PLAIN, 11))
+    payload = self._ascii_safe(text or "")
+    area.setText(payload)
+    area.setCaretPosition(0)
+    scroll = JScrollPane(area)
+    options = ["Copy", "Exit"]
+    selected = JOptionPane.showOptionDialog(
+        self._panel,
+        scroll,
+        self._ascii_safe(title or "AI Export"),
+        JOptionPane.DEFAULT_OPTION,
+        JOptionPane.INFORMATION_MESSAGE,
+        None,
+        options,
+        options[0],
+    )
+    if selected == 0:
+        self._copy_to_clipboard(payload)
+        return True
+    return False
+
 def _collect_recon_grep_targets(self, entry, scope_label):
     """Build grep targets for one sample based on selected scope."""
     targets = []
@@ -5824,104 +5856,1063 @@ def _sync_logger_from_recon_snapshot(self, data_snapshot, source_tool_label="Rec
         )
     return added
 
+def _int_or_default(self, value, default_value=0):
+    try:
+        return int(value)
+    except Exception as value_err:
+        _ = value_err
+        return int(default_value)
+
+def _current_import_sample_limit(self):
+    combo = getattr(self, "sample_limit", None)
+    if combo is None:
+        return 3
+    try:
+        raw = combo.getSelectedItem()
+        limit = self._int_or_default(raw, 3)
+    except Exception as limit_err:
+        _ = limit_err
+        limit = 3
+    return max(1, min(10, int(limit)))
+
+def _normalize_header_dict(self, raw_headers):
+    """Normalize headers from dict/list-of-pairs into plain string dict."""
+    normalized = {}
+    if isinstance(raw_headers, dict):
+        for raw_name, raw_value in raw_headers.items():
+            name = self._ascii_safe(raw_name).strip()
+            if not name:
+                continue
+            normalized[name] = self._ascii_safe(raw_value)
+        return normalized
+    if isinstance(raw_headers, list):
+        for item in raw_headers:
+            if not isinstance(item, dict):
+                continue
+            name = self._ascii_safe(item.get("name")).strip()
+            if not name:
+                continue
+            normalized[name] = self._ascii_safe(item.get("value"))
+    return normalized
+
+def _extract_content_type_from_headers(self, headers_map, fallback_value="unknown"):
+    if not isinstance(headers_map, dict):
+        return self._ascii_safe(fallback_value or "unknown")
+    for raw_name, raw_value in headers_map.items():
+        name = self._ascii_safe(raw_name, lower=True).strip()
+        if name == "content-type":
+            value = self._ascii_safe(raw_value).strip()
+            if value:
+                return value
+    return self._ascii_safe(fallback_value or "unknown")
+
+def _parse_url_parts_from_text(self, url_text):
+    """Parse URL into protocol/host/port/path/query fields with safe fallbacks."""
+    raw_url = self._ascii_safe(url_text).strip()
+    if not raw_url:
+        return {
+            "protocol": "https",
+            "host": "",
+            "port": 443,
+            "path": "/",
+            "query_string": "",
+            "url": "",
+        }
+
+    protocol = "https"
+    host = ""
+    port = 443
+    path = "/"
+    query_string = ""
+
+    try:
+        parsed = URL(raw_url)
+        protocol = self._ascii_safe(parsed.getProtocol() or "https", lower=True).strip() or "https"
+        host = self._ascii_safe(parsed.getHost() or "", lower=True).strip()
+        path = self._ascii_safe(parsed.getPath() or "/").strip() or "/"
+        query_string = self._ascii_safe(parsed.getQuery() or "")
+        parsed_port = self._int_or_default(parsed.getPort(), 0)
+        default_port = self._int_or_default(parsed.getDefaultPort(), 0)
+        if parsed_port > 0:
+            port = parsed_port
+        elif default_port > 0:
+            port = default_port
+        else:
+            port = 443 if protocol == "https" else 80
+    except Exception as parse_err:
+        self._callbacks.printError(
+            "Import URL parse fallback for '{}': {}".format(raw_url, str(parse_err))
+        )
+        match = re.match(
+            r"^(https?)://([^/:?#]+)(?::([0-9]+))?([^?#]*)?(?:\?([^#]*))?",
+            raw_url,
+            re.IGNORECASE,
+        )
+        if match:
+            protocol = self._ascii_safe(match.group(1) or "https", lower=True).strip() or "https"
+            host = self._ascii_safe(match.group(2) or "", lower=True).strip()
+            parsed_port = self._int_or_default(match.group(3), 0)
+            port = parsed_port if parsed_port > 0 else (443 if protocol == "https" else 80)
+            raw_path = self._ascii_safe(match.group(4) or "/").strip() or "/"
+            path = raw_path if raw_path.startswith("/") else "/" + raw_path
+            query_string = self._ascii_safe(match.group(5) or "")
+        else:
+            path = self._ascii_safe(raw_url).strip() or "/"
+            if not path.startswith("/"):
+                path = "/" + path
+            protocol = "https"
+            host = ""
+            port = 443
+            query_string = ""
+
+    if not path.startswith("/"):
+        path = "/" + path
+    normalized_path = self._normalize_path(path)
+    return {
+        "protocol": protocol,
+        "host": host,
+        "port": int(port),
+        "path": path,
+        "normalized_path": normalized_path,
+        "query_string": query_string,
+        "url": raw_url,
+    }
+
+def _derive_import_auth_methods(self, headers_map, request_body_text, param_map):
+    """Infer auth method labels from imported request metadata."""
+    auth_methods = []
+    header_names = [
+        self._ascii_safe(name, lower=True).strip()
+        for name in (headers_map or {}).keys()
+    ]
+    header_values = [
+        self._ascii_safe(value, lower=True).strip()
+        for value in (headers_map or {}).values()
+    ]
+    body_lower = self._ascii_safe(request_body_text or "", lower=True)
+
+    if "authorization" in header_names:
+        auth_methods.append("Bearer Token")
+    if any(name in header_names for name in ["x-api-key", "api-key", "apikey"]):
+        auth_methods.append("API Key")
+    if "cookie" in header_names:
+        auth_methods.append("Cookie")
+    if any("bearer " in value for value in header_values):
+        auth_methods.append("Bearer Token")
+    if any("session" in value or "token" in value for value in header_values):
+        auth_methods.append("Cookie")
+    if "jwt" in body_lower or "access_token" in body_lower or "refresh_token" in body_lower:
+        auth_methods.append("JWT")
+
+    params = dict(param_map or {})
+    cookie_params = params.get("cookie") if isinstance(params, dict) else {}
+    if isinstance(cookie_params, dict) and cookie_params:
+        auth_methods.append("Cookie")
+
+    normalized = []
+    seen = set()
+    for item in auth_methods:
+        label = self._ascii_safe(item).strip()
+        if not label:
+            continue
+        lower = self._ascii_safe(label, lower=True)
+        if lower in seen:
+            continue
+        seen.add(lower)
+        normalized.append(label)
+    if not normalized:
+        normalized = ["None"]
+    return normalized
+
+def _extract_param_map_from_har_request(self, request_obj):
+    """Extract parameter names from HAR request fields."""
+    params = {"url": {}, "body": {}, "cookie": {}, "json": {}}
+    if not isinstance(request_obj, dict):
+        return params
+
+    for pair in request_obj.get("queryString", []) or []:
+        if not isinstance(pair, dict):
+            continue
+        name = self._ascii_safe(pair.get("name") or "").strip()
+        if name:
+            params["url"][name] = "string"
+
+    for cookie_obj in request_obj.get("cookies", []) or []:
+        if not isinstance(cookie_obj, dict):
+            continue
+        name = self._ascii_safe(cookie_obj.get("name") or "").strip()
+        if name:
+            params["cookie"][name] = "string"
+
+    post_data = request_obj.get("postData") or {}
+    if isinstance(post_data, dict):
+        for post_param in post_data.get("params", []) or []:
+            if not isinstance(post_param, dict):
+                continue
+            name = self._ascii_safe(post_param.get("name") or "").strip()
+            if name:
+                params["body"][name] = "string"
+        mime = self._ascii_safe(post_data.get("mimeType") or "", lower=True)
+        post_text = self._ascii_safe(post_data.get("text") or "")
+        if "json" in mime and post_text.strip():
+            try:
+                parsed_json = json.loads(post_text)
+                if isinstance(parsed_json, dict):
+                    for key in parsed_json.keys():
+                        name = self._ascii_safe(key).strip()
+                        if name:
+                            params["json"][name] = "string"
+            except Exception as json_err:
+                self._callbacks.printError(
+                    "Import JSON body parse failed (HAR): {}".format(str(json_err))
+                )
+
+    return params
+
+def _build_cookie_header_for_host(self, cookie_payload, host_name):
+    """Build Cookie header for one host from Excalibur cookies export payload."""
+    if not isinstance(cookie_payload, dict):
+        return ""
+    cookie_roots = cookie_payload.get("cookies")
+    if not isinstance(cookie_roots, dict):
+        return ""
+
+    host = self._ascii_safe(host_name or "", lower=True).strip()
+    if not host:
+        return ""
+
+    candidates = []
+    for raw_domain, cookie_map in cookie_roots.items():
+        domain = self._ascii_safe(raw_domain or "", lower=True).strip()
+        if (not domain) or (not isinstance(cookie_map, dict)):
+            continue
+        clean_domain = domain.lstrip(".")
+        if not clean_domain:
+            continue
+        if host == clean_domain or host.endswith("." + clean_domain):
+            for cookie_name, cookie_value in cookie_map.items():
+                name = self._ascii_safe(cookie_name).strip()
+                if not name:
+                    continue
+                value = self._ascii_safe(cookie_value)
+                candidates.append("{}={}".format(name, value))
+    if not candidates:
+        return ""
+    return "; ".join(candidates)
+
+def _coerce_import_entry_shape(self, entry, source_tool_label):
+    """Fill missing import entry fields and compute analysis helpers."""
+    if not isinstance(entry, dict):
+        return None
+
+    method = self._ascii_safe(entry.get("method") or "GET").upper()
+    path = self._ascii_safe(entry.get("path") or entry.get("normalized_path") or "/").strip() or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    normalized_path = self._ascii_safe(entry.get("normalized_path") or "").strip()
+    if not normalized_path:
+        normalized_path = self._normalize_path(path)
+
+    protocol = self._ascii_safe(entry.get("protocol") or "https", lower=True).strip() or "https"
+    host = self._ascii_safe(entry.get("host") or "", lower=True).strip()
+    port = self._int_or_default(entry.get("port"), 443 if protocol == "https" else 80)
+    query_string = self._ascii_safe(entry.get("query_string") or "")
+    headers = self._normalize_header_dict(entry.get("headers") or {})
+    request_body = self._ascii_safe(entry.get("request_body") or "")
+    response_headers = self._normalize_header_dict(entry.get("response_headers") or {})
+    response_body = self._ascii_safe(entry.get("response_body") or "")
+    response_status = self._int_or_default(entry.get("response_status"), 0)
+    response_length = self._int_or_default(entry.get("response_length"), len(response_body))
+    response_time_ms = self._int_or_default(entry.get("response_time_ms"), 0)
+    content_type = self._ascii_safe(
+        entry.get("content_type")
+        or self._extract_content_type_from_headers(
+            response_headers,
+            fallback_value=self._extract_content_type_from_headers(headers, fallback_value="unknown"),
+        )
+    ).strip() or "unknown"
+
+    parameters = dict(entry.get("parameters") or {})
+    for param_bucket in ["url", "body", "cookie", "json"]:
+        bucket = parameters.get(param_bucket)
+        if isinstance(bucket, list):
+            parameters[param_bucket] = {self._ascii_safe(x).strip(): "string" for x in bucket if self._ascii_safe(x).strip()}
+        elif not isinstance(bucket, dict):
+            parameters[param_bucket] = {}
+
+    auth_detected = list(entry.get("auth_detected") or [])
+    if not auth_detected:
+        auth_detected = self._derive_import_auth_methods(headers, request_body, parameters)
+    else:
+        auth_detected = [self._ascii_safe(x) for x in auth_detected if self._ascii_safe(x).strip()] or ["None"]
+
+    api_patterns = list(entry.get("api_patterns") or [])
+    if not api_patterns:
+        api_patterns = self._detect_api_patterns(normalized_path, content_type, response_body)
+
+    encryption_indicators = entry.get("encryption_indicators")
+    if not isinstance(encryption_indicators, dict):
+        encryption_indicators = self._detect_encryption(request_body, response_body, headers)
+    reflected = []
+    param_types = {}
+    for bucket_name in ["url", "body", "cookie", "json"]:
+        bucket = parameters.get(bucket_name, {})
+        if isinstance(bucket, dict):
+            for param_name in bucket.keys():
+                clean_name = self._ascii_safe(param_name).strip()
+                if clean_name:
+                    param_types[clean_name] = "string"
+    param_patterns = entry.get("param_patterns")
+    if not isinstance(param_patterns, dict):
+        param_patterns = {
+            "reflected": reflected,
+            "param_types": param_types,
+        }
+    else:
+        if not isinstance(param_patterns.get("reflected"), list):
+            param_patterns["reflected"] = reflected
+        if not isinstance(param_patterns.get("param_types"), dict):
+            param_patterns["param_types"] = param_types
+
+    safe_entry = {
+        "method": method,
+        "path": path,
+        "normalized_path": normalized_path,
+        "host": host,
+        "protocol": protocol,
+        "port": int(port),
+        "query_string": query_string,
+        "parameters": parameters,
+        "headers": headers,
+        "request_body": request_body,
+        "response_status": int(response_status),
+        "response_headers": response_headers,
+        "response_body": response_body,
+        "response_length": int(response_length),
+        "response_time_ms": int(response_time_ms),
+        "captured_at": self._ascii_safe(entry.get("captured_at") or ""),
+        "captured_at_epoch_ms": self._int_or_default(entry.get("captured_at_epoch_ms"), 0),
+        "source_tool": self._ascii_safe(entry.get("source_tool") or source_tool_label),
+        "content_type": content_type,
+        "auth_detected": auth_detected,
+        "api_patterns": api_patterns,
+        "jwt_detected": entry.get("jwt_detected"),
+        "encryption_indicators": encryption_indicators,
+        "param_patterns": param_patterns,
+    }
+    return safe_entry
+
+def _build_suite_export_snapshot(self, data):
+    """Parse native BurpAPISecuritySuite export shape into import snapshot."""
+    snapshot = {}
+    endpoints = data.get("endpoints", []) if isinstance(data, dict) else []
+    if not isinstance(endpoints, list):
+        return snapshot
+
+    sample_limit = self._current_import_sample_limit()
+
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        try:
+            method = self._ascii_safe(endpoint.get("method") or "GET").upper()
+            normalized_path = self._ascii_safe(endpoint.get("normalized_path") or "/").strip() or "/"
+            if not normalized_path.startswith("/"):
+                normalized_path = "/" + normalized_path
+            endpoint_key = self._ascii_safe(endpoint.get("endpoint") or "").strip()
+            if not endpoint_key:
+                endpoint_key = "{}:{}".format(method, normalized_path)
+
+            samples = endpoint.get("sample_requests", []) or []
+            if not isinstance(samples, list) or (not samples):
+                samples = [{}]
+            response_codes = endpoint.get("response_codes", []) or []
+            content_types = endpoint.get("content_types", []) or []
+
+            built_entries = []
+            for idx, sample in enumerate(samples[:sample_limit]):
+                if not isinstance(sample, dict):
+                    sample = {}
+                entry = {
+                    "method": method,
+                    "path": self._ascii_safe(
+                        sample.get("path") or normalized_path
+                    ),
+                    "normalized_path": normalized_path,
+                    "host": self._ascii_safe(endpoint.get("host") or "", lower=True),
+                    "protocol": "https",
+                    "port": 443,
+                    "query_string": self._ascii_safe(sample.get("query") or ""),
+                    "parameters": endpoint.get(
+                        "parameters",
+                        {"url": {}, "body": {}, "cookie": {}, "json": {}},
+                    ),
+                    "headers": sample.get("headers") or {},
+                    "request_body": self._ascii_safe(sample.get("request_body") or ""),
+                    "response_status": self._int_or_default(
+                        sample.get("response_status"),
+                        response_codes[0] if response_codes else 200,
+                    ),
+                    "response_headers": {},
+                    "response_body": self._ascii_safe(sample.get("response_body") or ""),
+                    "response_length": self._int_or_default(
+                        endpoint.get("avg_response_length"), 0
+                    ),
+                    "response_time_ms": self._int_or_default(
+                        endpoint.get("avg_response_time_ms"), 0
+                    ),
+                    "source_tool": "Import",
+                    "content_type": (
+                        self._ascii_safe(content_types[idx] if idx < len(content_types) else "")
+                        or (self._ascii_safe(content_types[0]) if content_types else "unknown")
+                    ),
+                    "auth_detected": endpoint.get("auth_methods", ["None"]),
+                    "api_patterns": endpoint.get("api_patterns", []),
+                    "jwt_detected": endpoint.get("jwt_claims"),
+                    "encryption_indicators": {
+                        "likely_encrypted": bool(endpoint.get("encryption_detected", False)),
+                        "types": list(endpoint.get("encryption_types", []) or []),
+                    },
+                    "param_patterns": {
+                        "reflected": list(endpoint.get("reflected_params", []) or []),
+                        "param_types": dict(endpoint.get("param_type_summary", {}) or {}),
+                    },
+                }
+                shaped = self._coerce_import_entry_shape(entry, "Import")
+                if shaped is not None:
+                    built_entries.append(shaped)
+            if built_entries:
+                snapshot[endpoint_key] = built_entries
+        except Exception as endpoint_err:
+            self._callbacks.printError(
+                "Import suite-export endpoint parse error: {}".format(str(endpoint_err))
+            )
+    return snapshot
+
+def _build_har_snapshot(self, har_entries, source_tool_label, cookie_payload=None):
+    """Parse HAR entries into Recon snapshot format."""
+    snapshot = {}
+    if not isinstance(har_entries, list):
+        return snapshot
+
+    sample_limit = self._current_import_sample_limit()
+
+    for har_entry in har_entries:
+        if not isinstance(har_entry, dict):
+            continue
+        try:
+            request_obj = har_entry.get("request") or {}
+            response_obj = har_entry.get("response") or {}
+            if not isinstance(request_obj, dict):
+                request_obj = {}
+            if not isinstance(response_obj, dict):
+                response_obj = {}
+
+            method = self._ascii_safe(request_obj.get("method") or "GET").upper()
+            url_parts = self._parse_url_parts_from_text(request_obj.get("url") or "")
+            headers = self._normalize_header_dict(request_obj.get("headers") or [])
+            if "Cookie" not in headers and "cookie" not in [self._ascii_safe(x, lower=True) for x in headers.keys()]:
+                synthesized_cookie = self._build_cookie_header_for_host(
+                    cookie_payload,
+                    url_parts.get("host"),
+                )
+                if synthesized_cookie:
+                    headers["Cookie"] = synthesized_cookie
+
+            post_data = request_obj.get("postData") or {}
+            request_body = ""
+            if isinstance(post_data, dict):
+                request_body = self._ascii_safe(post_data.get("text") or "")
+
+            response_headers = self._normalize_header_dict(response_obj.get("headers") or [])
+            response_content = response_obj.get("content") or {}
+            if not isinstance(response_content, dict):
+                response_content = {}
+            response_body = self._ascii_safe(response_content.get("text") or "")
+            content_type = self._ascii_safe(
+                response_content.get("mimeType")
+                or self._extract_content_type_from_headers(response_headers)
+                or self._extract_content_type_from_headers(headers)
+                or "unknown"
+            )
+            parameters = self._extract_param_map_from_har_request(request_obj)
+            entry = {
+                "method": method,
+                "path": url_parts.get("path") or "/",
+                "normalized_path": url_parts.get("normalized_path") or "/",
+                "host": url_parts.get("host") or "",
+                "protocol": url_parts.get("protocol") or "https",
+                "port": self._int_or_default(url_parts.get("port"), 443),
+                "query_string": url_parts.get("query_string") or "",
+                "parameters": parameters,
+                "headers": headers,
+                "request_body": request_body,
+                "response_status": self._int_or_default(response_obj.get("status"), 0),
+                "response_headers": response_headers,
+                "response_body": response_body,
+                "response_length": self._int_or_default(
+                    response_obj.get("bodySize"),
+                    self._int_or_default(response_content.get("size"), len(response_body)),
+                ),
+                "response_time_ms": self._int_or_default(har_entry.get("time"), 0),
+                "captured_at": self._ascii_safe(har_entry.get("startedDateTime") or ""),
+                "captured_at_epoch_ms": 0,
+                "source_tool": source_tool_label,
+                "content_type": content_type,
+            }
+            shaped = self._coerce_import_entry_shape(entry, source_tool_label)
+            if shaped is None:
+                continue
+            endpoint_key = "{}:{}".format(shaped.get("method"), shaped.get("normalized_path"))
+            bucket = snapshot.get(endpoint_key)
+            if bucket is None:
+                bucket = []
+                snapshot[endpoint_key] = bucket
+            if len(bucket) < sample_limit:
+                bucket.append(shaped)
+        except Exception as har_err:
+            self._callbacks.printError(
+                "Import HAR entry parse error: {}".format(str(har_err))
+            )
+    return snapshot
+
+def _build_replay_studio_snapshot(self, replay_payload):
+    """Parse Excalibur replay-studio scenarios into synthetic Recon entries."""
+    snapshot = {}
+    if not isinstance(replay_payload, dict):
+        return snapshot
+    scenarios = replay_payload.get("scenarios") or []
+    if not isinstance(scenarios, list):
+        return snapshot
+
+    sample_limit = self._current_import_sample_limit()
+
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            continue
+        source = scenario.get("source") or {}
+        if not isinstance(source, dict):
+            continue
+        url_parts = self._parse_url_parts_from_text(source.get("url") or "")
+        method = self._ascii_safe(source.get("method") or "GET").upper()
+        state_obj = source.get("state")
+        state_text = self._ascii_safe(json.dumps(state_obj, sort_keys=True) if state_obj is not None else "")
+        variants = scenario.get("variants") or []
+        variant_names = []
+        if isinstance(variants, list):
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    continue
+                name = self._ascii_safe(variant.get("name") or "").strip()
+                if name:
+                    variant_names.append(name)
+        synthetic_body = ""
+        if variant_names:
+            synthetic_body = "Replay variants: {}".format(", ".join(variant_names[:6]))
+        if state_text:
+            synthetic_body = (
+                synthetic_body + "\nState: " + state_text
+                if synthetic_body
+                else "State: " + state_text
+            )
+
+        entry = {
+            "method": method,
+            "path": url_parts.get("path") or "/",
+            "normalized_path": url_parts.get("normalized_path") or "/",
+            "host": url_parts.get("host") or "",
+            "protocol": url_parts.get("protocol") or "https",
+            "port": self._int_or_default(url_parts.get("port"), 443),
+            "query_string": url_parts.get("query_string") or "",
+            "parameters": {"url": {}, "body": {}, "cookie": {}, "json": {}},
+            "headers": {},
+            "request_body": synthetic_body,
+            "response_status": 0,
+            "response_headers": {},
+            "response_body": "",
+            "response_length": 0,
+            "response_time_ms": 0,
+            "captured_at": self._ascii_safe(replay_payload.get("generated_at") or ""),
+            "captured_at_epoch_ms": 0,
+            "source_tool": "Excalibur Replay Studio",
+            "content_type": "application/json",
+        }
+        shaped = self._coerce_import_entry_shape(entry, "Excalibur Replay Studio")
+        if shaped is None:
+            continue
+        endpoint_key = "{}:{}".format(shaped.get("method"), shaped.get("normalized_path"))
+        bucket = snapshot.get(endpoint_key)
+        if bucket is None:
+            bucket = []
+            snapshot[endpoint_key] = bucket
+        if len(bucket) < sample_limit:
+            bucket.append(shaped)
+    return snapshot
+
+def _merge_import_snapshots(self, primary_snapshot, extra_snapshot):
+    merged = {}
+    for source_snapshot in [primary_snapshot, extra_snapshot]:
+        if not isinstance(source_snapshot, dict):
+            continue
+        for key, entries in source_snapshot.items():
+            endpoint_key = self._ascii_safe(key).strip()
+            if not endpoint_key:
+                continue
+            normalized_entries = entries if isinstance(entries, list) else [entries]
+            if endpoint_key not in merged:
+                merged[endpoint_key] = []
+            for entry in normalized_entries:
+                if isinstance(entry, dict):
+                    merged[endpoint_key].append(entry)
+    return merged
+
+def _identify_import_payload_kind(self, data):
+    if isinstance(data, dict) and isinstance(data.get("endpoints"), list):
+        return "suite_export"
+    if isinstance(data, dict):
+        schema = self._ascii_safe(
+            data.get("schema") or data.get("bridge_schema"),
+            lower=True,
+        ).strip()
+        if schema == "excalibur-burp-bridge/v1":
+            return "excalibur_bridge"
+        if isinstance((data.get("log") or {}).get("entries"), list):
+            return "har"
+        if isinstance(data.get("scenarios"), list) and data.get("total_scenarios") is not None:
+            return "excalibur_replay_studio"
+        if isinstance(data.get("cookies"), dict) and data.get("total_count") is not None:
+            return "excalibur_cookies"
+        if isinstance(data.get("auth_drift_radar"), dict) or isinstance(data.get("exploration_heatmap"), dict):
+            return "excalibur_insights"
+        if isinstance(data.get("captures"), list):
+            return "excalibur_bridge"
+    return "unknown"
+
+def _discover_excalibur_sidecar_paths(self, filepath):
+    """Discover sibling Excalibur export artifacts for one selected file."""
+    info = {
+        "har": "",
+        "cookies": "",
+        "replay": "",
+        "insights": "",
+    }
+    path_text = self._ascii_safe(filepath or "").strip()
+    if not path_text:
+        return info
+    directory = os.path.dirname(path_text)
+    filename = os.path.basename(path_text)
+
+    patterns = [
+        "-cookies.json",
+        "-replay-studio.json",
+        "-insights.json",
+        ".har",
+    ]
+    base_name = filename
+    for suffix in patterns:
+        if base_name.endswith(suffix):
+            base_name = base_name[: -len(suffix)]
+            break
+    if not base_name.startswith("excalibur-session-"):
+        return info
+
+    candidates = {
+        "har": os.path.join(directory, "{}.har".format(base_name)),
+        "cookies": os.path.join(directory, "{}-cookies.json".format(base_name)),
+        "replay": os.path.join(directory, "{}-replay-studio.json".format(base_name)),
+        "insights": os.path.join(directory, "{}-insights.json".format(base_name)),
+    }
+    for key, candidate in candidates.items():
+        if os.path.isfile(candidate):
+            info[key] = candidate
+    return info
+
+def _load_json_file_for_import(self, filepath):
+    with open(filepath, "r") as handle:
+        return json.load(handle)
+
+def _build_excalibur_bridge_snapshot(self, bridge_payload):
+    """Parse `excalibur-burp-bridge/v1` payload into Recon snapshot."""
+    snapshot = {}
+    if not isinstance(bridge_payload, dict):
+        return snapshot
+    captures = bridge_payload.get("captures") or []
+    if not isinstance(captures, list):
+        return snapshot
+
+    sample_limit = self._current_import_sample_limit()
+
+    for capture in captures:
+        if not isinstance(capture, dict):
+            continue
+        try:
+            request_obj = capture.get("request") or {}
+            response_obj = capture.get("response") or {}
+            timing_obj = capture.get("timing") or {}
+            context_obj = capture.get("context") or {}
+            if not isinstance(request_obj, dict):
+                request_obj = {}
+            if not isinstance(response_obj, dict):
+                response_obj = {}
+            if not isinstance(timing_obj, dict):
+                timing_obj = {}
+            if not isinstance(context_obj, dict):
+                context_obj = {}
+
+            method = self._ascii_safe(request_obj.get("method") or "GET").upper()
+            url_parts = self._parse_url_parts_from_text(request_obj.get("url") or "")
+            headers = self._normalize_header_dict(request_obj.get("headers") or {})
+            response_headers = self._normalize_header_dict(response_obj.get("headers") or {})
+            content_type = self._ascii_safe(
+                request_obj.get("content_type")
+                or response_obj.get("content_type")
+                or self._extract_content_type_from_headers(response_headers)
+                or self._extract_content_type_from_headers(headers)
+                or "unknown"
+            )
+            entry = {
+                "method": method,
+                "path": self._ascii_safe(url_parts.get("path") or "/"),
+                "normalized_path": self._ascii_safe(url_parts.get("normalized_path") or "/"),
+                "host": self._ascii_safe(url_parts.get("host") or "", lower=True),
+                "protocol": self._ascii_safe(url_parts.get("protocol") or "https", lower=True),
+                "port": self._int_or_default(url_parts.get("port"), 443),
+                "query_string": self._ascii_safe(url_parts.get("query_string") or ""),
+                "parameters": {
+                    "url": {},
+                    "body": {},
+                    "cookie": {},
+                    "json": {},
+                },
+                "headers": headers,
+                "request_body": self._ascii_safe(request_obj.get("body") or ""),
+                "response_status": self._int_or_default(response_obj.get("status"), 0),
+                "response_headers": response_headers,
+                "response_body": self._ascii_safe(response_obj.get("body") or ""),
+                "response_length": self._int_or_default(response_obj.get("length"), 0),
+                "response_time_ms": self._int_or_default(timing_obj.get("response_time_ms"), 0),
+                "captured_at": self._ascii_safe(
+                    timing_obj.get("captured_at") or bridge_payload.get("exported_at") or ""
+                ),
+                "captured_at_epoch_ms": self._int_or_default(timing_obj.get("captured_at_epoch_ms"), 0),
+                "source_tool": self._ascii_safe(
+                    context_obj.get("source_tool")
+                    or bridge_payload.get("producer", {}).get("name")
+                    or "Excalibur Bridge"
+                ),
+                "content_type": content_type,
+            }
+            shaped = self._coerce_import_entry_shape(entry, "Excalibur Bridge")
+            if shaped is None:
+                continue
+            endpoint_key = "{}:{}".format(shaped.get("method"), shaped.get("normalized_path"))
+            bucket = snapshot.get(endpoint_key)
+            if bucket is None:
+                bucket = []
+                snapshot[endpoint_key] = bucket
+            if len(bucket) < sample_limit:
+                bucket.append(shaped)
+        except Exception as bridge_err:
+            self._callbacks.printError(
+                "Import bridge capture parse error: {}".format(str(bridge_err))
+            )
+    return snapshot
+
+def _resolve_import_payload(self, filepath, root_payload):
+    """Build one normalized snapshot from supported import formats."""
+    payload_kind = self._identify_import_payload_kind(root_payload)
+    resolved_snapshot = {}
+    import_meta = {
+        "kind": payload_kind,
+        "source_tool_label": "Import",
+        "excalibur_detected": False,
+        "sidecars": {},
+    }
+
+    if payload_kind == "suite_export":
+        resolved_snapshot = self._build_suite_export_snapshot(root_payload)
+        import_meta["source_tool_label"] = "Import"
+        return resolved_snapshot, import_meta
+
+    sidecar_paths = self._discover_excalibur_sidecar_paths(filepath)
+    import_meta["sidecars"] = sidecar_paths
+    import_meta["excalibur_detected"] = any(
+        bool(path_value) for path_value in sidecar_paths.values()
+    ) or payload_kind.startswith("excalibur") or payload_kind in ["har", "excalibur_replay_studio", "excalibur_cookies", "excalibur_insights"]
+
+    har_payload = None
+    replay_payload = None
+    cookie_payload = None
+    insights_payload = None
+
+    if payload_kind == "har":
+        har_payload = root_payload
+    elif payload_kind == "excalibur_replay_studio":
+        replay_payload = root_payload
+    elif payload_kind == "excalibur_cookies":
+        cookie_payload = root_payload
+    elif payload_kind == "excalibur_insights":
+        insights_payload = root_payload
+    elif payload_kind == "excalibur_bridge":
+        resolved_snapshot = self._build_excalibur_bridge_snapshot(root_payload)
+        import_meta["source_tool_label"] = "Excalibur Bridge"
+        return resolved_snapshot, import_meta
+
+    for sidecar_kind, sidecar_path in sidecar_paths.items():
+        if (not sidecar_path) or sidecar_path == filepath:
+            continue
+        try:
+            sidecar_payload = self._load_json_file_for_import(sidecar_path)
+            if sidecar_kind == "har" and har_payload is None:
+                har_payload = sidecar_payload
+            elif sidecar_kind == "cookies" and cookie_payload is None:
+                cookie_payload = sidecar_payload
+            elif sidecar_kind == "replay" and replay_payload is None:
+                replay_payload = sidecar_payload
+            elif sidecar_kind == "insights" and insights_payload is None:
+                insights_payload = sidecar_payload
+        except Exception as sidecar_err:
+            self._callbacks.printError(
+                "Import sidecar load failed ({}): {}".format(sidecar_path, str(sidecar_err))
+            )
+
+    if har_payload is not None:
+        try:
+            entries = ((har_payload.get("log") or {}).get("entries")) if isinstance(har_payload, dict) else []
+            resolved_snapshot = self._build_har_snapshot(
+                entries,
+                "Excalibur HAR",
+                cookie_payload=cookie_payload,
+            )
+            import_meta["source_tool_label"] = "Excalibur HAR"
+        except Exception as har_err:
+            self._callbacks.printError(
+                "Import HAR snapshot build failed: {}".format(str(har_err))
+            )
+            resolved_snapshot = {}
+
+    replay_snapshot = {}
+    if replay_payload is not None:
+        try:
+            replay_snapshot = self._build_replay_studio_snapshot(replay_payload)
+        except Exception as replay_err:
+            self._callbacks.printError(
+                "Import replay snapshot build failed: {}".format(str(replay_err))
+            )
+            replay_snapshot = {}
+
+    merged_snapshot = self._merge_import_snapshots(resolved_snapshot, replay_snapshot)
+    if not merged_snapshot and payload_kind == "excalibur_replay_studio":
+        import_meta["source_tool_label"] = "Excalibur Replay Studio"
+        merged_snapshot = replay_snapshot
+
+    if insights_payload is not None and isinstance(insights_payload, dict):
+        auth_drift_total = self._int_or_default(
+            (insights_payload.get("auth_drift_radar") or {}).get("total_events"), 0
+        )
+        blind_spot_count = len(
+            ((insights_payload.get("exploration_heatmap") or {}).get("blind_spots") or [])
+        )
+        self.log_to_ui(
+            "[*] Excalibur insights loaded: auth_drift_events={} blind_spots={}".format(
+                auth_drift_total, blind_spot_count
+            )
+        )
+
+    return merged_snapshot, import_meta
+
+def _merge_import_snapshot_into_recon(self, import_snapshot):
+    """Insert parsed import snapshot into Recon state."""
+    imported = 0
+    skipped = 0
+    imported_snapshot = {}
+    if not isinstance(import_snapshot, dict):
+        return imported, skipped, imported_snapshot
+
+    for endpoint_key in sorted(import_snapshot.keys()):
+        entries = import_snapshot.get(endpoint_key, [])
+        entries_list = entries if isinstance(entries, list) else [entries]
+        sanitized_entries = []
+        for raw_entry in entries_list:
+            shaped = self._coerce_import_entry_shape(raw_entry, "Import")
+            if shaped is not None:
+                sanitized_entries.append(shaped)
+        if not sanitized_entries:
+            continue
+
+        key = self._ascii_safe(endpoint_key).strip()
+        if not key:
+            sample = sanitized_entries[0]
+            key = "{}:{}".format(sample.get("method"), sample.get("normalized_path"))
+
+        with self.lock:
+            if key in self.api_data:
+                skipped += 1
+                continue
+            self.api_data[key] = list(sanitized_entries)
+            first = sanitized_entries[0]
+            self.endpoint_tags[key] = self._auto_tag(first)
+            self.endpoint_times[key] = [
+                self._int_or_default(item.get("response_time_ms"), 0)
+                for item in sanitized_entries
+            ]
+            imported_snapshot[key] = [dict(item) for item in sanitized_entries]
+            imported += 1
+    return imported, skipped, imported_snapshot
+
+def _run_excalibur_auto_pipeline(self, imported_count):
+    """Auto-run deep-logic refresh after Excalibur imports."""
+    if imported_count <= 0:
+        return
+    if not bool(getattr(self, "excalibur_auto_pipeline_enabled", True)):
+        self.log_to_ui("[*] Excalibur auto-pipeline disabled; skipping invariant refresh")
+        return
+    self.log_to_ui(
+        "[*] Excalibur auto-pipeline: refreshing Differential + Sequence + Golden + State + Token Lineage + Parity Drift"
+    )
+    self._refresh_sequence_invariants_from_recon(None)
+
 def import_data(self):
-    """Import previously exported JSON"""
+    """Import Suite export JSON, Excalibur HAR/session artifacts, or bridge bundles."""
     chooser = JFileChooser()
-    chooser.setDialogTitle("Import API Security Suite JSON")
+    chooser.setDialogTitle("Import API Security Suite / Excalibur JSON")
     if chooser.showOpenDialog(self._panel) == JFileChooser.APPROVE_OPTION:
         filepath = chooser.getSelectedFile().getAbsolutePath()
         try:
-            with open(filepath, "r") as f:
-                data = json.load(f)
+            data = self._load_json_file_for_import(filepath)
+            import_snapshot, import_meta = self._resolve_import_payload(filepath, data)
+            imported, skipped, imported_snapshot = self._merge_import_snapshot_into_recon(import_snapshot)
 
-            imported = 0
-            imported_snapshot = {}
-            for endpoint in data.get("endpoints", []):
-                key = endpoint["endpoint"]
-                with self.lock:
-                    if key not in self.api_data:
-                        # Reconstruct entry with all required fields
-                        sample_req = (
-                            endpoint.get("sample_requests", [{}])[0]
-                            if endpoint.get("sample_requests")
-                            else {}
-                        )
-                        resp_codes = endpoint.get("response_codes", [])
-                        content_types = endpoint.get("content_types", [])
-                        entry = {
-                            "method": endpoint["method"],
-                            "path": sample_req.get(
-                                "path", endpoint["normalized_path"]
-                            ),
-                            "normalized_path": endpoint["normalized_path"],
-                            "host": endpoint["host"],
-                            "protocol": "https",
-                            "port": 443,
-                            "query_string": sample_req.get("query", ""),
-                            "parameters": endpoint.get(
-                                "parameters",
-                                {"url": {}, "body": {}, "cookie": {}, "json": {}},
-                            ),
-                            "headers": sample_req.get("headers", {}),
-                            "request_body": sample_req.get("request_body", ""),
-                            "response_status": resp_codes[0] if resp_codes else 200,
-                            "response_headers": {},
-                            "response_body": sample_req.get("response_body", ""),
-                            "response_length": int(
-                                endpoint.get("avg_response_length", 0)
-                            ),
-                            "response_time_ms": 0,
-                            "source_tool": "Import",
-                            "content_type": (
-                                content_types[0] if content_types else "unknown"
-                            ),
-                            "auth_detected": endpoint.get("auth_methods", ["None"]),
-                            "api_patterns": endpoint.get("api_patterns", []),
-                            "jwt_detected": endpoint.get("jwt_claims"),
-                            "encryption_indicators": {
-                                "likely_encrypted": endpoint.get(
-                                    "encryption_detected", False
-                                ),
-                                "types": endpoint.get("encryption_types", []),
-                            },
-                            "param_patterns": {
-                                "reflected": endpoint.get("reflected_params", []),
-                                "param_types": endpoint.get(
-                                    "param_type_summary", {}
-                                ),
-                            },
-                        }
-
-                        self.api_data[key] = [entry]
-                        self.endpoint_tags[key] = self._auto_tag(entry)
-                        self.endpoint_times[key] = [0]
-                        imported_snapshot[key] = [dict(entry)]
-                        imported += 1
-
+            source_label = self._ascii_safe(import_meta.get("source_tool_label") or "Import")
+            kind_label = self._ascii_safe(import_meta.get("kind") or "unknown")
             self.log_to_ui(
-                "[+] Imported {} endpoints from {}".format(imported, filepath)
+                "[+] Imported {} endpoints from {} (kind={}, source={})".format(
+                    imported, filepath, kind_label, source_label
+                )
             )
+            if skipped > 0:
+                self.log_to_ui(
+                    "[*] Import skipped {} existing endpoint keys".format(skipped)
+                )
             SwingUtilities.invokeLater(
                 lambda: self.endpoint_list.getCellRenderer().invalidate_cache()
             )
             SwingUtilities.invokeLater(lambda: self._update_host_filter())
             SwingUtilities.invokeLater(lambda: self._update_stats())
             SwingUtilities.invokeLater(lambda: self.refresh_view())
+            SwingUtilities.invokeLater(lambda: self._refresh_recon_invariant_status_label())
             if imported_snapshot:
                 logger_added = int(
                     self._sync_logger_from_recon_snapshot(
-                        imported_snapshot, source_tool_label="Import"
+                        imported_snapshot, source_tool_label=source_label
                     )
                     or 0
                 )
                 self.log_to_ui(
                     "[+] Logger sync from import: {} rows added".format(logger_added)
                 )
+            if bool(import_meta.get("excalibur_detected", False)):
+                self._run_excalibur_auto_pipeline(imported)
         except Exception as e:
             self.log_to_ui("[!] Import failed: {}".format(str(e)))
             import traceback
 
             self._callbacks.printError(traceback.format_exc())
+
+def _entry_to_excalibur_bridge_capture(self, endpoint_key, entry, endpoint_tags):
+    """Convert one captured entry into Excalibur bridge capture format."""
+    normalized_entry = self._coerce_import_entry_shape(entry, "Bridge Export")
+    if not normalized_entry:
+        return None
+    url_info = self._build_entry_url(normalized_entry)
+    full_url = self._ascii_safe(url_info.get("url") or "").strip()
+    if not full_url:
+        protocol = self._ascii_safe(normalized_entry.get("protocol") or "https", lower=True)
+        host = self._ascii_safe(normalized_entry.get("host") or "", lower=True)
+        port = self._int_or_default(normalized_entry.get("port"), 443 if protocol == "https" else 80)
+        path = self._ascii_safe(normalized_entry.get("path") or "/")
+        query = self._ascii_safe(normalized_entry.get("query_string") or "")
+        if query:
+            full_url = "{}://{}:{}{}?{}".format(protocol, host, port, path, query)
+        else:
+            full_url = "{}://{}:{}{}".format(protocol, host, port, path)
+
+    request_headers = self._normalize_header_dict(normalized_entry.get("headers") or {})
+    response_headers = self._normalize_header_dict(normalized_entry.get("response_headers") or {})
+    capture = {
+        "request": {
+            "method": self._ascii_safe(normalized_entry.get("method") or "GET").upper(),
+            "url": full_url,
+            "headers": request_headers,
+            "body": self._ascii_safe(normalized_entry.get("request_body") or ""),
+            "content_type": self._extract_content_type_from_headers(
+                request_headers,
+                fallback_value=normalized_entry.get("content_type") or "unknown",
+            ),
+        },
+        "response": {
+            "status": self._int_or_default(normalized_entry.get("response_status"), 0),
+            "headers": response_headers,
+            "body": self._ascii_safe(normalized_entry.get("response_body") or ""),
+            "length": self._int_or_default(normalized_entry.get("response_length"), 0),
+            "content_type": self._extract_content_type_from_headers(
+                response_headers,
+                fallback_value=normalized_entry.get("content_type") or "unknown",
+            ),
+        },
+        "timing": {
+            "response_time_ms": self._int_or_default(normalized_entry.get("response_time_ms"), 0),
+            "captured_at": self._ascii_safe(normalized_entry.get("captured_at") or ""),
+            "captured_at_epoch_ms": self._int_or_default(normalized_entry.get("captured_at_epoch_ms"), 0),
+        },
+        "context": {
+            "endpoint_key": self._ascii_safe(endpoint_key or ""),
+            "source_tool": self._ascii_safe(normalized_entry.get("source_tool") or ""),
+            "normalized_path": self._ascii_safe(normalized_entry.get("normalized_path") or ""),
+            "host": self._ascii_safe(normalized_entry.get("host") or "", lower=True),
+            "tags": list(endpoint_tags or []),
+            "auth_methods": list(normalized_entry.get("auth_detected") or []),
+        },
+    }
+    return capture
+
+def _build_excalibur_bridge_bundle(self, data_to_export, scope_label):
+    """Build shared Excalibur bridge bundle from Recon snapshot."""
+    captures = []
+    endpoint_count = 0
+    if isinstance(data_to_export, dict):
+        endpoint_count = len(data_to_export)
+        for endpoint_key in sorted(data_to_export.keys()):
+            entries = data_to_export.get(endpoint_key, [])
+            entries_list = entries if isinstance(entries, list) else [entries]
+            with self.lock:
+                endpoint_tags = list(
+                    (self.endpoint_tags.get(endpoint_key) or [])
+                )
+            for entry in entries_list:
+                capture = self._entry_to_excalibur_bridge_capture(
+                    endpoint_key,
+                    entry,
+                    endpoint_tags,
+                )
+                if capture is not None:
+                    captures.append(capture)
+    exported_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    bundle = {
+        "schema": "excalibur-burp-bridge/v1",
+        "producer": {
+            "name": "BurpAPISecuritySuite",
+            "module": "burp_capture_export_and_tooling_methods",
+        },
+        "exported_at": exported_at,
+        "scope": self._ascii_safe(scope_label or "All"),
+        "summary": {
+            "endpoint_count": int(endpoint_count),
+            "capture_count": int(len(captures)),
+        },
+        "captures": captures,
+    }
+    return bundle
 
 def _export_data(self, data_to_export, suffix=""):
     """Helper to export data"""
@@ -6000,15 +6991,25 @@ def _export_data(self, data_to_export, suffix=""):
         self.log_to_ui("[!] Cannot create export directory")
         return
     filename = os.path.join(export_dir, "api_analysis.json")
+    bridge_filename = os.path.join(export_dir, "excalibur_bridge_bundle.json")
     writer = None
+    bridge_writer = None
     try:
         writer = FileWriter(filename)
         writer.write(json.dumps(analysis, indent=2))
+        bridge_scope = suffix if suffix else "All"
+        bridge_bundle = self._build_excalibur_bridge_bundle(
+            data_to_export,
+            scope_label=bridge_scope,
+        )
+        bridge_writer = FileWriter(bridge_filename)
+        bridge_writer.write(json.dumps(bridge_bundle, indent=2))
         self.log_to_ui(
             "[+] Exported {} endpoints to: {}".format(
                 len(data_to_export), export_dir
             )
         )
+        self.log_to_ui("[+] Excalibur bridge bundle: {}".format(bridge_filename))
     except Exception as e:
         self.log_to_ui("[!] Export failed: {}".format(str(e)))
     finally:
@@ -6017,6 +7018,13 @@ def _export_data(self, data_to_export, suffix=""):
                 writer.close()
             except Exception as e:
                 self._callbacks.printError("Error closing writer: " + str(e))
+        if bridge_writer:
+            try:
+                bridge_writer.close()
+            except Exception as e:
+                self._callbacks.printError(
+                    "Error closing bridge writer: " + str(e)
+                )
 
 def _openapi_schema_from_inferred_type(self, inferred_type):
     """Map inferred parameter type hints to OpenAPI schema fragments."""
@@ -6919,9 +7927,18 @@ def _ascii_safe(self, value, lower=False, max_len=None):
         safe = safe[:max_len]
     return safe
 
-def _probe_binary_help(self, binary_path):
+def _probe_binary_help(self, binary_path, force_refresh=False):
     """Run lightweight binary help probes and cache result per path."""
     cache_key = "help::{}".format(binary_path)
+    if force_refresh and cache_key in self._tool_help_cache:
+        try:
+            del self._tool_help_cache[cache_key]
+        except Exception as cache_err:
+            self._callbacks.printError(
+                "Help probe cache refresh error ({}): {}".format(
+                    binary_path, str(cache_err)
+                )
+            )
     if cache_key in self._tool_help_cache:
         return self._tool_help_cache[cache_key]
 
@@ -7074,13 +8091,28 @@ def _validate_binary_signature(
             output_area.append("[*] {}\n".format(fix_hint))
         return False
 
-    help_text_lower = (help_text or "").lower()
-    missing = [
-        token for token in required_tokens if token.lower() not in help_text_lower
-    ]
-    forbidden = [
-        token for token in forbidden_tokens if token.lower() in help_text_lower
-    ]
+    def _evaluate_signature(help_blob):
+        help_blob_lower = (help_blob or "").lower()
+        missing_local = [
+            token for token in required_tokens if token.lower() not in help_blob_lower
+        ]
+        forbidden_local = [
+            token for token in forbidden_tokens if token.lower() in help_blob_lower
+        ]
+        return missing_local, forbidden_local
+
+    missing, forbidden = _evaluate_signature(help_text)
+
+    # Self-heal stale/partial cached help output by forcing a fresh probe once.
+    if required_tokens and missing and len(missing) == len(required_tokens):
+        probe_ok_retry, help_text_retry, probe_error_retry = self._probe_binary_help(
+            binary_path, force_refresh=True
+        )
+        if probe_ok_retry:
+            help_text = help_text_retry
+            missing, forbidden = _evaluate_signature(help_text)
+        elif probe_error_retry:
+            probe_error = probe_error_retry
 
     if missing or forbidden:
         output_area.setText(
@@ -7117,6 +8149,13 @@ def _tool_health_specs(self):
                 "nuclei",
             ],
             "required": ["-list", "-tags", "-etags", "-jsonl"],
+            "forbidden": [],
+        },
+        {
+            "name": "ApiHunter",
+            "field": "apihunter_path_field",
+            "fallback": [],
+            "required": ["--urls", "--format", "--output", "--no-auto-report"],
             "forbidden": [],
         },
         {
@@ -7186,6 +8225,8 @@ def _tool_health_specs(self):
 
 def _resolve_tool_health_path(self, spec):
     """Resolve probe path from UI field first, then fallback candidates."""
+    import os
+
     field_name = spec.get("field")
     if field_name and hasattr(self, field_name):
         try:
@@ -7200,10 +8241,85 @@ def _resolve_tool_health_path(self, spec):
                 )
             )
 
+    if self._ascii_safe(spec.get("name"), lower=True) == "apihunter":
+        resolved = self._resolve_executable_from_path("apihunter", "")
+        if resolved:
+            return resolved
+
     for candidate in (spec.get("fallback") or []):
         safe_candidate = self._ascii_safe(candidate).strip()
         if safe_candidate:
             return safe_candidate
+    return ""
+
+def _resolve_executable_from_path(self, binary_name, configured_value):
+    """Resolve executable to absolute path using process PATH + shell PATH probes."""
+    import os
+    import subprocess
+
+    configured = self._ascii_safe(configured_value).strip()
+    if configured:
+        if os.path.isabs(configured) and os.path.isfile(configured) and os.access(
+            configured, os.X_OK
+        ):
+            return configured
+        if os.path.isfile(configured) and os.access(configured, os.X_OK):
+            try:
+                return os.path.abspath(configured)
+            except Exception as resolve_err:
+                self._callbacks.printError(
+                    "Executable absolute-path resolve error ({}): {}".format(
+                        configured, str(resolve_err)
+                    )
+                )
+                return configured
+        if os.sep in configured:
+            return ""
+
+    default_bin = self._ascii_safe(binary_name).strip()
+    if not default_bin:
+        return ""
+    if os.name == "nt" and not default_bin.lower().endswith(".exe"):
+        default_bin = default_bin + ".exe"
+
+    for path_part in self._ascii_safe(os.environ.get("PATH") or "").split(os.pathsep):
+        root = self._ascii_safe(path_part).strip()
+        if not root:
+            continue
+        candidate = os.path.abspath(os.path.join(root, default_bin))
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+
+    try:
+        if os.name == "nt":
+            probe_cmds = [["where", default_bin]]
+        else:
+            probe_cmds = [
+                ["/bin/bash", "-lc", "command -v {} 2>/dev/null || true".format(default_bin)],
+                ["/bin/bash", "-ic", "command -v {} 2>/dev/null || true".format(default_bin)],
+            ]
+        for probe_cmd in probe_cmds:
+            probe = subprocess.Popen(
+                probe_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            stdout_data, _ = probe.communicate()
+            for raw_line in self._ascii_safe(stdout_data).splitlines():
+                resolved = self._ascii_safe(raw_line).strip()
+                if not resolved:
+                    continue
+                if os.path.isabs(resolved) and os.path.isfile(resolved) and os.access(
+                    resolved, os.X_OK
+                ):
+                    return resolved
+    except Exception as e:
+        self._callbacks.printError(
+            "{} PATH shell probe failed: {}".format(
+                self._ascii_safe(binary_name), str(e)
+            )
+        )
+
     return ""
 
 def _run_tool_health_check(self, event):
@@ -7482,6 +8598,7 @@ def _pkill_external_tools(self, output_area=None):
     import subprocess
 
     tool_specs = [
+        ("apihunter", "ApiHunter"),
         ("nuclei", "Nuclei"),
         ("httpx", "HTTPX"),
         ("katana", "Katana"),
@@ -7514,6 +8631,7 @@ def _pkill_external_tools(self, output_area=None):
     # Sweep orphan processes by executable pattern.
     if os.name == "nt":
         kill_names = [
+            "apihunter.exe",
             "nuclei.exe",
             "httpx.exe",
             "katana.exe",
@@ -7537,6 +8655,7 @@ def _pkill_external_tools(self, output_area=None):
                 lines.append("[!] taskkill {} failed: {}".format(name, str(e)))
     else:
         kill_patterns = [
+            "apihunter",
             "nuclei",
             "httpx",
             "katana",
@@ -7580,8 +8699,11 @@ def _pkill_external_tools(self, output_area=None):
     if output_area is not None:
         output_area.append(summary)
     self.log_to_ui(
-        "[!] Emergency kill executed for nuclei/httpx/katana/ffuf/wayback/sqlmap/dalfox/subfinder/graphql"
+        "[!] Emergency kill executed for apihunter/nuclei/httpx/katana/ffuf/wayback/sqlmap/dalfox/subfinder/graphql"
     )
+
+def _stop_apihunter(self, event):
+    self._stop_tool_run("apihunter", "ApiHunter", self.apihunter_area)
 
 def _stop_nuclei(self, event):
     self._stop_tool_run("nuclei", "Nuclei", self.nuclei_area)
@@ -7726,6 +8848,7 @@ __all__ = [
     "_export_postman_collection",
     "_export_insomnia_collection",
     "_show_text_dialog",
+    "_show_ai_copy_exit_dialog",
     "_collect_recon_grep_targets",
     "_run_recon_grep",
     "_iter_recon_param_items",
@@ -7749,7 +8872,29 @@ __all__ = [
     "_export_recon_turbo_pack",
     "_export_recon_turbo_pack_selected",
     "_sync_logger_from_recon_snapshot",
+    "_int_or_default",
+    "_current_import_sample_limit",
+    "_normalize_header_dict",
+    "_extract_content_type_from_headers",
+    "_parse_url_parts_from_text",
+    "_derive_import_auth_methods",
+    "_extract_param_map_from_har_request",
+    "_build_cookie_header_for_host",
+    "_coerce_import_entry_shape",
+    "_build_suite_export_snapshot",
+    "_build_har_snapshot",
+    "_build_replay_studio_snapshot",
+    "_merge_import_snapshots",
+    "_identify_import_payload_kind",
+    "_discover_excalibur_sidecar_paths",
+    "_load_json_file_for_import",
+    "_build_excalibur_bridge_snapshot",
+    "_resolve_import_payload",
+    "_merge_import_snapshot_into_recon",
+    "_run_excalibur_auto_pipeline",
     "import_data",
+    "_entry_to_excalibur_bridge_capture",
+    "_build_excalibur_bridge_bundle",
     "_export_data",
     "_openapi_schema_from_inferred_type",
     "_build_openapi_spec_from_capture",
@@ -7778,6 +8923,7 @@ __all__ = [
     "_validate_binary_signature",
     "_tool_health_specs",
     "_resolve_tool_health_path",
+    "_resolve_executable_from_path",
     "_run_tool_health_check",
     "_extract_command_executables",
     "_validate_wayback_custom_command_tools",
@@ -7790,6 +8936,7 @@ __all__ = [
     "_terminate_process_cross_platform",
     "_stop_tool_run",
     "_pkill_external_tools",
+    "_stop_apihunter",
     "_stop_nuclei",
     "_stop_httpx",
     "_stop_katana",

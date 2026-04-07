@@ -496,6 +496,29 @@ def test_import_syncs_recon_and_logger_views():
         assert token in text, "Missing Recon/Logger import sync token: {}".format(token)
     print("[PASS] test_import_syncs_recon_and_logger_views")
 
+def test_excalibur_bridge_import_export_and_auto_pipeline_are_wired():
+    text = _source_text()
+    required_tokens = [
+        '"schema": "excalibur-burp-bridge/v1"',
+        '"excalibur_bridge_bundle.json"',
+        "def _build_excalibur_bridge_bundle(",
+        "def _entry_to_excalibur_bridge_capture(",
+        "def _resolve_import_payload(",
+        "def _discover_excalibur_sidecar_paths(",
+        "def _build_har_snapshot(",
+        "def _build_replay_studio_snapshot(",
+        "def _build_excalibur_bridge_snapshot(",
+        "def _run_excalibur_auto_pipeline(",
+        "self._run_excalibur_auto_pipeline(imported)",
+        "self._refresh_sequence_invariants_from_recon(None)",
+        "Excalibur auto-pipeline",
+        "Import API Security Suite / Excalibur JSON",
+        "Import Recon JSON, Excalibur HAR/session sidecars, or shared bridge bundles",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Excalibur bridge token: {}".format(token)
+    print("[PASS] test_excalibur_bridge_import_export_and_auto_pipeline_are_wired")
+
 
 def test_logger_rules_can_enrich_recon_endpoint_tags():
     text = _source_text()
@@ -877,11 +900,17 @@ def test_tooltip_wiring_is_generalized():
 def test_new_verification_and_discovery_tabs_are_wired():
     text = _source_text()
     required_tokens = [
+        'self.tabbed_pane.addTab("ApiHunter", apihunter_panel)',
         'self.tabbed_pane.addTab("Sqlmap", sqlmap_verify_panel)',
         'self.tabbed_pane.addTab("Dalfox", dalfox_verify_panel)',
         'self.tabbed_pane.addTab("Subfinder", asset_discovery_panel)',
         'self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)',
         'self.tabbed_pane.addTab("GraphQL", graphql_panel)',
+        "def _create_apihunter_tab(",
+        "def _run_apihunter(",
+        "def _collect_apihunter_targets(",
+        "def _export_apihunter_targets(",
+        "def _stop_apihunter(",
         "def _create_sqlmap_verify_tab(",
         "def _create_dalfox_verify_tab(",
         "def _create_api_asset_discovery_tab(",
@@ -892,6 +921,8 @@ def test_new_verification_and_discovery_tabs_are_wired():
         "def _run_api_asset_discovery(",
         "def _run_openapi_drift(",
         "def _run_graphql_analysis(",
+        'self.apihunter_top_findings_min_combo = JComboBox(["Critical", "High", "Medium"])',
+        "[*] Top Findings Min: {} (Burp display filter)",
         "def _send_sqlmap_to_recon(",
         "def _send_dalfox_to_recon(",
         "def _send_asset_discovery_to_recon(",
@@ -908,6 +939,9 @@ def test_new_verification_and_discovery_tabs_are_wired():
     ]
     for token in required_tokens:
         assert token in text, "Missing new tab wiring token: {}".format(token)
+    assert text.index('self.tabbed_pane.addTab("ApiHunter", apihunter_panel)') < text.index(
+        'self.tabbed_pane.addTab("Nuclei", nuclei_panel)'
+    ), "ApiHunter tab should appear before Nuclei tab"
     print("[PASS] test_new_verification_and_discovery_tabs_are_wired")
 
 
@@ -921,6 +955,8 @@ def test_tool_profiles_and_health_button_are_wired():
         "def _resolve_tool_health_path(",
         "def _normalize_profile(",
         "def _evaluate_help_text(",
+        '"name": "ApiHunter"',
+        '"field": "apihunter_path_field"',
         'self.sqlmap_profile_combo = JComboBox(self._profile_labels())',
         'self.dalfox_profile_combo = JComboBox(self._profile_labels())',
         'self.asset_profile_combo = JComboBox(self._profile_labels())',
@@ -953,9 +989,11 @@ def test_ffuf_target_filtering_hardening_present():
 def test_external_tool_scope_collectors_present():
     text = _source_text()
     assert "def _collect_nuclei_targets(" in text
+    assert "def _collect_apihunter_targets(" in text
     assert "def _collect_katana_seed_urls(" in text
     assert "def _collect_wayback_queries(" in text
     assert "targets, target_meta = self._collect_nuclei_targets()" in text
+    assert "targets, target_meta = self._collect_apihunter_targets()" in text
     assert "seed_urls, target_meta = self._collect_katana_seed_urls()" in text
     assert "queries, query_meta = self._collect_wayback_queries()" in text
     print("[PASS] test_external_tool_scope_collectors_present")
@@ -1038,10 +1076,14 @@ def test_help_probe_uses_file_capture_to_avoid_pipe_deadlock():
     text = _source_text()
     required_tokens = [
         "def _probe_binary_help(",
+        "force_refresh=False",
+        "if force_refresh and cache_key in self._tool_help_cache:",
         "tempfile.mkstemp(",
         'prefix="burp_help_probe_"',
         "stderr=subprocess.STDOUT",
         'with open(capture_path, "rb") as reader:',
+        "self._probe_binary_help(",
+        "force_refresh=True",
     ]
     for token in required_tokens:
         assert token in text, "Missing help-probe hardening token: {}".format(token)
@@ -1089,6 +1131,7 @@ def test_emergency_pkill_button_and_handler_present():
     for token in required_tokens:
         assert token in text, "Missing emergency kill token: {}".format(token)
     for area_name in [
+        "apihunter_area",
         "nuclei_area",
         "httpx_area",
         "katana_area",
@@ -1107,9 +1150,11 @@ def test_external_tool_commands_are_cross_platform_safe():
         'return ["cmd", "/c", command_text]',
         'return ["/bin/bash", "-lc", command_text]',
         "cmd = self._build_shell_command(custom_nuclei_command)",
+        "cmd = self._build_shell_command(custom_apihunter_command)",
         "cmd = self._build_shell_command(custom_httpx_command)",
         "cmd = self._build_shell_command(custom_katana_command)",
         "cmd = self._build_shell_command(custom_wayback_command)",
+        '"{apihunter_path} --urls {targets_file} --format ndjson --output {results_file}',
         '"{httpx_path} -l {urls_file} -status-code -nc -silent"',
         '"{katana_path} -list {urls_file} -d 1 -jc -silent"',
         'stdin_prefix = "type" if os.name == "nt" else "cat"',
@@ -1174,11 +1219,14 @@ def test_custom_command_labels_are_concise_and_opt_in():
     assert (
         'self.wayback_custom_cmd_checkbox = JCheckBox("Enable Custom", False)' in text
     )
+    assert (
+        'self.apihunter_custom_cmd_checkbox = JCheckBox("Enable Custom", False)' in text
+    )
     command_label_hits = (
         text.count('controls.add(JLabel("Command:"))')
         + text.count('controls_line1.add(JLabel("Command:"))')
     )
-    assert command_label_hits >= 4
+    assert command_label_hits >= 5
     print("[PASS] test_custom_command_labels_are_concise_and_opt_in")
 
 
@@ -1510,6 +1558,7 @@ def test_text_and_combo_field_persistence_is_wired():
         'self._save_text_setting("combo.{}".format(attr_name), self._ascii_safe(selected or ""))',
         "_PersistTextFieldListener(self, attr_name)",
         "combo.addActionListener(",
+        '"apihunter_top_findings_min_combo",',
         'scope_lines_text = self._load_text_setting("target_base_scope_lines", scope_lines_default)',
         'self._save_text_setting(',
         '"target_base_scope_lines", "\\n".join(self.target_base_scope_lines)',
@@ -1563,6 +1612,8 @@ def test_ai_export_actions_are_wired_across_outputs():
         "READY CURL:",
         "FULL HTTP REQUEST:",
         "def _export_text_output_to_ai(",
+        "def _show_ai_copy_exit_dialog(",
+        'options = ["Copy", "Exit"]',
     ]
     for token in required_tokens:
         assert token in text, "Missing AI export token: {}".format(token)
