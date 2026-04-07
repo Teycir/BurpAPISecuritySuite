@@ -558,7 +558,7 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
     text = _source_text()
     required_tokens = [
         "self.logger_events = []",
-        "self.logger_max_rows = 5000",
+        "self.logger_max_rows = 20000",
         "self.logger_trim_batch = 500",
         "self._logger_refresh_min_interval_ms = 450",
         "self.logger_active_regex = \"\"",

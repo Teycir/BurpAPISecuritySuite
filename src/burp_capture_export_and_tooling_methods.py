@@ -1575,13 +1575,13 @@ def _run_capture_ui_refresh(self):
 
 def _logger_apply_runtime_settings(self, schedule_refresh=True):
     """Apply logger runtime settings from UI controls."""
-    max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+    max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
     max_rows_combo = getattr(self, "logger_max_rows_combo", None)
     if max_rows_combo is not None:
         try:
             max_rows = int(str(max_rows_combo.getSelectedItem()))
         except (TypeError, ValueError):
-            max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+            max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
     if max_rows < 200:
         max_rows = 200
     if max_rows > 50000:
@@ -1643,7 +1643,7 @@ def _show_logger_help_popup(self):
 def _logger_trim_if_needed(self, force=False):
     """Trim oldest logger events to keep memory bounded."""
     with self.logger_lock:
-        max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+        max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
         auto_prune = bool(getattr(self, "logger_auto_prune_enabled", True))
         if (not force) and (not auto_prune):
             return 0
@@ -1676,7 +1676,7 @@ def _logger_effective_preview_caps(self):
     """Return adaptive request/response preview caps for current logger memory mode."""
     req_cap = int(getattr(self, "logger_request_preview_max", 1200) or 1200)
     resp_cap = int(getattr(self, "logger_response_preview_max", 2400) or 2400)
-    max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+    max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
     if max_rows >= 20000:
         req_cap = min(req_cap, 500)
         resp_cap = min(resp_cap, 900)
@@ -1693,7 +1693,7 @@ def _logger_effective_preview_caps(self):
 def _logger_effective_header_preview_limit(self, side="request"):
     """Return adaptive per-event header preview count."""
     side_key = self._ascii_safe(side or "request", lower=True).strip()
-    max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+    max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
     if max_rows >= 20000:
         return 4 if side_key == "request" else 5
     if max_rows >= 10000:
@@ -4621,7 +4621,7 @@ def _logger_backfill_history(self, force=False):
         skipped = 0
         errors = 0
         try:
-            max_seed = int(getattr(self, "logger_max_rows", 5000) or 5000)
+            max_seed = int(getattr(self, "logger_max_rows", 20000) or 20000)
             max_seed = max(500, min(40000, max_seed * 3))
             messages = self._proxy_history_tail_window(max_seed)
             scanned = len(messages)
@@ -5771,7 +5771,7 @@ def _sync_logger_from_recon_snapshot(self, data_snapshot, source_tool_label="Rec
     with self.logger_lock:
         before_count = len(getattr(self, "logger_events", []) or [])
 
-    max_rows = int(getattr(self, "logger_max_rows", 5000) or 5000)
+    max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
     max_seed = max(500, min(40000, max_rows))
     seeded = 0
     truncated = False

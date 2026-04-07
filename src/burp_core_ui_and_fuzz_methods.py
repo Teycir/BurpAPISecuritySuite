@@ -565,7 +565,7 @@ def _initialize_runtime_state(self):
     self.endpoint_times = {}
     self.lock = threading.Lock()
     self.max_endpoints = 800
-    self.max_body_size = 5000
+    self.max_body_size = 20000
     self._tool_help_cache = {}
     self.target_base_scope_lines = []
     self.target_base_scope_hosts = set()
@@ -631,7 +631,7 @@ def _initialize_runtime_state(self):
     self.logger_events = deque()
     self.logger_lock = threading.Lock()
     self.logger_event_seq = 0
-    self.logger_max_rows = 5000
+    self.logger_max_rows = 20000
     self.logger_trim_batch = 500
     self.logger_capture_enabled = True
     self.logger_auto_prune_enabled = True
@@ -1256,7 +1256,7 @@ def _create_logger_tab(self):
     controls.add(self.logger_show_last_combo)
     controls.add(JLabel("Max Memory:"))
     self.logger_max_rows_combo = JComboBox(["2000", "5000", "10000", "20000"])
-    self.logger_max_rows_combo.setSelectedItem("5000")
+    self.logger_max_rows_combo.setSelectedItem("20000")
     controls.add(self.logger_max_rows_combo)
     self.logger_auto_prune_checkbox = JCheckBox("Auto Prune", True)
     self.logger_auto_prune_checkbox.setToolTipText(
