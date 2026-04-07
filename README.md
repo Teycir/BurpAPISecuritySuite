@@ -98,6 +98,7 @@ Professional-grade Burp Suite extension for comprehensive API reconnaissance, in
     - [Analysis](#analysis)
   - [Integration](#integration)
     - [LLM Prompt Integration](#llm-prompt-integration)
+    - [Companion Repo Workflow (APIPentesting)](#companion-repo-workflow-apipentesting)
   - [Workflow Examples](#workflow-examples)
     - [1. AI-Powered Payload Generation](#1-ai-powered-payload-generation)
     - [2. Turbo Intruder Race Condition](#2-turbo-intruder-race-condition)
@@ -684,15 +685,34 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 
 ### LLM Prompt Integration
 
-The export includes a pre-formatted prompt instructing the LLM to:
+The export includes AI-ready prompts and context that prioritize:
 
-1. Analyze API structure and patterns
-2. Identify attack vectors (BOLA, Mass Assignment, Rate Limiting, etc.)
-3. Generate a custom Burp extension implementing:
-   - IScannerCheck for automated testing
-   - Passive and active scan methods
-   - Tailored payloads for detected patterns
-   - Clear reporting with severity ratings
+1. Sensitive-data exploit paths (cross-account/tenant exposure)
+2. Unauthorized state changes (workflow/lifecycle abuse)
+3. Non-obvious logic flaws over duplicate-prone generic findings
+4. Reproducible evidence deltas and missing-data requests
+
+Primary AI artifacts:
+- `ai_bundle.json`
+- `ai_all_tabs_context.json`
+- `ai_openai_request.json`
+- `ai_anthropic_request.json`
+- `ai_ollama_request.json`
+
+### Companion Repo Workflow (APIPentesting)
+
+`BurpAPISecuritySuite` and `APIPentesting` are designed to be used together:
+
+1. Capture + analyze traffic in BurpAPISecuritySuite.
+2. In `Recon`, click `Export AI Bundle`.
+3. In APIPentesting, run:
+   - `./scripts/scan-nuclei-prioritize.sh /path/to/ai_bundle.json <scan-name>`
+4. Review `Reports/<scan-name>-<timestamp>/priority.json` and `results.jsonl`.
+5. Use `scripts/AI_TRIAGE_PROMPT.md` (from APIPentesting) with your AI UI for sensitive-data-first triage.
+
+Ownership split:
+- BurpAPISecuritySuite: in-Burp capture, enrichment, deep-logic analysis, AI/export packaging.
+- APIPentesting: external scanning orchestration, ranking, and AI-assisted exploit triage.
 
 ## Workflow Examples
 
@@ -703,14 +723,10 @@ The export includes a pre-formatted prompt instructing the LLM to:
 # 2. (Optional) Run Passive Discovery → "Run Invariants"
 # 3. (Optional) In Recon, click "Refresh Invariants"
 # 4. In Recon, click "Export AI Bundle"
-# 5. Feed ai_bundle.json / ai_all_tabs_context.json to ChatGPT/Claude:
-
-"Analyze these API endpoints and generate 50 custom payloads for each 
-vulnerability type. Focus on:
-- Context-aware SQLi based on parameter names
-- IDOR payloads matching observed ID patterns
-- XSS payloads for detected reflection points
-- JWT manipulation for the specific auth mechanism"
+# 5. Run APIPentesting scan from the exported bundle:
+#    ./scripts/scan-nuclei-prioritize.sh /path/to/ai_bundle.json burp-ai-scan
+# 6. Feed Reports/.../priority.json + results.jsonl to AI with
+#    scripts/AI_TRIAGE_PROMPT.md for sensitive-data-first exploit triage.
 ```
 
 ### 2. Turbo Intruder Race Condition
@@ -989,8 +1005,10 @@ A:
 1. (Optional) Run `Passive Discovery` → `Run Invariants`
 2. (Optional) In the `Recon` tab, click `Refresh Invariants`
 3. In the `Recon` tab, click `Export AI Bundle`
-4. Feed `ai_bundle.json` (or `ai_all_tabs_context.json`) to ChatGPT/Claude
-5. Use `ai_sequence_evidence_ledger.json`, `ai_golden_ticket_ledger.json`, and `ai_state_transition_ledger.json` to prioritize what to test first
+4. Use APIPentesting to scan from that export:
+   - `./scripts/scan-nuclei-prioritize.sh /path/to/ai_bundle.json burp-ai-scan`
+5. Feed `Reports/.../priority.json` + `results.jsonl` to your AI UI using APIPentesting `scripts/AI_TRIAGE_PROMPT.md`
+6. Use `ai_sequence_evidence_ledger.json`, `ai_golden_ticket_ledger.json`, and `ai_state_transition_ledger.json` to prioritize what to validate first
 
 **Q: Can I import previously exported data?**
 
@@ -1102,6 +1120,8 @@ Need custom security tools or API testing solutions? I build production-ready ap
 - **[Ghost Chat](https://ghost-chat.pages.dev)** - Secure P2P chat with WebRTC, no server storage, self-destruct timers
 - **[BurpCopyIssues](https://github.com/Teycir/BurpCopyIssues)** - Burp Suite extension for browsing, copying, and exporting scan findings
 - **[BurpWpsScan](https://github.com/Teycir/BurpWpsScan)** - WordPress security scanner for Burp Suite with WPScan API integration
+- **[Excalibur](https://github.com/Teycir/Excalibur)** - API attack-surface discovery and session workflow tooling for practical pentest operations
+- **[APIPentesting](https://github.com/Teycir/APIPentesting)** - Burp-first external scanning and exploit-triage companion workflow for API bug bounty hunting
 - **Custom Security Tools** - Burp extensions, API testing frameworks, automation scripts
 
 ### Services Offered
