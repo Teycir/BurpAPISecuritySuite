@@ -123,6 +123,7 @@ _PERSISTED_TEXT_ATTRS = (
     "auth_admin_header_field",
     "auth_replay_include_regex_field",
     "auth_replay_exclude_regex_field",
+    "auth_replay_base_urls_field",
     "auth_replay_methods_field",
     "auth_replay_enforced_status_field",
     "auth_replay_enforced_regex_field",

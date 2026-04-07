@@ -141,8 +141,17 @@ def test_passive_scope_defaults_to_all_endpoints():
 
 def test_auth_replay_scope_defaults_to_all_endpoints():
     text = _source_text()
-    assert "self.auth_replay_scope_combo = JComboBox(" in text
-    assert 'self.auth_replay_scope_combo.setSelectedItem("All Endpoints")' in text
+    required_tokens = [
+        "self.auth_replay_scope_combo = JComboBox(",
+        'self.auth_replay_scope_combo.setSelectedItem("All Endpoints")',
+        "def _auth_replay_update_scope_hint(",
+        "def _show_auth_replay_workflow_help(",
+        '"Auth Replay Workflow"',
+        "Selected Endpoint runs only the endpoint selected in Recon list.",
+        "Selected Endpoint scope reads the active selection from Recon tab.",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Auth Replay scope/help token: {}".format(token)
     print("[PASS] test_auth_replay_scope_defaults_to_all_endpoints")
 
 
@@ -917,6 +926,91 @@ def test_autorize_and_inql_features_are_wired():
     for token in required_tokens:
         assert token in text, "Missing Autorize/InQL token: {}".format(token)
     print("[PASS] test_autorize_and_inql_features_are_wired")
+
+def test_auth_replay_base_url_scope_filter_wired():
+    text = _source_text()
+    required_tokens = [
+        'self.auth_replay_base_urls_field = JTextField("", 25)',
+        '"Base URLs (Exclusive):"',
+        "def _parse_auth_replay_base_scope_override(",
+        "base_scope_override = self._parse_auth_replay_base_scope_override(",
+        "base_scope_override=base_scope_override,",
+        "if base_scope_override.get(\"enabled\"):",
+        "self._host_matches_target_scope(host, base_scope_override)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Auth Replay base-scope token: {}".format(token)
+    print("[PASS] test_auth_replay_base_url_scope_filter_wired")
+
+def test_auth_replay_noise_and_duplicate_header_guards_present():
+    text = _source_text()
+    required_tokens = [
+        "def _auth_replay_header_signature(",
+        "def _auth_replay_distinct_profile_headers(",
+        "def _normalize_auth_profile_header_line(",
+        "def _current_auth_profile_header_signatures(",
+        "distinct_profile_headers, duplicate_header_notes, role_aliases = _auth_replay_distinct_profile_headers(",
+        "def _auth_replay_expand_role_alias_results(",
+        "Duplicate role headers collapsed:",
+        "Duplicate roles are mirrored in table columns from their canonical role.",
+        "Tip: use Guest/User/Admin Extract to choose distinct tokens for stronger cross-role authz checks.",
+        "[DUP TOKEN]",
+        "prioritizing distinct tokens before duplicates.",
+        "(duplicate-token fallback)",
+        "(distinct token)",
+        "Provide at least two distinct replay contexts",
+        "def _auth_replay_endpoint_context(",
+        "if not endpoint_context.get(\"high_signal\"):",
+        "self._ffuf_is_noise_host(host) or self._is_wayback_noise_host(host)",
+        "severity = (",
+        "\"critical\" if endpoint_context.get(\"sensitive\") else \"high\"",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Auth Replay noise/duplicate guard token: {}".format(token)
+    print("[PASS] test_auth_replay_noise_and_duplicate_header_guards_present")
+
+def test_auth_replay_table_url_copy_controls_present():
+    text = _source_text()
+    required_tokens = [
+        '"Copy URL(s)"',
+        "def _auth_replay_copy_selected_urls(",
+        "Copy Selected URL(s)",
+        "self.auth_replay_table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION)",
+        "self.auth_replay_table.setToolTipText(",
+        "self._copy_to_clipboard(payload)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Auth Replay URL copy token: {}".format(token)
+    print("[PASS] test_auth_replay_table_url_copy_controls_present")
+
+def test_auth_replay_table_row_severity_colors_present():
+    text = _source_text()
+    required_tokens = [
+        "class _AuthReplayTableCellRenderer(DefaultTableCellRenderer):",
+        "if \"CRITICAL\" in result_text:",
+        "elif \"HIGH\" in result_text:",
+        "self._critical_bg = Color(255, 205, 210)",
+        "self._high_bg = Color(255, 224, 178)",
+        "column.setCellRenderer(row_renderer)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Auth Replay severity-row-color token: {}".format(token)
+    print("[PASS] test_auth_replay_table_row_severity_colors_present")
+
+def test_auth_replay_severity_sorting_controls_present():
+    text = _source_text()
+    required_tokens = [
+        '"Sort Severity"',
+        "class _AuthReplaySeverityComparator(Comparator):",
+        "self.auth_replay_row_sorter = TableRowSorter(self.auth_replay_table_model)",
+        "self.auth_replay_row_sorter.setComparator(13, _AuthReplaySeverityComparator())",
+        "def _auth_replay_sort_by_severity(",
+        "RowSorter.SortKey(13, SortOrder.ASCENDING)",
+        "Click a column header to sort. Use Result for severity ranking.",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Auth Replay severity-sort token: {}".format(token)
+    print("[PASS] test_auth_replay_severity_sorting_controls_present")
 
 
 def test_tooltip_wiring_is_generalized():

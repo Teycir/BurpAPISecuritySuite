@@ -3,6 +3,28 @@
 All notable changes to this project are documented in this file.
 
 
+## [1.4.5] - 2026-04-07
+
+### Added
+- Auth Replay UX guidance improvements:
+  - Added a top-row `?` action that opens an `Auth Replay Workflow` popup with step-by-step usage guidance.
+  - Added a live `Scope Hint` row under controls to explain `Selected Endpoint` / `Filtered View` / `All Endpoints` behavior in-context.
+  - Added run-time context output for `Selected Endpoint` mode, including the resolved Recon endpoint key when available.
+
+### Changed
+- Auth Replay role-header extraction now prioritizes distinct tokens:
+  - Added auth-header signature normalization helpers for semantic duplicate detection across Guest/User/Admin fields.
+  - `Extract` candidate ordering now prefers distinct signatures first and tags duplicate candidates as `[DUP TOKEN]`.
+  - Auto-prefill (`_auto_detect_auth_profile_headers`) now attempts distinct token assignment for empty role fields before duplicate fallback.
+- Duplicate-header handling remains execution-safe while improving operator visibility:
+  - Duplicate role headers are still collapsed for replay/evaluation noise control.
+  - Duplicate role table columns now mirror canonical role results to avoid misleading empty (`-`) Guest/User/Admin cells.
+
+### Fixed
+- Fixed Auth Replay startup crash on severity-sort wiring in Jython:
+  - `TableRowSorter.setComparator(...)` now receives a concrete `java.util.Comparator` implementation (`_AuthReplaySeverityComparator(Comparator)`), resolving Jython coercion failure.
+- Clarified `Selected Endpoint` failure/empty-target path with explicit Recon-selection dependency messaging in output.
+
 ## [1.4.4] - 2026-04-07
 
 ### Added

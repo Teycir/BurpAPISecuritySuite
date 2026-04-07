@@ -11,24 +11,150 @@ from javax.swing import (
     JCheckBox,
     JComboBox,
     JLabel,
+    JOptionPane,
+    JMenuItem,
     JPanel,
+    JPopupMenu,
     JScrollPane,
     JSplitPane,
     JTable,
     JTextField,
+    ListSelectionModel,
+    RowSorter,
+    SortOrder,
     SwingUtilities,
 )
 from javax.swing.table import DefaultTableModel
+from javax.swing.table import DefaultTableCellRenderer
+from javax.swing.table import TableRowSorter
+from java.util import ArrayList, Comparator
 
 
 class _AuthReplayTableModel(DefaultTableModel):
     def isCellEditable(self, row, column):
         return False
 
+class _AuthReplayTable(JTable):
+    def getToolTipText(self, event=None):
+        # Jython may route both Java overloads here:
+        # - getToolTipText()                      -> event is None
+        # - getToolTipText(MouseEvent event)      -> event is MouseEvent
+        if event is None:
+            try:
+                return JTable.getToolTipText(self)
+            except Exception as base_err:
+                _ = base_err
+                return None
+        try:
+            row = int(self.rowAtPoint(event.getPoint()))
+            col = int(self.columnAtPoint(event.getPoint()))
+        except (TypeError, ValueError):
+            return None
+        if row < 0 or col < 0:
+            return None
+        try:
+            model_row = int(self.convertRowIndexToModel(row))
+        except Exception as row_err:
+            _ = row_err
+            model_row = row
+        try:
+            model_col = int(self.convertColumnIndexToModel(col))
+        except Exception as col_err:
+            _ = col_err
+            model_col = col
+        try:
+            value = self.getModel().getValueAt(model_row, model_col)
+        except Exception as value_err:
+            _ = value_err
+            return None
+        text = str(value or "").strip()
+        if not text:
+            return None
+        return text
+
+class _AuthReplayTableCellRenderer(DefaultTableCellRenderer):
+    def __init__(self):
+        DefaultTableCellRenderer.__init__(self)
+        self._critical_bg = Color(255, 205, 210)
+        self._high_bg = Color(255, 224, 178)
+        self._default_even_bg = Color(255, 255, 255)
+        self._default_odd_bg = Color(247, 247, 247)
+
+    def getTableCellRendererComponent(
+        self, table, value, isSelected, hasFocus, row, column
+    ):
+        component = DefaultTableCellRenderer.getTableCellRendererComponent(
+            self, table, value, isSelected, hasFocus, row, column
+        )
+        if isSelected:
+            component.setBackground(table.getSelectionBackground())
+            component.setForeground(table.getSelectionForeground())
+            return component
+
+        model_row = row
+        try:
+            model_row = int(table.convertRowIndexToModel(int(row)))
+        except Exception as row_err:
+            _ = row_err
+
+        result_text = ""
+        try:
+            result_value = table.getModel().getValueAt(model_row, 13)
+            result_text = str(result_value or "").strip().upper()
+        except Exception as result_err:
+            _ = result_err
+            result_text = ""
+
+        if "CRITICAL" in result_text:
+            component.setBackground(self._critical_bg)
+        elif "HIGH" in result_text:
+            component.setBackground(self._high_bg)
+        else:
+            component.setBackground(
+                self._default_even_bg if int(row) % 2 == 0 else self._default_odd_bg
+            )
+        component.setForeground(Color(33, 37, 41))
+        return component
+
+class _AuthReplaySeverityComparator(Comparator):
+    def _severity_rank(self, value):
+        text = str(value or "").upper()
+        if "CRITICAL" in text:
+            return 0
+        if "HIGH" in text:
+            return 1
+        if "MEDIUM" in text:
+            return 2
+        if "OK" in text:
+            return 3
+        if "ERROR" in text:
+            return 4
+        return 5
+
+    def compare(self, left, right):
+        left_rank = self._severity_rank(left)
+        right_rank = self._severity_rank(right)
+        if left_rank < right_rank:
+            return -1
+        if left_rank > right_rank:
+            return 1
+        left_text = str(left or "")
+        right_text = str(right or "")
+        if left_text < right_text:
+            return -1
+        if left_text > right_text:
+            return 1
+        return 0
+
+    def equals(self, other):
+        return self is other
+
 def create_auth_replay_tab(extender):
     self = extender
     """Create Auth Replay tab for multi-role authorization checks."""
     panel = JPanel(BorderLayout())
+    top_panel = JPanel()
+    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
     top_controls = JPanel(FlowLayout(FlowLayout.LEFT))
     top_controls.add(JLabel("Scope:"))
     self.auth_replay_scope_combo = JComboBox(
@@ -36,6 +162,14 @@ def create_auth_replay_tab(extender):
     )
     self.auth_replay_scope_combo.setSelectedItem("All Endpoints")
     top_controls.add(self.auth_replay_scope_combo)
+    top_controls.add(
+        self._create_action_button(
+            "?",
+            Color(108, 117, 125),
+            lambda e: _show_auth_replay_workflow_help(self),
+            "Show Auth Replay workflow and scope behavior help",
+        )
+    )
     top_controls.add(JLabel("Max:"))
     self.auth_replay_max_field = JTextField("50", 4)
     top_controls.add(self.auth_replay_max_field)
@@ -70,6 +204,20 @@ def create_auth_replay_tab(extender):
     )
     top_controls.add(
         self._create_action_button(
+            "Copy URL(s)",
+            Color(70, 130, 180),
+            lambda e: _auth_replay_copy_selected_urls(self),
+        )
+    )
+    top_controls.add(
+        self._create_action_button(
+            "Sort Severity",
+            Color(255, 140, 0),
+            lambda e: _auth_replay_sort_by_severity(self),
+        )
+    )
+    top_controls.add(
+        self._create_action_button(
             "To AI",
             Color(33, 150, 243),
             lambda e: self._export_text_output_to_ai(
@@ -77,7 +225,18 @@ def create_auth_replay_tab(extender):
             ),
         )
     )
-    panel.add(top_controls, BorderLayout.NORTH)
+    self.auth_replay_scope_hint_label = JLabel("")
+    self.auth_replay_scope_hint_label.setForeground(Color(73, 80, 87))
+    hint_row = JPanel(FlowLayout(FlowLayout.LEFT))
+    hint_row.add(self.auth_replay_scope_hint_label)
+    self.auth_replay_scope_combo.addActionListener(
+        lambda e: _auth_replay_update_scope_hint(self)
+    )
+    _auth_replay_update_scope_hint(self)
+
+    top_panel.add(top_controls)
+    top_panel.add(hint_row)
+    panel.add(top_panel, BorderLayout.NORTH)
 
     config_container = JPanel()
     config_container.setLayout(BoxLayout(config_container, BoxLayout.Y_AXIS))
@@ -159,6 +318,15 @@ def create_auth_replay_tab(extender):
     )
     filter_row_exclude.add(self.auth_replay_exclude_regex_field)
     filters_panel.add(filter_row_exclude)
+
+    base_scope_row = JPanel(FlowLayout(FlowLayout.LEFT))
+    base_scope_row.add(JLabel("Base URLs (Exclusive):"))
+    self.auth_replay_base_urls_field = JTextField("", 25)
+    self.auth_replay_base_urls_field.setToolTipText(
+        "Optional comma/newline list. Replay only hosts in these base URLs and derivatives."
+    )
+    base_scope_row.add(self.auth_replay_base_urls_field)
+    filters_panel.add(base_scope_row)
 
     methods_row = JPanel(FlowLayout(FlowLayout.LEFT))
     methods_row.add(JLabel("Methods:"))
@@ -255,9 +423,51 @@ def create_auth_replay_tab(extender):
         "Result",
     ]
     self.auth_replay_table_model = _AuthReplayTableModel(columns, 0)
-    self.auth_replay_table = JTable(self.auth_replay_table_model)
+    self.auth_replay_table = _AuthReplayTable(self.auth_replay_table_model)
     self.auth_replay_table.setFillsViewportHeight(True)
     self.auth_replay_table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF)
+    self.auth_replay_table.setRowSelectionAllowed(True)
+    self.auth_replay_table.setColumnSelectionAllowed(False)
+    self.auth_replay_table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION)
+    self.auth_replay_table.setRowHeight(max(22, int(self.auth_replay_table.getRowHeight() or 18)))
+    self.auth_replay_table.setToolTipText("Select row(s) and use Copy URL(s) to copy full URLs.")
+    self.auth_replay_row_sorter = TableRowSorter(self.auth_replay_table_model)
+    self.auth_replay_row_sorter.setSortsOnUpdates(False)
+    self.auth_replay_row_sorter.setComparator(13, _AuthReplaySeverityComparator())
+    self.auth_replay_table.setRowSorter(self.auth_replay_row_sorter)
+    self.auth_replay_table.getTableHeader().setToolTipText(
+        "Click a column header to sort. Use Result for severity ranking."
+    )
+    column_model = self.auth_replay_table.getColumnModel()
+    row_renderer = _AuthReplayTableCellRenderer()
+    column_widths = {
+        0: 52,   # ID
+        1: 70,   # Method
+        2: 560,  # URL
+        3: 80,   # Orig Len
+        4: 80,   # Orig Status
+        5: 84,   # Unauth Len
+        6: 90,   # Unauth Status
+        7: 80,   # Guest Len
+        8: 86,   # Guest Status
+        9: 76,   # User Len
+        10: 82,  # User Status
+        11: 78,  # Admin Len
+        12: 86,  # Admin Status
+        13: 120, # Result
+    }
+    for col_idx, width in column_widths.items():
+        column = column_model.getColumn(col_idx)
+        safe_width = int(width)
+        column.setPreferredWidth(safe_width)
+        column.setMinWidth(max(48, int(safe_width * 0.55)))
+        column.setCellRenderer(row_renderer)
+
+    popup = JPopupMenu()
+    copy_urls_item = JMenuItem("Copy Selected URL(s)")
+    copy_urls_item.addActionListener(lambda e: _auth_replay_copy_selected_urls(self))
+    popup.add(copy_urls_item)
+    self.auth_replay_table.setComponentPopupMenu(popup)
 
     table_scroll = JScrollPane(self.auth_replay_table)
     table_scroll.setBorder(BorderFactory.createTitledBorder("Replay Results"))
@@ -279,6 +489,63 @@ def create_auth_replay_tab(extender):
     return panel
 
 
+def _auth_replay_update_scope_hint(extender):
+    self = extender
+    hint_label = getattr(self, "auth_replay_scope_hint_label", None)
+    scope_combo = getattr(self, "auth_replay_scope_combo", None)
+    if hint_label is None or scope_combo is None:
+        return
+
+    scope = self._ascii_safe(scope_combo.getSelectedItem() or "").strip()
+    hint = ""
+    tooltip = ""
+    if scope == "Selected Endpoint":
+        selected_key = self._ascii_safe(self._get_selected_endpoint_key() or "").strip()
+        if selected_key:
+            tooltip = "Selected Endpoint from Recon: {}".format(selected_key)
+            if len(selected_key) > 90:
+                display_key = selected_key[:87] + "..."
+            else:
+                display_key = selected_key
+            hint = "Scope Hint: Selected Endpoint from Recon -> {}".format(display_key)
+        else:
+            hint = "Scope Hint: Selected Endpoint runs only the endpoint selected in Recon list."
+    elif scope == "Filtered View":
+        hint = "Scope Hint: Filtered View replays endpoints currently visible in Recon."
+    else:
+        hint = "Scope Hint: All Endpoints replays all captured Recon endpoints."
+
+    hint_label.setText(hint)
+    hint_label.setToolTipText(tooltip if tooltip else hint)
+
+
+def _show_auth_replay_workflow_help(extender):
+    self = extender
+    lines = [
+        "AUTH REPLAY QUICK WORKFLOW",
+        "",
+        "1) Pick Scope:",
+        "   - Selected Endpoint: one endpoint selected in Recon list.",
+        "   - Filtered View: all endpoints currently visible in Recon.",
+        "   - All Endpoints: all captured Recon endpoints.",
+        "",
+        "2) Fill Guest/User/Admin headers (Name: Value format).",
+        "   Use Extract and prefer candidates without [DUP TOKEN].",
+        "",
+        "3) Optional noise control:",
+        "   - Base URLs (Exclusive): first-party hosts only.",
+        "   - Include/Exclude Regex and Methods filters.",
+        "",
+        "4) Run Replay, then triage with Sort Severity and Copy URL(s).",
+    ]
+    JOptionPane.showMessageDialog(
+        self._panel,
+        "\n".join(lines),
+        "Auth Replay Workflow",
+        JOptionPane.INFORMATION_MESSAGE,
+    )
+
+
 def _clear_auth_replay_views(extender):
     self = extender
     if getattr(self, "auth_replay_table_model", None) is not None:
@@ -288,6 +555,55 @@ def _clear_auth_replay_views(extender):
     if getattr(self, "auth_replay_lock", None) is not None:
         with self.auth_replay_lock:
             self.auth_replay_findings = []
+
+def _auth_replay_copy_selected_urls(extender):
+    self = extender
+    table = getattr(self, "auth_replay_table", None)
+    model = getattr(self, "auth_replay_table_model", None)
+    if table is None or model is None:
+        self.log_to_ui("[!] Auth Replay table is not ready")
+        return
+
+    selected_rows = table.getSelectedRows()
+    if selected_rows is None or len(selected_rows) == 0:
+        self.log_to_ui("[!] Select one or more Auth Replay rows first")
+        return
+
+    urls = []
+    seen = set()
+    for view_row in selected_rows:
+        try:
+            model_row = int(table.convertRowIndexToModel(int(view_row)))
+        except Exception as row_err:
+            _ = row_err
+            model_row = int(view_row)
+        if model_row < 0 or model_row >= model.getRowCount():
+            continue
+        url_value = str(model.getValueAt(model_row, 2) or "").strip()
+        if not url_value or url_value in seen:
+            continue
+        seen.add(url_value)
+        urls.append(url_value)
+
+    if not urls:
+        self.log_to_ui("[!] No URL values found in selected rows")
+        return
+
+    payload = "\n".join(urls)
+    self._copy_to_clipboard(payload)
+    self.auth_replay_area.append("[*] Copied {} URL(s) from results table\n".format(len(urls)))
+
+def _auth_replay_sort_by_severity(extender):
+    self = extender
+    sorter = getattr(self, "auth_replay_row_sorter", None)
+    if sorter is None:
+        self.log_to_ui("[!] Auth Replay sorter is not ready")
+        return
+    sort_keys = ArrayList()
+    sort_keys.add(RowSorter.SortKey(13, SortOrder.ASCENDING))
+    sorter.setSortKeys(sort_keys)
+    sorter.sort()
+    self.log_to_ui("[*] Auth Replay sorted by severity (CRITICAL -> HIGH -> MEDIUM -> OK)")
 
 
 def _auth_replay_primary_role(role_results):
@@ -331,6 +647,72 @@ def _auth_replay_row_summary(endpoint_findings, role_results):
     if error_count:
         return "ERROR ({})".format(error_count)
     return "OK"
+
+def _auth_replay_header_signature(extender, header_tuple):
+    self = extender
+    """Return normalized signature for one profile header tuple."""
+    if not header_tuple:
+        return ""
+    name = self._ascii_safe(header_tuple[0], lower=True).strip()
+    value = self._ascii_safe(header_tuple[1]).strip()
+    if not name or not value:
+        return ""
+    value = " ".join(value.split())
+    return "{}:{}".format(name, value)
+
+def _auth_replay_distinct_profile_headers(extender, profile_headers):
+    self = extender
+    """Collapse duplicate role headers, keeping highest-privilege role per token."""
+    role_rank = {"guest": 1, "user": 2, "admin": 3}
+    by_signature = {}
+    duplicate_roles = {}
+
+    for role_name, role_header in profile_headers:
+        signature = _auth_replay_header_signature(self, role_header)
+        if not signature:
+            continue
+        duplicate_roles.setdefault(signature, []).append(role_name)
+
+        existing = by_signature.get(signature)
+        if existing is None:
+            by_signature[signature] = (role_name, role_header)
+            continue
+        current_role = existing[0]
+        if role_rank.get(role_name, 0) > role_rank.get(current_role, 0):
+            by_signature[signature] = (role_name, role_header)
+
+    kept = sorted(
+        list(by_signature.values()),
+        key=lambda item: role_rank.get(item[0], 0),
+    )
+    duplicate_notes = []
+    role_aliases = {}
+    for signature, roles in duplicate_roles.items():
+        if len(roles) <= 1:
+            continue
+        ordered = sorted(set(roles), key=lambda name: role_rank.get(name, 0))
+        canonical = by_signature.get(signature, (None, None))[0]
+        if canonical:
+            duplicate_notes.append("{} -> {}".format(",".join(ordered), canonical))
+            for role_name in ordered:
+                role_aliases[role_name] = canonical
+        else:
+            duplicate_notes.append(",".join(ordered))
+    return kept, duplicate_notes, role_aliases
+
+
+def _auth_replay_expand_role_alias_results(role_results, role_aliases):
+    expanded = dict(role_results or {})
+    for role_name, canonical_role in (role_aliases or {}).items():
+        if role_name in expanded:
+            continue
+        canonical_result = expanded.get(canonical_role)
+        if canonical_result is None:
+            canonical_result = role_results.get(canonical_role) if role_results else None
+        if canonical_result is None:
+            continue
+        expanded[role_name] = canonical_result
+    return expanded
 
 
 def _auth_replay_build_result_row(
@@ -951,36 +1333,51 @@ def _auto_detect_auth_profile_headers(extender):
     with self.lock:
         data_snapshot = list(self.api_data.items())
 
-    def pick_candidate_for_profile(profile_key):
+    def choose_candidate(candidates, avoid_signatures):
+        fallback = None
+        for candidate in (candidates or []):
+            if fallback is None:
+                fallback = candidate
+            signature = self._normalize_auth_profile_header_line(candidate)
+            if signature and signature in avoid_signatures:
+                continue
+            return candidate
+        return fallback
+
+    def pick_candidate_for_profile(profile_key, avoid_signatures):
         # Prefer currently selected endpoint when available.
         if selected_key:
             for endpoint_key, entries in data_snapshot:
                 if endpoint_key != selected_key:
                     continue
                 preferred = self._find_profile_header_candidates_in_entries(
-                    entries, profile_key, prefer_match=True, max_candidates=1
+                    entries, profile_key, prefer_match=True, max_candidates=8
                 )
-                if preferred:
-                    return preferred[0], endpoint_key
+                picked = choose_candidate(preferred, avoid_signatures)
+                if picked:
+                    return picked, endpoint_key
                 fallback = self._find_profile_header_candidates_in_entries(
-                    entries, profile_key, prefer_match=False, max_candidates=1
+                    entries, profile_key, prefer_match=False, max_candidates=8
                 )
-                if fallback:
-                    return fallback[0], endpoint_key
+                picked = choose_candidate(fallback, avoid_signatures)
+                if picked:
+                    return picked, endpoint_key
 
         # Then search across captured entries.
         for endpoint_key, entries in data_snapshot:
             preferred = self._find_profile_header_candidates_in_entries(
-                entries, profile_key, prefer_match=True, max_candidates=1
+                entries, profile_key, prefer_match=True, max_candidates=6
             )
-            if preferred:
-                return preferred[0], endpoint_key
+            picked = choose_candidate(preferred, avoid_signatures)
+            if picked:
+                return picked, endpoint_key
         for endpoint_key, entries in data_snapshot:
             fallback = self._find_profile_header_candidates_in_entries(
-                entries, profile_key, prefer_match=False, max_candidates=1
+                entries, profile_key, prefer_match=False, max_candidates=6
             )
-            if fallback:
-                return fallback[0], endpoint_key
+            picked = choose_candidate(fallback, avoid_signatures)
+            if picked:
+                return picked, endpoint_key
         return None, None
 
     profile_map = [
@@ -988,19 +1385,38 @@ def _auto_detect_auth_profile_headers(extender):
         ("user", "User", getattr(self, "auth_user_header_field", None)),
         ("admin", "Admin", getattr(self, "auth_admin_header_field", None)),
     ]
+    used_signatures = set()
+    for _profile_key, _profile_label, field in profile_map:
+        if field is None:
+            continue
+        existing_value = self._ascii_safe(field.getText()).strip()
+        if not existing_value:
+            continue
+        normalized = self._normalize_auth_profile_header_line(existing_value)
+        if normalized:
+            used_signatures.add(normalized)
+
     for profile_key, profile_label, field in profile_map:
         if field is None:
             continue
         existing_value = self._ascii_safe(field.getText()).strip()
         if existing_value:
             continue
-        candidate, endpoint_key = pick_candidate_for_profile(profile_key)
+        candidate, endpoint_key = pick_candidate_for_profile(
+            profile_key, used_signatures
+        )
         if not candidate:
             continue
+        signature = self._normalize_auth_profile_header_line(candidate)
+        is_duplicate = bool(signature and signature in used_signatures)
+        if signature:
+            used_signatures.add(signature)
         field.setText(candidate)
         notes.append(
-            "{} header auto-detected from {}".format(
-                profile_label, endpoint_key or "captured traffic"
+            "{} header auto-detected from {}{}".format(
+                profile_label,
+                endpoint_key or "captured traffic",
+                " (duplicate-token fallback)" if is_duplicate else " (distinct token)",
             )
         )
     return notes
@@ -1069,6 +1485,21 @@ def run_auth_replay(extender, event):
         self.auth_replay_area.setText("[!] {}\n".format(self._ascii_safe(e)))
         return
 
+    base_scope_override = self._parse_auth_replay_base_scope_override(
+        self.auth_replay_base_urls_field.getText()
+    )
+    base_scope_text = self._ascii_safe(
+        self.auth_replay_base_urls_field.getText()
+    ).strip()
+    if base_scope_text and (not base_scope_override.get("enabled")):
+        self.auth_replay_area.setText(
+            "[!] Base URL scope has no valid hosts.\n"
+        )
+        self.auth_replay_area.append(
+            "[*] Enter one or more base URLs/hosts (example: https://www.allocine.fr, allocine.fr)\n"
+        )
+        return
+
     method_allowlist = set(
         [
             self._ascii_safe(item, lower=True).upper()
@@ -1126,35 +1557,49 @@ def run_auth_replay(extender, event):
     }
 
     include_unauth = bool(self.auth_replay_check_unauth_checkbox.isSelected())
-    profiles = []
+    configured_profile_headers = []
     if guest_header:
-        profiles.append(("guest", guest_header))
-    elif include_unauth:
-        profiles.append(("unauth", None))
-    else:
-        profiles.append(("guest", None))
-    if include_unauth and guest_header:
-        profiles.append(("unauth", None))
+        configured_profile_headers.append(("guest", guest_header))
     if user_header:
-        profiles.append(("user", user_header))
+        configured_profile_headers.append(("user", user_header))
     if admin_header:
-        profiles.append(("admin", admin_header))
+        configured_profile_headers.append(("admin", admin_header))
+
+    distinct_profile_headers, duplicate_header_notes, role_aliases = _auth_replay_distinct_profile_headers(
+        self, configured_profile_headers
+    )
+
+    profiles = []
+    if include_unauth:
+        profiles.append(("unauth", None))
+    elif not distinct_profile_headers:
+        profiles.append(("guest", None))
+    profiles.extend(distinct_profile_headers)
+
     if len(profiles) < 2:
         self.auth_replay_area.setText(
-            "[!] Provide at least one non-empty User or Admin header\n"
+            "[!] Provide at least two distinct replay contexts\n"
         )
         self.auth_replay_area.append(
-            "[*] Header format: Authorization: Bearer <token>\n"
+            "[*] Use distinct Guest/User/Admin headers or enable Unauth checks.\n"
+        )
+        self.auth_replay_area.append(
+            "[*] Header format: Authorization: Bearer <token> (or Cookie: ...)\n"
         )
         return
 
     scope = str(self.auth_replay_scope_combo.getSelectedItem())
+    _auth_replay_update_scope_hint(self)
+    selected_scope_key = None
+    if scope == "Selected Endpoint":
+        selected_scope_key = self._ascii_safe(self._get_selected_endpoint_key() or "").strip()
     endpoint_keys, total_available = self._collect_auth_replay_targets(
         scope,
         max_count,
         include_regex=include_regex,
         exclude_regex=exclude_regex,
         method_allowlist=method_allowlist,
+        base_scope_override=base_scope_override,
     )
     if not endpoint_keys:
         self.auth_replay_area.setText(
@@ -1164,6 +1609,13 @@ def run_auth_replay(extender, event):
             self.auth_replay_area.append(
                 "[*] Select one endpoint from Recon list and retry\n"
             )
+            self.auth_replay_area.append(
+                "[*] Selected Endpoint scope reads the active selection from Recon tab.\n"
+            )
+        if base_scope_override.get("enabled"):
+            self.auth_replay_area.append(
+                "[*] Base URL scope excluded all current candidates.\n"
+            )
         return
 
     self._clear_tool_cancel("authreplay")
@@ -1172,7 +1624,23 @@ def run_auth_replay(extender, event):
     if auto_detect_notes:
         for note in auto_detect_notes:
             self.auth_replay_area.append("[*] {}\n".format(note))
+    if duplicate_header_notes:
+        self.auth_replay_area.append(
+            "[*] Duplicate role headers collapsed: {}\n".format(
+                " | ".join(duplicate_header_notes[:4])
+            )
+        )
+        self.auth_replay_area.append(
+            "[*] Duplicate roles are mirrored in table columns from their canonical role.\n"
+        )
+        self.auth_replay_area.append(
+            "[*] Tip: use Guest/User/Admin Extract to choose distinct tokens for stronger cross-role authz checks.\n"
+        )
     self.auth_replay_area.append("[*] Scope: {}\n".format(scope))
+    if scope == "Selected Endpoint":
+        self.auth_replay_area.append(
+            "[*] Selected Endpoint: {}\n".format(selected_scope_key or "<none>")
+        )
     self.auth_replay_area.append(
         "[*] Targets: {} of {} available\n".format(
             len(endpoint_keys), total_available
@@ -1186,6 +1654,21 @@ def run_auth_replay(extender, event):
     self.auth_replay_area.append(
         "[*] Method Filter: {}\n".format(", ".join(sorted(method_allowlist)))
     )
+    if base_scope_override.get("enabled"):
+        self.auth_replay_area.append(
+            "[*] Base URL Scope: {} line(s), {} host(s), {} base domain(s)\n".format(
+                len(base_scope_override.get("lines", [])),
+                len(base_scope_override.get("hosts", set())),
+                len(base_scope_override.get("bases", set())),
+            )
+        )
+        invalid_scope_count = int(base_scope_override.get("invalid_count", 0) or 0)
+        if invalid_scope_count > 0:
+            self.auth_replay_area.append(
+                "[*] Base URL Scope: ignored {} invalid line(s)\n".format(
+                    invalid_scope_count
+                )
+            )
     self.auth_replay_area.append(
         "[*] Enforced Status: {}\n".format(
             ", ".join([str(x) for x in sorted(enforced_statuses)])
@@ -1273,12 +1756,18 @@ def run_auth_replay(extender, event):
                     break
 
                 endpoint_findings = self._evaluate_auth_replay_findings(
-                    endpoint_key, role_results, detector_cfg=detector_cfg
+                    endpoint_key,
+                    role_results,
+                    detector_cfg=detector_cfg,
+                    entry=entry,
                 )
                 findings.extend(endpoint_findings)
                 scanned += 1
+                row_role_results = _auth_replay_expand_role_alias_results(
+                    role_results, role_aliases
+                )
                 row_data = _auth_replay_build_result_row(
-                    self, idx, endpoint_key, entry, role_results, endpoint_findings
+                    self, idx, endpoint_key, entry, row_role_results, endpoint_findings
                 )
                 SwingUtilities.invokeLater(
                     lambda row=row_data: self.auth_replay_table_model.addRow(row)

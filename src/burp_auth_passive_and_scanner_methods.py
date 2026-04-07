@@ -80,6 +80,37 @@ def _parse_auth_profile_header(self, profile_name, header_value):
         )
     return (name, value)
 
+def _normalize_auth_profile_header_line(self, header_line):
+    """Normalize one auth header line into stable comparable signature."""
+    raw = self._ascii_safe(header_line or "").strip()
+    if (not raw) or (":" not in raw):
+        return ""
+    name, value = raw.split(":", 1)
+    key = self._ascii_safe(name, lower=True).strip()
+    val = self._ascii_safe(value).strip()
+    if (not key) or (not val):
+        return ""
+    val = re.sub(r"\s+", " ", val)
+    return "{}:{}".format(key, val)
+
+def _current_auth_profile_header_signatures(self, ignore_profile=None):
+    """Return normalized role-header signatures currently set in UI fields."""
+    signatures = {}
+    ignore_key = self._ascii_safe(ignore_profile, lower=True).strip()
+    field_map = {
+        "guest": getattr(self, "auth_guest_header_field", None),
+        "user": getattr(self, "auth_user_header_field", None),
+        "admin": getattr(self, "auth_admin_header_field", None),
+    }
+    for profile_key, field in field_map.items():
+        if field is None or profile_key == ignore_key:
+            continue
+        raw = self._ascii_safe(field.getText() or "").strip()
+        normalized = self._normalize_auth_profile_header_line(raw)
+        if normalized:
+            signatures[profile_key] = normalized
+    return signatures
+
 def _get_auth_profile_field(self, profile_key):
     """Return UI field for auth replay profile key."""
     mapping = {
@@ -800,27 +831,42 @@ def _extract_auth_profile_header(self, profile_key):
     with self.lock:
         data_snapshot = list(self.api_data.items())
 
-    options = []
+    preferred_options = []
+    deferred_options = []
     seen_values = set()
     max_options = 35
+    used_signatures = set(
+        self._current_auth_profile_header_signatures(
+            ignore_profile=profile_key
+        ).values()
+    )
+
+    def option_count():
+        return len(preferred_options) + len(deferred_options)
 
     def add_option(endpoint_key, header_line, is_selected):
         if not header_line:
             return
-        normalized = header_line.strip().lower()
+        signature = self._normalize_auth_profile_header_line(header_line)
+        normalized = signature or header_line.strip().lower()
         if not normalized or normalized in seen_values:
             return
-        if len(options) >= max_options:
+        if option_count() >= max_options:
             return
-        options.append(
-            {
-                "label": self._build_auth_header_choice_label(
-                    len(options) + 1, endpoint_key, header_line, is_selected
-                ),
-                "value": header_line,
-                "endpoint": endpoint_key,
-            }
-        )
+        duplicate_token = bool(signature and signature in used_signatures)
+        option = {
+            "label": self._build_auth_header_choice_label(
+                option_count() + 1, endpoint_key, header_line, is_selected
+            ),
+            "value": header_line,
+            "endpoint": endpoint_key,
+            "duplicate_token": duplicate_token,
+        }
+        if duplicate_token:
+            option["label"] = "{} [DUP TOKEN]".format(option["label"])
+            deferred_options.append(option)
+        else:
+            preferred_options.append(option)
         seen_values.add(normalized)
 
     if selected_key:
@@ -841,7 +887,7 @@ def _extract_auth_profile_header(self, profile_key):
                 add_option(selected_key, header_line, True)
 
     for endpoint_key, entries in data_snapshot:
-        if len(options) >= max_options:
+        if option_count() >= max_options:
             break
         if selected_key and endpoint_key == selected_key:
             continue
@@ -850,12 +896,12 @@ def _extract_auth_profile_header(self, profile_key):
         )
         for header_line in candidates:
             add_option(endpoint_key, header_line, False)
-            if len(options) >= max_options:
+            if option_count() >= max_options:
                 break
 
-    if not options:
+    if option_count() == 0:
         for endpoint_key, entries in data_snapshot:
-            if len(options) >= max_options:
+            if option_count() >= max_options:
                 break
             if selected_key and endpoint_key == selected_key:
                 continue
@@ -864,8 +910,16 @@ def _extract_auth_profile_header(self, profile_key):
             )
             for header_line in candidates:
                 add_option(endpoint_key, header_line, False)
-                if len(options) >= max_options:
+                if option_count() >= max_options:
                     break
+
+    options = preferred_options + deferred_options
+    if preferred_options and deferred_options:
+        self.auth_replay_area.append(
+            "[*] {} Extract: prioritizing distinct tokens before duplicates.\n".format(
+                profile_key.capitalize()
+            )
+        )
 
     if not options:
         self.auth_replay_area.append(
@@ -890,6 +944,10 @@ def _extract_auth_profile_header(self, profile_key):
             profile_key.capitalize(), chosen["endpoint"]
         )
     )
+    if chosen.get("duplicate_token"):
+        self.auth_replay_area.append(
+            "[*] Note: selected header shares token with another role; choose a distinct candidate for stronger authz coverage.\n"
+        )
 
 def _build_auth_replay_request(self, entry, profile_header):
     """Build raw HTTP request with optional auth/profile header override."""
@@ -1030,6 +1088,29 @@ def _parse_auth_replay_status_codes(self, raw_text):
         values.append(code)
     return set(values)
 
+def _parse_auth_replay_base_scope_override(self, raw_text):
+    """Parse optional Auth Replay base URL scope (exact host + derivatives)."""
+    values = self._parse_comma_newline_values(raw_text or "")
+    if not values:
+        return {
+            "enabled": False,
+            "lines": [],
+            "hosts": set(),
+            "bases": set(),
+            "invalid_count": 0,
+        }
+
+    parsed = self._parse_target_base_scope_text("\n".join(values))
+    hosts = set(parsed.get("hosts", set()))
+    bases = set(parsed.get("bases", set()))
+    return {
+        "enabled": bool(hosts or bases),
+        "lines": list(parsed.get("lines", [])),
+        "hosts": hosts,
+        "bases": bases,
+        "invalid_count": int(parsed.get("invalid_count", 0) or 0),
+    }
+
 def _compile_optional_regex(self, pattern_text, field_label):
     """Compile optional regex, raising ValueError for invalid patterns."""
     pattern = self._ascii_safe(pattern_text or "").strip()
@@ -1078,10 +1159,91 @@ def _auth_replay_response_is_enforced(self, low_role, low_data, detector_cfg):
         return True
     return False
 
-def _evaluate_auth_replay_findings(self, endpoint_key, role_results, detector_cfg=None):
+def _auth_replay_endpoint_context(self, endpoint_key, entry=None):
+    """Infer endpoint risk/signal context for auth replay severity/noise control."""
+    endpoint_text = self._ascii_safe(endpoint_key or "")
+    method = ""
+    path = endpoint_text
+    if ":" in endpoint_text:
+        method, path = endpoint_text.split(":", 1)
+    method = self._ascii_safe(method or "", lower=True).upper().strip()
+    path = self._ascii_safe(path or "/", lower=True).strip() or "/"
+
+    if not path.startswith("/"):
+        path = "/" + path
+
+    write_method = method in ["POST", "PUT", "PATCH", "DELETE"]
+    api_like = bool(
+        "/api/" in path
+        or "/graphql" in path
+        or "/rest/" in path
+        or "/openapi" in path
+        or "/swagger" in path
+        or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+        or "/v1/" in path
+        or "/v2/" in path
+        or "/v3/" in path
+        or "/v4/" in path
+    )
+    sensitive = bool(
+        re.search(r"/{id}|/{uuid}|/{objectid}", path)
+        or re.search(r"/\d{2,}(?:/|$)", path)
+        or any(
+            marker in path
+            for marker in [
+                "/admin",
+                "/account",
+                "/profile",
+                "/user",
+                "/users",
+                "/auth",
+                "/token",
+                "/session",
+                "/billing",
+                "/payment",
+                "/order",
+                "/checkout",
+                "/internal",
+                "/manage",
+                "/role",
+                "/permission",
+                "/settings",
+                "/private",
+                "/tenant",
+                "/organization",
+                "/project",
+                "/team",
+            ]
+        )
+    )
+
+    host = self._ascii_safe((entry or {}).get("host") or "", lower=True).strip()
+    noise_host = False
+    if host:
+        noise_host = bool(
+            self._ffuf_is_noise_host(host) or self._is_wayback_noise_host(host)
+        )
+
+    high_signal = bool((write_method or api_like or sensitive) and (not noise_host))
+    return {
+        "method": method,
+        "path": path,
+        "host": host,
+        "write_method": write_method,
+        "api_like": api_like,
+        "sensitive": sensitive,
+        "noise_host": noise_host,
+        "high_signal": high_signal,
+    }
+
+def _evaluate_auth_replay_findings(self, endpoint_key, role_results, detector_cfg=None, entry=None):
     """Score likely authorization issues from role response signatures."""
     findings = []
     detector_cfg = detector_cfg or {}
+    endpoint_context = self._auth_replay_endpoint_context(endpoint_key, entry=entry)
+    if not endpoint_context.get("high_signal"):
+        return findings
+
     if "admin" in role_results:
         high_role = "admin"
     elif "user" in role_results:
@@ -1124,11 +1286,16 @@ def _evaluate_auth_replay_findings(self, endpoint_key, role_results, detector_cf
             and low_status == high_status
             and (similar_preview or length_close)
         ):
-            severity = (
-                "critical"
-                if low_role == "guest" and high_role == "admin"
-                else "high"
-            )
+            if low_role == "guest" and high_role == "admin":
+                severity = (
+                    "critical" if endpoint_context.get("sensitive") else "high"
+                )
+            elif low_role == "unauth":
+                severity = (
+                    "high" if endpoint_context.get("sensitive") else "medium"
+                )
+            else:
+                severity = "high"
             finding = {
                 "severity": severity,
                 "endpoint": endpoint_key,
@@ -1144,7 +1311,7 @@ def _evaluate_auth_replay_findings(self, endpoint_key, role_results, detector_cf
             }
         elif low_status in success_codes and high_status in [401, 403]:
             finding = {
-                "severity": "high",
+                "severity": "high" if endpoint_context.get("sensitive") else "medium",
                 "endpoint": endpoint_key,
                 "issue": "{} access succeeded while {} was denied".format(
                     low_role, high_role
@@ -1184,9 +1351,16 @@ def _evaluate_auth_replay_findings(self, endpoint_key, role_results, detector_cf
     return findings
 
 def _collect_auth_replay_targets(
-    self, scope, max_count, include_regex=None, exclude_regex=None, method_allowlist=None
+    self,
+    scope,
+    max_count,
+    include_regex=None,
+    exclude_regex=None,
+    method_allowlist=None,
+    base_scope_override=None,
 ):
     """Collect endpoint keys based on replay scope."""
+    base_scope_override = base_scope_override or {}
     keys = []
     if scope == "Selected Endpoint":
         selected_value = self.endpoint_list.getSelectedValue()
@@ -1212,6 +1386,12 @@ def _collect_auth_replay_targets(
             entry = self._get_entry(entries)
             endpoint_text = self._ascii_safe(endpoint_key)
             method_upper = self._ascii_safe(entry.get("method") or "", lower=True).upper()
+            if base_scope_override.get("enabled"):
+                host = self._ascii_safe(entry.get("host"), lower=True).strip()
+                if not host:
+                    continue
+                if not self._host_matches_target_scope(host, base_scope_override):
+                    continue
             if method_allowlist and method_upper not in method_allowlist:
                 continue
             if include_regex and not include_regex.search(endpoint_text):
@@ -6214,6 +6394,8 @@ __all__ = [
     "_stop_graphql",
     "_stop_auth_replay",
     "_parse_auth_profile_header",
+    "_normalize_auth_profile_header_line",
+    "_current_auth_profile_header_signatures",
     "_get_auth_profile_field",
     "_extract_endpoint_key_from_recon_value",
     "_get_recon_view_key",
@@ -6236,9 +6418,11 @@ __all__ = [
     "_perform_auth_replay_request",
     "_auth_replay_preview_similar",
     "_parse_auth_replay_status_codes",
+    "_parse_auth_replay_base_scope_override",
     "_compile_optional_regex",
     "_auth_replay_detector_for_role",
     "_auth_replay_response_is_enforced",
+    "_auth_replay_endpoint_context",
     "_evaluate_auth_replay_findings",
     "_collect_auth_replay_targets",
     "_run_auth_replay",

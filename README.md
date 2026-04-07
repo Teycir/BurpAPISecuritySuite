@@ -360,7 +360,11 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Scope**: Replay Selected Endpoint, Filtered View, or All Endpoints
 - **Max**: Limit endpoints per run for faster triage
 - **Guest/User/Admin Headers**: Set profile headers in `Name: value` format
+- **Distinct Context Guard**: If two role headers are identical, replay collapses duplicates and asks for at least two distinct contexts
 - **Extract**: Open searchable popup to pick captured auth/session headers
+- **Base URLs (Exclusive)**: Optional comma/newline list of first-party base URLs/hosts to replay exclusively (includes derivatives like subdomains on the same base domain)
+- **URL Copy UX**: Select one or more replay rows, then use `Copy URL(s)` (or right-click `Copy Selected URL(s)`) to copy full URLs
+- **Severity Ranking**: Click `Result` header to rank by severity, or use `Sort Severity` for quick `CRITICAL -> HIGH -> MEDIUM -> OK`
 - **Run Replay**: Replay requests per profile and compare response behavior
 - **Stop**: Cancel active replay safely
 - **Findings Output**: Severity-scored evidence for likely BOLA/authz drift
