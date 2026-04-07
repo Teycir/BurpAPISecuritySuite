@@ -950,6 +950,14 @@ A:
 - Custom commands run with `cmd /c` on Windows and `bash/sh -lc` on Linux/macOS.
 - Built-in HTTPX and Katana defaults use native list-file flags (`-l` / `-list`) for cross-platform execution.
 
+### Security Notes
+
+- Custom command mode is intentionally strict and **opt-in** (`Enable Custom` must be checked).
+- Rendered custom commands are validated for forbidden shell fragments (for example command chaining/redirection/subshell syntax).
+- Executables are restricted by per-tool allow-lists in custom mode (for example `nuclei`, `httpx`, `katana`, `waybackurls`/`gau`, `apihunter`, `subfinder`).
+- Placeholder context values are sanitized before template rendering, and quoted variants are available (`{targets_file_q}`, `{urls_file_q}`, etc.) for safer path interpolation.
+- If your workflow needs complex shell logic outside this policy, run that command manually outside the extension.
+
 **Q: Why does HTTPX show invalid option errors?**
 
 A:

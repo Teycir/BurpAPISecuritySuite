@@ -407,6 +407,8 @@ def test_recon_exports_include_postman_and_insomnia():
 def test_recon_logger_and_turbo_intruder_features_are_wired():
     text = _source_text()
     required_tokens = [
+        "UI_CORE_CHOICES = {",
+        "UI_CORE_DEFAULTS = {",
         'filter_row.add(JLabel("String Filter:"))',
         'filter_row.add(JLabel("Regex Filter:"))',
         'self.tag_filter = JComboBox(["All"])',
@@ -414,7 +416,7 @@ def test_recon_logger_and_turbo_intruder_features_are_wired():
         "self.recon_regex_field = JTextField(12)",
         'self.recon_regex_scope_combo = JComboBox(["Any", "Request", "Response", "Req+Resp"])',
         'controls_row.add(JLabel("Max Rows:"))',
-        'self.logger_max_rows_combo = JComboBox(["2000", "5000", "10000", "20000"])',
+        'self.logger_max_rows_combo = JComboBox(UI_CORE_CHOICES["logger_max_rows"])',
         'self.logger_auto_prune_checkbox = JCheckBox("Auto Prune", True)',
         'self.logger_import_on_open_checkbox = JCheckBox("Import on Open", True)',
         "self.logger_max_rows_combo.addActionListener(",
@@ -597,9 +599,9 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
     text = _source_text()
     required_tokens = [
         "self.logger_events = []",
-        "self.logger_max_rows = 20000",
-        "self.logger_trim_batch = 500",
-        "self._logger_refresh_min_interval_ms = 450",
+        'self.logger_max_rows = UI_CORE_LIMITS["logger_max_rows_default"]',
+        'self.logger_trim_batch = UI_CORE_LIMITS["logger_trim_batch_default"]',
+        'self._logger_refresh_min_interval_ms = UI_CORE_LIMITS[',
         "self.logger_active_regex = \"\"",
         "self.logger_filter_library = []",
         "self.recon_filter_library = []",
@@ -611,7 +613,7 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
         "self.logger_row_sorter = TableRowSorter(self.logger_table_model)",
         "self.logger_table.setRowSorter(self.logger_row_sorter)",
         "Shift+click adds a second sort key.",
-        'self.logger_max_rows_combo = JComboBox(["2000", "5000", "10000", "20000"])',
+        'self.logger_max_rows_combo = JComboBox(UI_CORE_CHOICES["logger_max_rows"])',
         'self.logger_auto_prune_checkbox = JCheckBox("Auto Prune", True)',
         'self.logger_logging_off_checkbox = JCheckBox("Logging Off", False)',
         'self.logger_import_on_open_checkbox = JCheckBox("Import on Open", True)',
@@ -1068,7 +1070,7 @@ def test_apihunter_custom_targets_popup_and_enforcement_are_wired():
         "source_mode = self._ascii_safe(target_meta.get(\"source_mode\") or \"\", lower=True)",
         'if source_mode == "custom_targets":',
         '"[*] Target Source: Custom Targets popup\\n"',
-        "max_entries=20",
+        'max_entries=UI_CORE_LIMITS["apihunter_custom_targets_max_entries"]',
     ]
     for token in required_tokens:
         assert token in text, "Missing ApiHunter custom targets token: {}".format(token)
@@ -1290,9 +1292,15 @@ def test_runtime_helpers_cover_python3_and_windows_edge_cases():
         "except NameError:",
         'shlex.split(rendered_command, posix=(os.name != "nt"))',
         'shlex.split(command_text, posix=(os.name != "nt"))',
+        "def _quote_custom_command_value(",
+        "def _build_custom_command_context(",
+        "def _custom_command_tool_allowlist(",
         "def _validate_custom_command_safety(",
+        "def _validate_custom_command_allowlist(",
+        'safe_context[key_text + "_q"] = self._quote_custom_command_value(value_text)',
         "forbidden_fragments = [",
         "token_allow_pattern = re.compile(",
+        "custom command blocked by executable allow-list",
         "custom command blocked by safety policy",
         "trusted operator mode, strict safety checks active",
     ]
@@ -1697,11 +1705,14 @@ def test_text_and_combo_field_persistence_is_wired():
 def test_recon_max_body_size_dropdown_is_wired_and_persisted():
     text = _source_text()
     required_tokens = [
-        "self.max_body_size = 15000",
-        'self.recon_max_body_size_combo = JComboBox(["5000", "7500", "10000", "15000"])',
-        'self.recon_max_body_size_combo.setSelectedItem("15000")',
+        'self.max_body_size = UI_CORE_LIMITS["max_body_default_bytes"]',
+        'self.recon_max_body_size_combo = JComboBox(UI_CORE_CHOICES["recon_max_body_size"])',
+        'self.recon_max_body_size_combo.setSelectedItem(',
+        'UI_CORE_DEFAULTS["recon_max_body_size"]',
         "lambda e: self._apply_recon_capture_settings()",
         "def _apply_recon_capture_settings(",
+        'max_body_default = UI_CORE_LIMITS["max_body_default_bytes"]',
+        'max_body_min = UI_CORE_LIMITS["max_body_min_bytes"]',
         "self.max_body_size = max_body_size",
         'if hasattr(self, "_apply_recon_capture_settings"):',
         "self._apply_recon_capture_settings()",
@@ -1739,8 +1750,8 @@ def test_recon_max_body_help_popup_is_wired():
         "Recon Per Page Help",
         "Per Page Help",
         "Recon/Logger Max Body Help",
-        "Is 15000 risky?",
-        "Numeric safety: no. 15000 as an integer is safe.",
+        "Is {} risky?",
+        "Numeric safety: no. {} as an integer is safe.",
         "Operational risk: maybe, on very large/high-volume sessions.",
         "Max Body Help",
     ]

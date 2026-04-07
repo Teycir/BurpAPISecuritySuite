@@ -165,6 +165,51 @@ _PERSISTED_COMBO_ATTRS = (
     "auth_replay_scope_combo",
 )
 
+UI_CORE_LIMITS = {
+    "debounce_min_ms": 120,
+    "logger_filter_delay_ms": 220,
+    "persist_text_delay_ms": 300,
+    "max_endpoints_default": 800,
+    "max_body_min_bytes": 5000,
+    "max_body_default_bytes": 15000,
+    "capture_ui_refresh_min_interval_ms": 250,
+    "logger_max_rows_default": 20000,
+    "logger_trim_batch_default": 500,
+    "logger_refresh_min_interval_ms": 450,
+    "logger_request_preview_max": 1200,
+    "logger_response_preview_max": 2400,
+    "tooltip_initial_delay_ms": 350,
+    "tooltip_reshow_delay_ms": 100,
+    "tooltip_dismiss_delay_ms": 20000,
+    "apihunter_custom_targets_max_entries": 20,
+}
+
+UI_CORE_CHOICES = {
+    "sample_limit": ["1", "3", "5", "10"],
+    "recon_max_body_size": ["5000", "7500", "10000", "15000"],
+    "logger_max_rows": ["2000", "5000", "10000", "20000"],
+    "page_size": ["50", "100", "200", "500"],
+    "logger_show_last": ["200", "500", "1000", "2000", "5000"],
+}
+
+UI_CORE_DEFAULTS = {
+    "sample_limit": "3",
+    "recon_max_body_size": "15000",
+    "logger_max_rows": "20000",
+    "page_size": "100",
+    "logger_show_last": "1000",
+    "sqlmap_max_targets": "12",
+    "sqlmap_target_timeout": "45",
+    "dalfox_max_targets": "12",
+    "dalfox_target_timeout": "40",
+    "asset_max_domains": "8",
+    "passive_max": "250",
+    "wayback_from_year": "2020",
+    "wayback_limit": "50",
+    "graphql_max_targets": "12",
+    "graphql_raider_max_ops": "40",
+}
+
 
 class _LoggerTableModel(DefaultTableModel):
     def isCellEditable(self, row, column):
@@ -388,9 +433,12 @@ class _LoggerTableCellRenderer(DefaultTableCellRenderer):
 class _LoggerFilterListener(DocumentListener):
     """Debounced document listener for Logger controls."""
 
-    def __init__(self, extender, delay_ms=220):
+    def __init__(self, extender, delay_ms=None):
         self.extender = extender
-        self.delay_ms = max(120, int(delay_ms or 220))
+        self.delay_ms = max(
+            UI_CORE_LIMITS["debounce_min_ms"],
+            int(delay_ms or UI_CORE_LIMITS["logger_filter_delay_ms"]),
+        )
         self.timer = None
 
     def insertUpdate(self, e):
@@ -416,10 +464,13 @@ class _LoggerFilterListener(DocumentListener):
 class _PersistTextFieldListener(DocumentListener):
     """Debounced persistence listener for JTextField controls."""
 
-    def __init__(self, extender, attr_name, delay_ms=300):
+    def __init__(self, extender, attr_name, delay_ms=None):
         self.extender = extender
         self.attr_name = attr_name
-        self.delay_ms = max(120, int(delay_ms or 300))
+        self.delay_ms = max(
+            UI_CORE_LIMITS["debounce_min_ms"],
+            int(delay_ms or UI_CORE_LIMITS["persist_text_delay_ms"]),
+        )
         self.timer = None
 
     def insertUpdate(self, _event):
@@ -566,8 +617,8 @@ def _initialize_runtime_state(self):
     self.endpoint_tags = {}
     self.endpoint_times = {}
     self.lock = threading.Lock()
-    self.max_endpoints = 800
-    self.max_body_size = 15000
+    self.max_endpoints = UI_CORE_LIMITS["max_endpoints_default"]
+    self.max_body_size = UI_CORE_LIMITS["max_body_default_bytes"]
     self._tool_help_cache = {}
     self.target_base_scope_lines = []
     self.target_base_scope_hosts = set()
@@ -622,7 +673,9 @@ def _initialize_runtime_state(self):
     self.recon_invariant_status_label = None
     self._capture_ui_refresh_timer = None
     self._capture_ui_refresh_last_ts = 0.0
-    self._capture_ui_refresh_min_interval_ms = 250
+    self._capture_ui_refresh_min_interval_ms = UI_CORE_LIMITS[
+        "capture_ui_refresh_min_interval_ms"
+    ]
     self._recon_last_regex_error = ""
     self._recon_filter_endpoint_tags_snapshot = None
     self._syncing_recon_controls = False
@@ -637,8 +690,8 @@ def _initialize_runtime_state(self):
     self.logger_events = deque()
     self.logger_lock = threading.Lock()
     self.logger_event_seq = 0
-    self.logger_max_rows = 20000
-    self.logger_trim_batch = 500
+    self.logger_max_rows = UI_CORE_LIMITS["logger_max_rows_default"]
+    self.logger_trim_batch = UI_CORE_LIMITS["logger_trim_batch_default"]
     self.logger_capture_enabled = True
     self.logger_auto_prune_enabled = True
     self.logger_dropped_count = 0
@@ -646,11 +699,13 @@ def _initialize_runtime_state(self):
     self.logger_view_events = []
     self._logger_refresh_timer = None
     self._logger_refresh_last_ts = 0.0
-    self._logger_refresh_min_interval_ms = 450
+    self._logger_refresh_min_interval_ms = UI_CORE_LIMITS[
+        "logger_refresh_min_interval_ms"
+    ]
     self._logger_tool_combo_signature = ()
     self._logger_filter_library_signature = ()
-    self.logger_request_preview_max = 1200
-    self.logger_response_preview_max = 2400
+    self.logger_request_preview_max = UI_CORE_LIMITS["logger_request_preview_max"]
+    self.logger_response_preview_max = UI_CORE_LIMITS["logger_response_preview_max"]
     self._syncing_logger_controls = False
     self.logger_backfill_running = False
     self.logger_backfilled_once = False
@@ -830,7 +885,8 @@ def _restore_persisted_ui_state(self):
         "apihunter_custom_targets_lines", apihunter_targets_default
     )
     parsed_apihunter_targets = self._parse_apihunter_custom_targets_text(
-        apihunter_targets_text, max_entries=20
+        apihunter_targets_text,
+        max_entries=UI_CORE_LIMITS["apihunter_custom_targets_max_entries"],
     )
     self.apihunter_custom_targets_lines = list(
         parsed_apihunter_targets.get("targets", [])
@@ -905,8 +961,8 @@ def _build_recon_top_panel(self):
     samples_label = JLabel("Samples:")
     samples_label.setToolTipText("Max samples to capture per unique endpoint")
     controls_row.add(samples_label)
-    self.sample_limit = JComboBox(["1", "3", "5", "10"])
-    self.sample_limit.setSelectedItem("3")
+    self.sample_limit = JComboBox(UI_CORE_CHOICES["sample_limit"])
+    self.sample_limit.setSelectedItem(UI_CORE_DEFAULTS["sample_limit"])
     self.sample_limit.setToolTipText(
         "Number of request/response samples to collect per endpoint (e.g., GET:/api/users/{id})"
     )
@@ -914,8 +970,10 @@ def _build_recon_top_panel(self):
     max_body_label = JLabel("Max Body:")
     max_body_label.setToolTipText("Capture/truncate request and response body at this limit")
     controls_row.add(max_body_label)
-    self.recon_max_body_size_combo = JComboBox(["5000", "7500", "10000", "15000"])
-    self.recon_max_body_size_combo.setSelectedItem("15000")
+    self.recon_max_body_size_combo = JComboBox(UI_CORE_CHOICES["recon_max_body_size"])
+    self.recon_max_body_size_combo.setSelectedItem(
+        UI_CORE_DEFAULTS["recon_max_body_size"]
+    )
     self.recon_max_body_size_combo.setToolTipText(
         "Maximum body size (bytes) captured per request/response sample."
     )
@@ -930,8 +988,8 @@ def _build_recon_top_panel(self):
     max_body_help_btn.addActionListener(lambda e: self._show_recon_max_body_help())
     controls_row.add(max_body_help_btn)
     controls_row.add(JLabel("Max Rows:"))
-    self.logger_max_rows_combo = JComboBox(["2000", "5000", "10000", "20000"])
-    self.logger_max_rows_combo.setSelectedItem("20000")
+    self.logger_max_rows_combo = JComboBox(UI_CORE_CHOICES["logger_max_rows"])
+    self.logger_max_rows_combo.setSelectedItem(UI_CORE_DEFAULTS["logger_max_rows"])
     self.logger_max_rows_combo.setToolTipText(
         "Shared retention cap for Logger rows (affects Recon<->Logger drift behavior)."
     )
@@ -975,8 +1033,8 @@ def _build_recon_top_panel(self):
     controls_row.add(self.next_page_btn)
     page_size_label = JLabel("Per page:")
     controls_row.add(page_size_label)
-    self.page_size_combo = JComboBox(["50", "100", "200", "500"])
-    self.page_size_combo.setSelectedItem("100")
+    self.page_size_combo = JComboBox(UI_CORE_CHOICES["page_size"])
+    self.page_size_combo.setSelectedItem(UI_CORE_DEFAULTS["page_size"])
     self.page_size_combo.addActionListener(lambda e: self._change_page_size())
     controls_row.add(self.page_size_combo)
     per_page_help_btn = JButton("?")
@@ -1077,17 +1135,21 @@ def _build_recon_top_panel(self):
 
 def _apply_recon_capture_settings(self):
     """Apply Recon capture settings from top-panel controls."""
-    max_body_size = int(getattr(self, "max_body_size", 15000) or 15000)
+    max_body_default = UI_CORE_LIMITS["max_body_default_bytes"]
+    max_body_min = UI_CORE_LIMITS["max_body_min_bytes"]
+    max_body_size = int(getattr(self, "max_body_size", max_body_default) or max_body_default)
     max_body_combo = getattr(self, "recon_max_body_size_combo", None)
     if max_body_combo is not None:
         try:
             max_body_size = int(str(max_body_combo.getSelectedItem()))
         except (TypeError, ValueError):
-            max_body_size = int(getattr(self, "max_body_size", 15000) or 15000)
-    if max_body_size < 5000:
-        max_body_size = 5000
-    if max_body_size > 15000:
-        max_body_size = 15000
+            max_body_size = int(
+                getattr(self, "max_body_size", max_body_default) or max_body_default
+            )
+    if max_body_size < max_body_min:
+        max_body_size = max_body_min
+    if max_body_size > max_body_default:
+        max_body_size = max_body_default
     self.max_body_size = max_body_size
     if max_body_combo is not None:
         selected = self._ascii_safe(max_body_combo.getSelectedItem() or "")
@@ -1097,12 +1159,17 @@ def _apply_recon_capture_settings(self):
 
 def _show_recon_max_body_help(self, _event=None):
     """Explain max-body sizing tradeoffs for Recon and Logger capture paths."""
+    max_body_default = int(UI_CORE_LIMITS["max_body_default_bytes"])
+    max_body_min = int(UI_CORE_LIMITS["max_body_min_bytes"])
+    max_body_mid = int((max_body_default + max_body_min) / 2)
     lines = []
     lines.append("Recon/Logger Max Body Help")
     lines.append("=" * 60)
     lines.append("")
-    lines.append("Is 15000 risky?")
-    lines.append("  - Numeric safety: no. 15000 as an integer is safe.")
+    lines.append("Is {} risky?".format(max_body_default))
+    lines.append(
+        "  - Numeric safety: no. {} as an integer is safe.".format(max_body_default)
+    )
     lines.append("  - Operational risk: maybe, on very large/high-volume sessions.")
     lines.append("")
     lines.append("What this setting controls:")
@@ -1114,9 +1181,13 @@ def _show_recon_max_body_help(self, _event=None):
     lines.append("  - Higher value also increases memory usage and can slow UI refresh.")
     lines.append("")
     lines.append("Sizing guidance:")
-    lines.append("  - 15000: good default for normal debugging.")
-    lines.append("  - 10000: balanced for medium/high traffic.")
-    lines.append("  - 5000: safer for long captures or very noisy traffic.")
+    lines.append("  - {}: good default for normal debugging.".format(max_body_default))
+    lines.append(
+        "  - {}: balanced for medium/high traffic.".format(max_body_mid)
+    )
+    lines.append(
+        "  - {}: safer for long captures or very noisy traffic.".format(max_body_min)
+    )
     lines.append("")
     lines.append("Tip:")
     lines.append("  - If UI feels heavy, lower Max Body and/or reduce Logger Max Rows.")
@@ -1460,8 +1531,8 @@ def _create_logger_tab(self):
     )
     controls.add(self.logger_status_combo)
     controls.add(JLabel("Show Last:"))
-    self.logger_show_last_combo = JComboBox(["200", "500", "1000", "2000", "5000"])
-    self.logger_show_last_combo.setSelectedItem("1000")
+    self.logger_show_last_combo = JComboBox(UI_CORE_CHOICES["logger_show_last"])
+    self.logger_show_last_combo.setSelectedItem(UI_CORE_DEFAULTS["logger_show_last"])
     controls.add(self.logger_show_last_combo)
     self.logger_logging_off_checkbox = JCheckBox("Logging Off", False)
     self.logger_logging_off_checkbox.setToolTipText(
@@ -1961,9 +2032,9 @@ def _configure_tooltips(self):
     """Use one deterministic tooltip policy for all tabs."""
     manager = ToolTipManager.sharedInstance()
     manager.setEnabled(True)
-    manager.setInitialDelay(350)
-    manager.setReshowDelay(100)
-    manager.setDismissDelay(20000)
+    manager.setInitialDelay(UI_CORE_LIMITS["tooltip_initial_delay_ms"])
+    manager.setReshowDelay(UI_CORE_LIMITS["tooltip_reshow_delay_ms"])
+    manager.setDismissDelay(UI_CORE_LIMITS["tooltip_dismiss_delay_ms"])
 
 def _build_recon_invariant_status_text(self):
     """Build compact Recon status text for cached invariant artifacts."""
@@ -3277,40 +3348,31 @@ def _export_param_results(self):
                     "Error closing param mining file: {}".format(str(e))
                 )
 
-def _create_fuzzer_tab(self):
-    """Create Fuzzer tab"""
-    panel = JPanel(BorderLayout())
+def _fuzzer_attack_modes(self):
+    """Return supported fuzzer attack categories."""
+    return [
+        "All",
+        "BOLA",
+        "IDOR",
+        "Auth Bypass",
+        "SQLi",
+        "XSS",
+        "NoSQL",
+        "Path Traversal",
+        "Mass Assignment",
+        "Race Condition",
+        "GraphQL",
+        "JWT",
+        "SSTI",
+        "Deserialization",
+        "Business Logic",
+        "SSRF",
+        "XXE",
+        "WAF Bypass",
+    ]
 
-    controls = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls.add(JLabel("Attack:"))
-    self.attack_type_combo = JComboBox(
-        [
-            "All",
-            "BOLA",
-            "IDOR",
-            "Auth Bypass",
-            "SQLi",
-            "XSS",
-            "NoSQL",
-            "Path Traversal",
-            "Mass Assignment",
-            "Race Condition",
-            "GraphQL",
-            "JWT",
-            "SSTI",
-            "Deserialization",
-            "Business Logic",
-            "SSRF",
-            "XXE",
-            "WAF Bypass",
-        ]
-    )
-    controls.add(self.attack_type_combo)
-    self.fuzzer_lenient_checkbox = JCheckBox("Lenient JSON GET", True)
-    self.fuzzer_lenient_checkbox.setToolTipText(
-        "Broaden endpoint selection to include structured GET routes"
-    )
-    controls.add(self.fuzzer_lenient_checkbox)
+def _add_fuzzer_generation_buttons(self, controls):
+    """Attach fuzzer generation/export action buttons."""
     controls.add(
         self._create_action_button(
             "Generate",
@@ -3339,6 +3401,9 @@ def _create_fuzzer_tab(self):
             lambda e: self._export_turbo_intruder(),
         )
     )
+
+def _add_fuzzer_output_buttons(self, controls):
+    """Attach fuzzer output utility buttons in consistent order."""
     controls.add(
         self._create_action_button(
             "Copy",
@@ -3365,6 +3430,22 @@ def _create_fuzzer_tab(self):
             lambda e: self._export_text_output_to_ai("Fuzzer", self.fuzzer_area.getText()),
         )
     )
+
+def _create_fuzzer_tab(self):
+    """Create Fuzzer tab"""
+    panel = JPanel(BorderLayout())
+
+    controls = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls.add(JLabel("Attack:"))
+    self.attack_type_combo = JComboBox(self._fuzzer_attack_modes())
+    controls.add(self.attack_type_combo)
+    self.fuzzer_lenient_checkbox = JCheckBox("Lenient JSON GET", True)
+    self.fuzzer_lenient_checkbox.setToolTipText(
+        "Broaden endpoint selection to include structured GET routes"
+    )
+    controls.add(self.fuzzer_lenient_checkbox)
+    self._add_fuzzer_generation_buttons(controls)
+    self._add_fuzzer_output_buttons(controls)
 
     panel.add(controls, BorderLayout.NORTH)
 
@@ -3395,10 +3476,14 @@ def _create_sqlmap_verify_tab(self):
     self.sqlmap_path_field = JTextField(default_sqlmap, 28)
     controls_line1.add(self.sqlmap_path_field)
     controls_line1.add(JLabel("Max Targets:"))
-    self.sqlmap_max_targets_field = JTextField("12", 4)
+    self.sqlmap_max_targets_field = JTextField(
+        UI_CORE_DEFAULTS["sqlmap_max_targets"], 4
+    )
     controls_line1.add(self.sqlmap_max_targets_field)
     controls_line1.add(JLabel("Per Target Timeout(s):"))
-    self.sqlmap_target_timeout_field = JTextField("45", 4)
+    self.sqlmap_target_timeout_field = JTextField(
+        UI_CORE_DEFAULTS["sqlmap_target_timeout"], 4
+    )
     controls_line1.add(self.sqlmap_target_timeout_field)
     controls_line1.add(JLabel("Profile:"))
     self.sqlmap_profile_combo = JComboBox(self._profile_labels())
@@ -3483,10 +3568,14 @@ def _create_dalfox_verify_tab(self):
     self.dalfox_path_field = JTextField(default_dalfox, 28)
     controls_line1.add(self.dalfox_path_field)
     controls_line1.add(JLabel("Max Targets:"))
-    self.dalfox_max_targets_field = JTextField("12", 4)
+    self.dalfox_max_targets_field = JTextField(
+        UI_CORE_DEFAULTS["dalfox_max_targets"], 4
+    )
     controls_line1.add(self.dalfox_max_targets_field)
     controls_line1.add(JLabel("Per Target Timeout(s):"))
-    self.dalfox_target_timeout_field = JTextField("40", 4)
+    self.dalfox_target_timeout_field = JTextField(
+        UI_CORE_DEFAULTS["dalfox_target_timeout"], 4
+    )
     controls_line1.add(self.dalfox_target_timeout_field)
     controls_line1.add(JLabel("Profile:"))
     self.dalfox_profile_combo = JComboBox(self._profile_labels())
@@ -3565,7 +3654,9 @@ def _create_api_asset_discovery_tab(self):
     )
     controls.add(self.asset_domains_field)
     controls.add(JLabel("Max Domains:"))
-    self.asset_max_domains_field = JTextField("8", 3)
+    self.asset_max_domains_field = JTextField(
+        UI_CORE_DEFAULTS["asset_max_domains"], 3
+    )
     controls.add(self.asset_max_domains_field)
     controls.add(
         self._create_action_button(
@@ -3836,7 +3927,7 @@ def _create_passive_discovery_tab(self):
     )
     controls.add(self.passive_mode_combo)
     controls.add(JLabel("Max:"))
-    self.passive_max_field = JTextField("250", 4)
+    self.passive_max_field = JTextField(UI_CORE_DEFAULTS["passive_max"], 4)
     controls.add(self.passive_max_field)
 
     actions_row = JPanel(FlowLayout(FlowLayout.LEFT))
@@ -4507,6 +4598,62 @@ def _create_ffuf_tab(self):
     self.ffuf_lock = threading.Lock()
     return panel
 
+def _build_wayback_presets(self, stdin_prefix):
+    """Build Wayback custom-command presets for current platform shell style."""
+    return [
+        (
+            "waybackurls",
+            "{} \"{{targets_file}}\" | waybackurls".format(stdin_prefix),
+            "Uses waybackurls to pull archived URLs from Wayback index.",
+        ),
+        (
+            "gau",
+            "{} \"{{targets_file}}\" | gau --subs".format(stdin_prefix),
+            "Uses gau to gather historical URLs including subdomains.",
+        ),
+        (
+            "gau+threads",
+            "{} \"{{targets_file}}\" | gau --subs --threads 5".format(stdin_prefix),
+            "Same as gau preset with thread tuning for faster collection.",
+        ),
+    ]
+
+def _add_wayback_output_buttons(self, controls_line2):
+    """Attach Wayback output controls and keep clear/AI ordering consistent."""
+    controls_line2.add(
+        self._create_action_button(
+            "Send to Recon",
+            Color(76, 175, 80),
+            lambda e: self._import_wayback_to_recon(),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Export Results",
+            Color(70, 130, 180),
+            lambda e: self._export_wayback_results(),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Copy",
+            Color(108, 117, 125),
+            lambda e: self._copy_to_clipboard(self.wayback_area.getText()),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Clear", Color(220, 53, 69), lambda e: self.wayback_area.setText("")
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai("Wayback", self.wayback_area.getText()),
+        )
+    )
+
 def _create_wayback_tab(self):
     """Create Wayback Machine discovery tab"""
     import os
@@ -4529,35 +4676,14 @@ def _create_wayback_tab(self):
         )
     )
     self._add_force_kill_button(controls_line2, lambda: getattr(self, "wayback_area", None))
-    controls_line2.add(
-        self._create_action_button(
-            "Send to Recon",
-            Color(76, 175, 80),
-            lambda e: self._import_wayback_to_recon(),
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "Export Results",
-            Color(70, 130, 180),
-            lambda e: self._export_wayback_results(),
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "Copy",
-            Color(108, 117, 125),
-            lambda e: self._copy_to_clipboard(self.wayback_area.getText()),
-        )
-    )
     controls_line1.add(JLabel(" | From:"))
-    self.wayback_from_field = JTextField("2020", 4)
+    self.wayback_from_field = JTextField(UI_CORE_DEFAULTS["wayback_from_year"], 4)
     controls_line1.add(self.wayback_from_field)
     controls_line1.add(JLabel("To:"))
     self.wayback_to_field = JTextField(str(time.localtime().tm_year), 4)
     controls_line1.add(self.wayback_to_field)
     controls_line1.add(JLabel(" | Limit:"))
-    self.wayback_limit_field = JTextField("50", 3)
+    self.wayback_limit_field = JTextField(UI_CORE_DEFAULTS["wayback_limit"], 3)
     controls_line1.add(self.wayback_limit_field)
     self.wayback_custom_cmd_checkbox = JCheckBox("Enable Custom", False)
     controls_line1.add(self.wayback_custom_cmd_checkbox)
@@ -4571,23 +4697,7 @@ def _create_wayback_tab(self):
     self.wayback_preset_help_label = JLabel(
         "Preset Help: Choose passive historical URL source command."
     )
-    wayback_presets = [
-        (
-            "waybackurls",
-            "{} \"{{targets_file}}\" | waybackurls".format(stdin_prefix),
-            "Uses waybackurls to pull archived URLs from Wayback index.",
-        ),
-        (
-            "gau",
-            "{} \"{{targets_file}}\" | gau --subs".format(stdin_prefix),
-            "Uses gau to gather historical URLs including subdomains.",
-        ),
-        (
-            "gau+threads",
-            "{} \"{{targets_file}}\" | gau --subs --threads 5".format(stdin_prefix),
-            "Same as gau preset with thread tuning for faster collection.",
-        ),
-    ]
+    wayback_presets = self._build_wayback_presets(stdin_prefix)
     controls_line1.add(
         self._create_command_preset_combo(
             self.wayback_custom_cmd_field,
@@ -4614,18 +4724,7 @@ def _create_wayback_tab(self):
         )
     )
     self._add_target_scope_controls(controls_line2)
-    controls_line2.add(
-        self._create_action_button(
-            "Clear", Color(220, 53, 69), lambda e: self.wayback_area.setText("")
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "To AI",
-            Color(33, 150, 243),
-            lambda e: self._export_text_output_to_ai("Wayback", self.wayback_area.getText()),
-        )
-    )
+    self._add_wayback_output_buttons(controls_line2)
     help_row = JPanel(FlowLayout(FlowLayout.LEFT))
     help_row.add(self.wayback_preset_help_label)
     top_panel.add(controls_line1)
@@ -4825,7 +4924,9 @@ def _create_graphql_tab(self):
     )
     controls_line1.add(self.graphql_schema_file_field)
     controls_line1.add(JLabel("Max:"))
-    self.graphql_max_targets_field = JTextField("12", 3)
+    self.graphql_max_targets_field = JTextField(
+        UI_CORE_DEFAULTS["graphql_max_targets"], 3
+    )
     controls_line1.add(self.graphql_max_targets_field)
     controls_line2.add(
         self._create_action_button(
@@ -4963,7 +5064,9 @@ def _create_graphql_tab(self):
     self.graphql_request_mode_combo.setSelectedItem("POST JSON")
     raider_row.add(self.graphql_request_mode_combo)
     raider_row.add(JLabel("Max Ops:"))
-    self.graphql_raider_max_ops_field = JTextField("40", 3)
+    self.graphql_raider_max_ops_field = JTextField(
+        UI_CORE_DEFAULTS["graphql_raider_max_ops"], 3
+    )
     raider_row.add(self.graphql_raider_max_ops_field)
     raider_row.add(JLabel("Headers:"))
     self.graphql_headers_field = JTextField("", 28)
@@ -6785,6 +6888,9 @@ __all__ = [
     "_create_logger_tab",
     "_mine_params",
     "_export_param_results",
+    "_fuzzer_attack_modes",
+    "_add_fuzzer_generation_buttons",
+    "_add_fuzzer_output_buttons",
     "_create_fuzzer_tab",
     "_create_sqlmap_verify_tab",
     "_create_dalfox_verify_tab",
@@ -6796,6 +6902,8 @@ __all__ = [
     "_create_httpx_tab",
     "_create_katana_tab",
     "_create_ffuf_tab",
+    "_build_wayback_presets",
+    "_add_wayback_output_buttons",
     "_create_wayback_tab",
     "_create_apihunter_tab",
     "_create_graphql_tab",

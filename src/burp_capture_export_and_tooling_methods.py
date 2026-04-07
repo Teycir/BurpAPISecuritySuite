@@ -8541,6 +8541,114 @@ def _cleanup_temp_dir(self, temp_dir, context):
             "Cleanup error ({}): {}".format(context, str(e))
         )
 
+def _quote_custom_command_value(self, raw_value):
+    """Quote dynamic placeholder values for shell-safe custom templates."""
+    import os
+
+    value = self._ascii_safe(raw_value or "")
+    if os.name == "nt":
+        # cmd.exe quoting: keep simple double-quoted form for path-like values.
+        return '"' + value.replace('"', '\\"') + '"'
+
+    quote_fn = getattr(shlex, "quote", None)
+    if quote_fn:
+        try:
+            return quote_fn(value)
+        except Exception as e:
+            self._callbacks.printError(
+                "Custom command quote fallback engaged: {}".format(str(e))
+            )
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+def _build_custom_command_context(self, context):
+    """Normalize/validate custom-command placeholders and add quoted variants."""
+    placeholder_name_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    value_pattern = re.compile(r"^[A-Za-z0-9_./:@%+=,?\\\- ()]+$")
+    forbidden_fragments = [
+        "`",
+        "$(",
+        "${",
+        "&&",
+        "||",
+        ";",
+        ">",
+        "<",
+        "\n",
+        "\r",
+    ]
+    safe_context = {}
+    source = context or {}
+    for key in sorted(source.keys()):
+        key_text = self._ascii_safe(key).strip()
+        if (not key_text) or (not placeholder_name_pattern.match(key_text)):
+            return None, "Unsupported placeholder name: {}".format(
+                key_text if key_text else "<empty>"
+            )
+
+        value_text = self._ascii_safe(source.get(key), max_len=4096).strip()
+        if not value_text:
+            return None, "Placeholder {{{}}} resolved to empty value".format(key_text)
+
+        for fragment in forbidden_fragments:
+            if fragment in value_text:
+                return (
+                    None,
+                    "Placeholder {{{}}} has forbidden fragment: {}".format(
+                        key_text, fragment
+                    ),
+                )
+
+        if not value_pattern.match(value_text):
+            return (
+                None,
+                "Placeholder {{{}}} has unsupported characters".format(key_text),
+            )
+
+        safe_context[key_text] = value_text
+        safe_context[key_text + "_q"] = self._quote_custom_command_value(value_text)
+
+    return safe_context, ""
+
+def _custom_command_tool_allowlist(self, tool_name):
+    """Return allowed executable names for each custom-command tool mode."""
+    key = self._ascii_safe(tool_name or "", lower=True).strip()
+    allow_map = {
+        "nuclei": set(["nuclei"]),
+        "httpx": set(["httpx"]),
+        "katana": set(["katana"]),
+        "wayback": set(["cat", "type", "gau", "waybackurls"]),
+        "apihunter": set(["apihunter"]),
+        "subfinder": set(["subfinder"]),
+    }
+    return set(allow_map.get(key, set()))
+
+def _validate_custom_command_allowlist(self, tool_name, command_text):
+    """Block custom command executables outside the tool-specific allow-list."""
+    import os
+
+    allowed_names = self._custom_command_tool_allowlist(tool_name)
+    if not allowed_names:
+        return True, ""
+
+    executables = self._extract_command_executables(command_text)
+    if not executables:
+        return False, "Unable to identify executable token"
+
+    allowed_text = ", ".join(sorted(allowed_names))
+    for executable in executables:
+        binary = self._ascii_safe(os.path.basename(executable), lower=True).strip()
+        if binary.endswith(".exe"):
+            binary = binary[:-4]
+        if binary not in allowed_names:
+            return (
+                False,
+                "Executable '{}' is not allowed for {} custom mode (allowed: {})".format(
+                    self._ascii_safe(executable), tool_name, allowed_text
+                ),
+            )
+
+    return True, ""
+
 def _resolve_custom_command(self, tool_name, checkbox, field, context, output_area):
     """Resolve command template when custom command override is enabled."""
     import os
@@ -8559,8 +8667,17 @@ def _resolve_custom_command(self, tool_name, checkbox, field, context, output_ar
         )
         return True, None
 
+    safe_context, context_error = self._build_custom_command_context(context)
+    if context_error:
+        output_area.setText(
+            "[!] {} custom command context error: {}\n".format(
+                tool_name, context_error
+            )
+        )
+        return True, None
+
     try:
-        rendered_command = template.format(**context).strip()
+        rendered_command = template.format(**safe_context).strip()
     except KeyError as e:
         placeholder = str(e).strip("'\"")
         output_area.setText(
@@ -8570,7 +8687,7 @@ def _resolve_custom_command(self, tool_name, checkbox, field, context, output_ar
         )
         output_area.append(
             "[*] Supported placeholders: {}\n".format(
-                ", ".join(sorted(context.keys()))
+                ", ".join(sorted(safe_context.keys()))
             )
         )
         return True, None
@@ -8602,6 +8719,21 @@ def _resolve_custom_command(self, tool_name, checkbox, field, context, output_ar
         )
         self.log_to_ui(
             "[!] {} custom command blocked by safety policy".format(tool_name)
+        )
+        return True, None
+
+    is_allowed, allow_reason = self._validate_custom_command_allowlist(
+        tool_name, rendered_command
+    )
+    if not is_allowed:
+        output_area.setText(
+            "[!] {} custom command blocked by executable allow-list\n".format(
+                tool_name
+            )
+        )
+        output_area.append("[!] Reason: {}\n".format(allow_reason))
+        output_area.append(
+            "[*] Allowed executables are restricted per tool in custom mode.\n"
         )
         return True, None
 
@@ -9745,7 +9877,12 @@ __all__ = [
     "_export_httpx_urls",
     "_clean_url",
     "_cleanup_temp_dir",
+    "_quote_custom_command_value",
+    "_build_custom_command_context",
+    "_custom_command_tool_allowlist",
     "_resolve_custom_command",
+    "_validate_custom_command_safety",
+    "_validate_custom_command_allowlist",
     "_build_shell_command",
     "_decode_process_data",
     "_safe_pipe_read",
