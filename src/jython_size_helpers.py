@@ -217,6 +217,11 @@ def create_auth_replay_tab(extender):
         )
     )
     top_controls.add(
+        self._create_append_report_button(
+            "Auth Replay", lambda: self.auth_replay_area.getText()
+        )
+    )
+    top_controls.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),

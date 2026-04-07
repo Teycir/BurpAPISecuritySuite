@@ -1949,6 +1949,14 @@ def test_ai_export_actions_are_wired_across_outputs():
         "READY CURL:",
         "FULL HTTP REQUEST:",
         "def _export_text_output_to_ai(",
+        "def _create_append_report_button(",
+        "def _append_text_output_to_report(",
+        "def _find_latest_full_export_dir(",
+        "def _resolve_append_report_output_area(",
+        "def _emit_append_report_status(",
+        "def _refresh_append_report_buttons(",
+        '"Append Report"',
+        "active export folder missing. run Export All again",
         "def _show_ai_copy_exit_dialog(",
         'options = ["Copy", "Exit"]',
         "Assume duplicates are common; prioritize non-obvious logic/state/privilege flaws before generic scanner findings.",
@@ -1963,6 +1971,7 @@ def test_ai_export_actions_are_wired_across_outputs():
     for token in required_tokens:
         assert token in text, "Missing AI export token: {}".format(token)
     assert text.count('"To AI"') >= 12
+    assert text.count('"Append Report"') >= 1
     print("[PASS] test_ai_export_actions_are_wired_across_outputs")
 
 

@@ -728,6 +728,11 @@ def _initialize_runtime_state(self):
     self.logger_noise_filter_enabled = True
     self._ui_checkbox_persistence_ready = False
     self._ensure_logger_default_tag_rules(force=False)
+    self.report_session_id = 0
+    self.report_append_sequence = 0
+    self.active_report_export_dir = ""
+    self.active_report_timestamp = ""
+    self._append_report_buttons = []
 
 def _setting_key(self, suffix):
     token = self._ascii_safe(suffix or "").strip()
@@ -1828,6 +1833,7 @@ def _resolve_action_button_tooltip(self, text, explicit_tooltip=None):
         "target bases": "Open scope editor for base URLs/hosts used by external scanners",
         "pkill tools": "Emergency stop for all external scanner processes launched by this extension",
         "copy": "Copy this tab output text to your system clipboard for AI/reports",
+        "append report": "Append this tab output into the active Export All report folder for this session",
         "copy as curl": "Copy selected/generated attack request as a reusable curl command",
         "clear": "Clear this tab output panel only (does not delete Recon capture data)",
         "clear data": "Clear Recon + Logger captured data and reset both views",
@@ -2651,6 +2657,183 @@ def _copy_to_clipboard(self, text):
     else:
         self.log_to_ui("[!] No text to copy")
 
+def _refresh_append_report_buttons(self):
+    """Enable append buttons only when current-session Export All folder exists."""
+    report_id = int(getattr(self, "report_session_id", 0) or 0)
+    export_dir = self._ascii_safe(getattr(self, "active_report_export_dir", "") or "").strip()
+    enabled = bool(report_id > 0 and export_dir and os.path.isdir(export_dir))
+    if (not enabled) and export_dir and (not os.path.isdir(export_dir)):
+        self.active_report_export_dir = ""
+    for button in list(getattr(self, "_append_report_buttons", []) or []):
+        try:
+            button.setEnabled(enabled)
+        except Exception as button_err:
+            _ = button_err
+    return enabled
+
+def _find_latest_full_export_dir(self):
+    """Return latest FullExport folder by timestamped directory name."""
+    base_dir = os.path.join(os.path.expanduser("~"), "burp_APIRecon")
+    if not os.path.isdir(base_dir):
+        return ""
+    candidates = []
+    try:
+        for name in os.listdir(base_dir):
+            folder_name = self._ascii_safe(name or "").strip()
+            if not folder_name.startswith("FullExport_"):
+                continue
+            full_path = os.path.join(base_dir, folder_name)
+            if os.path.isdir(full_path):
+                candidates.append((folder_name, full_path))
+    except Exception as e:
+        self._callbacks.printError("Append report folder scan failed: {}".format(str(e)))
+        return ""
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+def _resolve_append_report_output_area(self, source_label):
+    """Resolve source label to the tab text area used for status confirmation."""
+    label = self._ascii_safe(source_label or "", lower=True).strip()
+    if not label:
+        return None
+    if label.startswith("passive discovery"):
+        return getattr(self, "passive_area", None)
+    area_map = {
+        "diff": "diff_area",
+        "version scanner": "version_area",
+        "param miner": "param_area",
+        "fuzzer": "fuzzer_area",
+        "sqlmap verify": "sqlmap_area",
+        "dalfox verify": "dalfox_area",
+        "api asset discovery": "asset_area",
+        "openapi drift": "openapi_area",
+        "nuclei": "nuclei_area",
+        "httpx": "httpx_area",
+        "katana": "katana_area",
+        "ffuf": "ffuf_area",
+        "wayback": "wayback_area",
+        "apihunter": "apihunter_area",
+        "graphql analysis": "graphql_area",
+        "auth replay": "auth_replay_area",
+    }
+    attr_name = area_map.get(label)
+    if not attr_name:
+        return None
+    return getattr(self, attr_name, None)
+
+def _emit_append_report_status(self, source_label, message, is_error=False):
+    """Emit append-report status to both global log and current tab console."""
+    source = self._ascii_safe(source_label or "Output").strip() or "Output"
+    status = self._ascii_safe(message or "").strip()
+    if not status:
+        return
+    level = "[!]" if bool(is_error) else "[+]"
+    line = "{} Append Report ({}): {}".format(level, source, status)
+    self.log_to_ui(line)
+    area = self._resolve_append_report_output_area(source)
+    if area is not None:
+        try:
+            area.append("\n" + line + "\n")
+        except Exception as area_err:
+            self._callbacks.printError(
+                "Append report tab status emit failed: {}".format(str(area_err))
+            )
+
+def _create_append_report_button(self, source_label, output_getter):
+    """Create and register an Append Report action button for one output panel."""
+    btn = self._create_action_button(
+        "Append Report",
+        Color(255, 193, 7),
+        lambda e: self._append_text_output_to_report(
+            source_label, output_getter() if callable(output_getter) else ""
+        ),
+    )
+    self._append_report_buttons.append(btn)
+    self._refresh_append_report_buttons()
+    return btn
+
+def _append_text_output_to_report(self, source_label, output_text):
+    """Copy one tab output into the latest active FullExport folder."""
+    content = self._ascii_safe(output_text or "").strip()
+    source = self._ascii_safe(source_label or "Output").strip() or "Output"
+    if not content:
+        self._emit_append_report_status(source, "no output available", is_error=True)
+        return
+
+    report_id = int(getattr(self, "report_session_id", 0) or 0)
+    if report_id <= 0:
+        self._emit_append_report_status(
+            source, "disabled. run Export All first", is_error=True
+        )
+        self._refresh_append_report_buttons()
+        return
+
+    export_dir = self._ascii_safe(
+        getattr(self, "active_report_export_dir", "") or ""
+    ).strip()
+    if export_dir and (not os.path.isdir(export_dir)):
+        self.active_report_export_dir = ""
+        self._emit_append_report_status(
+            source,
+            "active export folder missing. run Export All again",
+            is_error=True,
+        )
+        self._refresh_append_report_buttons()
+        return
+    if not export_dir:
+        export_dir = self._find_latest_full_export_dir()
+    if not export_dir:
+        self._emit_append_report_status(
+            source, "disabled. run Export All first", is_error=True
+        )
+        self._refresh_append_report_buttons()
+        return
+    if not os.path.isdir(export_dir):
+        self._emit_append_report_status(
+            source, "target export folder is not accessible", is_error=True
+        )
+        self._refresh_append_report_buttons()
+        return
+
+    self.active_report_export_dir = export_dir
+    self.report_append_sequence = int(getattr(self, "report_append_sequence", 0) or 0) + 1
+    append_seq = int(self.report_append_sequence)
+
+    safe_source = re.sub(r"[^A-Za-z0-9._-]+", "_", source).strip("._")
+    if not safe_source:
+        safe_source = "output"
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = "report_{:03d}_append_{:03d}_{}.txt".format(
+        report_id,
+        append_seq,
+        safe_source,
+    )
+    filepath = os.path.join(export_dir, filename)
+
+    writer = None
+    try:
+        writer = FileWriter(filepath)
+        writer.write(content)
+        self._emit_append_report_status(
+            source,
+            "success. report_id={} file={}".format(report_id, filepath),
+            is_error=False,
+        )
+    except Exception as e:
+        self._emit_append_report_status(
+            source, "failed: {}".format(self._ascii_safe(str(e))), is_error=True
+        )
+    finally:
+        if writer:
+            try:
+                writer.close()
+            except Exception as close_err:
+                self._callbacks.printError(
+                    "Append report writer close failed: {}".format(str(close_err))
+                )
+
 def _export_text_output_to_ai(self, source_label, output_text):
     title = self._ascii_safe(source_label or "Output")
     content = self._ascii_safe(output_text or "").strip()
@@ -2738,6 +2921,9 @@ def _create_diff_tab(self):
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.diff_area.getText()),
         )
+    )
+    controls.add(
+        self._create_append_report_button("Diff", lambda: self.diff_area.getText())
     )
     controls.add(
         self._create_action_button(
@@ -2920,6 +3106,11 @@ def _create_version_tab(self):
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.version_area.getText()),
+        )
+    )
+    action_row.add(
+        self._create_append_report_button(
+            "Version Scanner", lambda: self.version_area.getText()
         )
     )
     action_row.add(
@@ -3192,6 +3383,9 @@ def _create_param_tab(self):
         )
     )
     action_row.add(
+        self._create_append_report_button("Param Miner", lambda: self.param_area.getText())
+    )
+    action_row.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -3442,6 +3636,9 @@ def _add_fuzzer_output_buttons(self, controls):
         )
     )
     controls.add(
+        self._create_append_report_button("Fuzzer", lambda: self.fuzzer_area.getText())
+    )
+    controls.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -3545,6 +3742,11 @@ def _create_sqlmap_verify_tab(self):
         )
     )
     controls_line2.add(
+        self._create_append_report_button(
+            "SQLMap Verify", lambda: self.sqlmap_area.getText()
+        )
+    )
+    controls_line2.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -3634,6 +3836,11 @@ def _create_dalfox_verify_tab(self):
             "Copy",
             Color(96, 125, 139),
             lambda e: self._copy_to_clipboard(self.dalfox_area.getText()),
+        )
+    )
+    controls_line2.add(
+        self._create_append_report_button(
+            "Dalfox Verify", lambda: self.dalfox_area.getText()
         )
     )
     controls_line2.add(
@@ -3788,6 +3995,11 @@ def _create_api_asset_discovery_tab(self):
         )
     )
     actions_row.add(
+        self._create_append_report_button(
+            "API Asset Discovery", lambda: self.asset_area.getText()
+        )
+    )
+    actions_row.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -3886,6 +4098,9 @@ def _create_openapi_drift_tab(self):
         )
     )
     controls.add(
+        self._create_append_report_button("OpenAPI Drift", lambda: self.openapi_area.getText())
+    )
+    controls.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -3977,6 +4192,11 @@ def _create_passive_discovery_tab(self):
         )
     )
     actions_row.add(
+        self._create_append_report_button(
+            "Passive Discovery", lambda: self.passive_area.getText()
+        )
+    )
+    actions_row.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -4021,6 +4241,11 @@ def _create_passive_discovery_tab(self):
             "Export Ledger",
             Color(72, 61, 139),
             lambda e: self._export_sequence_invariant_ledger(),
+        )
+    )
+    deep_logic_row.add(
+        self._create_append_report_button(
+            "Passive Discovery Deep Logic", lambda: self.passive_area.getText()
         )
     )
     deep_logic_row.add(
@@ -4073,6 +4298,11 @@ def _create_passive_discovery_tab(self):
             "Role Delta",
             Color(123, 104, 238),
             lambda e: self._run_role_delta_engine(e),
+        )
+    )
+    advanced_logic_row.add(
+        self._create_append_report_button(
+            "Passive Discovery Advanced Logic", lambda: self.passive_area.getText()
         )
     )
     advanced_logic_row.add(
@@ -4246,6 +4476,9 @@ def _create_nuclei_tab(self):
         )
     )
     controls_line2.add(
+        self._create_append_report_button("Nuclei", lambda: self.nuclei_area.getText())
+    )
+    controls_line2.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -4368,6 +4601,9 @@ def _create_httpx_tab(self):
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.httpx_area.getText()),
         )
+    )
+    controls_line2.add(
+        self._create_append_report_button("HTTPX", lambda: self.httpx_area.getText())
     )
     controls_line2.add(
         self._create_action_button(
@@ -4505,6 +4741,9 @@ def _create_katana_tab(self):
         )
     )
     controls_line2.add(
+        self._create_append_report_button("Katana", lambda: self.katana_area.getText())
+    )
+    controls_line2.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -4599,6 +4838,9 @@ def _create_ffuf_tab(self):
         )
     )
     controls_line2.add(
+        self._create_append_report_button("FFUF", lambda: self.ffuf_area.getText())
+    )
+    controls_line2.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -4663,6 +4905,9 @@ def _add_wayback_output_buttons(self, controls_line2):
         self._create_action_button(
             "Clear", Color(220, 53, 69), lambda e: self.wayback_area.setText("")
         )
+    )
+    controls_line2.add(
+        self._create_append_report_button("Wayback", lambda: self.wayback_area.getText())
     )
     controls_line2.add(
         self._create_action_button(
@@ -4899,6 +5144,9 @@ def _create_apihunter_tab(self):
         )
     )
     controls_line2.add(
+        self._create_append_report_button("ApiHunter", lambda: self.apihunter_area.getText())
+    )
+    controls_line2.add(
         self._create_action_button(
             "To AI",
             Color(33, 150, 243),
@@ -5032,6 +5280,11 @@ def _create_graphql_tab(self):
             "Copy",
             Color(108, 117, 125),
             lambda e: self._copy_to_clipboard(self.graphql_area.getText()),
+        )
+    )
+    controls_line2.add(
+        self._create_append_report_button(
+            "GraphQL Analysis", lambda: self.graphql_area.getText()
         )
     )
     controls_line2.add(
@@ -6892,6 +7145,12 @@ __all__ = [
     "_create_text_area_panel",
     "_show_recon_button_help",
     "_copy_to_clipboard",
+    "_refresh_append_report_buttons",
+    "_find_latest_full_export_dir",
+    "_resolve_append_report_output_area",
+    "_emit_append_report_status",
+    "_create_append_report_button",
+    "_append_text_output_to_report",
     "_export_text_output_to_ai",
     "_create_diff_tab",
     "_load_diff_file",

@@ -2896,6 +2896,27 @@ def _run_apihunter(self, event):
         self._cleanup_temp_dir(temp_dir, "apihunter custom command validation")
         return
 
+    target_count = max(1, int(len(targets)))
+    if "Quick" in calibration:
+        timeout_secs_per_target = 12
+        watchdog_secs_per_target = 20
+        timeout_secs_cap = 1200
+    elif "Deep" in calibration:
+        timeout_secs_per_target = 20
+        watchdog_secs_per_target = 90
+        timeout_secs_cap = 3600
+    else:  # Balanced
+        timeout_secs_per_target = 15
+        watchdog_secs_per_target = 40
+        timeout_secs_cap = 2400
+    adaptive_timeout_secs = min(
+        timeout_secs_cap, max(timeout_secs_per_target, target_count * timeout_secs_per_target)
+    )
+    max_timeout = min(
+        7200,
+        max(target_count * watchdog_secs_per_target, adaptive_timeout_secs + 60),
+    )
+
     self.apihunter_area.setText("[*] Running ApiHunter...\n")
     if not use_custom:
         self.apihunter_area.append("[*] Calibration: {}\n".format(calibration))
@@ -2904,7 +2925,25 @@ def _run_apihunter(self, event):
         self.apihunter_area.append("[*] Target Source: Custom Targets popup\n")
     else:
         self.apihunter_area.append("[*] Target Source: Recon filtered scope\n")
-    self.apihunter_area.append("[*] Targets: {}\n\n".format(len(targets)))
+    self.apihunter_area.append("[*] Targets: {}\n".format(len(targets)))
+    self.apihunter_area.append("[*] Target URLs:\n")
+    for target_url in targets:
+        self.apihunter_area.append("    {}\n".format(self._ascii_safe(target_url)))
+    if use_custom:
+        self.apihunter_area.append(
+            "[*] Timeout Budget: watchdog={}s (~{}s/target)\n".format(
+                max_timeout, watchdog_secs_per_target
+            )
+        )
+    else:
+        self.apihunter_area.append(
+            "[*] Timeout Budget: --timeout-secs {} (scaled) | watchdog={}s (~{}s/target)\n".format(
+                adaptive_timeout_secs,
+                max_timeout,
+                watchdog_secs_per_target,
+            )
+        )
+    self.apihunter_area.append("\n")
     self._clear_tool_cancel("apihunter")
 
     def run_scan():
@@ -2936,7 +2975,7 @@ def _run_apihunter(self, event):
                         "--filter-timeout", "3",
                         "--max-endpoints", "40",
                         "--concurrency", "4",
-                        "--timeout-secs", "12",
+                        "--timeout-secs", str(adaptive_timeout_secs),
                         "--retries", "1",
                         "--delay-ms", "0",
                     ])
@@ -2947,7 +2986,7 @@ def _run_apihunter(self, event):
                         "--filter-timeout", "3",
                         "--max-endpoints", "0",
                         "--concurrency", "6",
-                        "--timeout-secs", "20",
+                        "--timeout-secs", str(adaptive_timeout_secs),
                         "--retries", "2",
                         "--delay-ms", "100",
                         "--waf-evasion",
@@ -2959,7 +2998,7 @@ def _run_apihunter(self, event):
                         "--filter-timeout", "3",
                         "--max-endpoints", "80",
                         "--concurrency", "5",
-                        "--timeout-secs", "15",
+                        "--timeout-secs", str(adaptive_timeout_secs),
                         "--retries", "1",
                         "--delay-ms", "50",
                     ])
@@ -2982,14 +3021,6 @@ def _run_apihunter(self, event):
                 lambda: self.apihunter_area.append("[*] Computing...\n")
             )
 
-            # Adjust timeout based on calibration preset
-            if "Quick" in calibration:
-                max_timeout = len(targets) * 20  # Quick: 20s per target
-            elif "Deep" in calibration:
-                max_timeout = len(targets) * 90  # Deep: 90s per target
-            else:  # Balanced
-                max_timeout = len(targets) * 40  # Balanced: 40s per target
-            
             while process.poll() is None:
                 if self._is_tool_cancelled("apihunter"):
                     self._terminate_process_cross_platform(process, "ApiHunter")
@@ -3022,8 +3053,17 @@ def _run_apihunter(self, event):
             )
 
             if os.path.exists(results_file):
+                # Process results before temp-dir cleanup to avoid missing-file races.
+                SwingUtilities.invokeAndWait(
+                    lambda: self._process_apihunter_ndjson_results(
+                        results_file, self.apihunter_area
+                    )
+                )
+            else:
                 SwingUtilities.invokeLater(
-                    lambda: self._process_apihunter_ndjson_results(results_file, self.apihunter_area)
+                    lambda: self.apihunter_area.append(
+                        "[*] No results file generated (no findings or scanner did not write output file)\n"
+                    )
                 )
         except Exception as e:
             err = "[!] Error: {}\n".format(str(e))

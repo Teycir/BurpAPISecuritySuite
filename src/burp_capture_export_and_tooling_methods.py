@@ -317,12 +317,20 @@ def export_api_data(self):
     try:
         writer = FileWriter(filename)
         writer.write(json.dumps(analysis, indent=2))
+        current_report_id = int(getattr(self, "report_session_id", 0) or 0) + 1
+        self.report_session_id = current_report_id
+        self.report_append_sequence = 0
+        self.active_report_export_dir = export_dir
+        self.active_report_timestamp = timestamp
+        if hasattr(self, "_refresh_append_report_buttons"):
+            self._refresh_append_report_buttons()
         self.log_to_ui(
             "[+] Export complete: {} endpoints, {} requests".format(
                 analysis["metadata"]["total_endpoints"],
                 analysis["metadata"]["total_requests"],
             )
         )
+        self.log_to_ui("[+] Report Session ID: {}".format(current_report_id))
         self.log_to_ui(
             "[+] Severity: Critical={}, High={}, Medium={}, Info={}".format(
                 severity_counts["critical"],
