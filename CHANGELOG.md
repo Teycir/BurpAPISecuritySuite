@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.6] - 2026-04-08
+
+### Added
+- Native Vulners enrichment workflow:
+  - Added a dedicated `Vulners` tab (positioned between `ApiHunter` and `Nuclei`) with run/stop/export wiring.
+  - Added software/version fingerprint collection from filtered Recon traffic plus optional custom-target fingerprint collection.
+  - Added advisory enrichment output with ranked top findings, CVE context, and source-reference links when available.
+- Incremental report appending workflow:
+  - Added per-tab `Append Report` actions to append output into the active `FullExport` directory.
+  - Added report session tracking (`session_id`, sequence counter, export directory, timestamp) for deterministic append sequencing.
+  - Added active-export guardrails that disable append actions when no active export folder is available and emit explicit operator-facing status.
+
+### Changed
+- AI prompt/export contract now aligns with the APIPentesting triage schema across bundle and request-oriented surfaces.
+- AI analysis prompts now explicitly require non-destructive PoCs, evidence-backed claims, and duplicate-resistant novelty fields for severe triage.
+- README documentation now reflects the APIPentesting companion-repo workflow and refined AI handoff artifact guidance.
+
 
 ## [1.4.5] - 2026-04-07
 
