@@ -1100,16 +1100,23 @@ def test_new_verification_and_discovery_tabs_are_wired():
     text = _source_text()
     required_tokens = [
         'self.tabbed_pane.addTab("ApiHunter", apihunter_panel)',
+        'self.tabbed_pane.addTab("Vulners", vulners_panel)',
         'self.tabbed_pane.addTab("Sqlmap", sqlmap_verify_panel)',
         'self.tabbed_pane.addTab("Dalfox", dalfox_verify_panel)',
         'self.tabbed_pane.addTab("Subfinder", asset_discovery_panel)',
         'self.tabbed_pane.addTab("OpenAPI Drift", openapi_drift_panel)',
         'self.tabbed_pane.addTab("GraphQL", graphql_panel)',
         "def _create_apihunter_tab(",
+        "def _create_vulners_tab(",
         "def _run_apihunter(",
+        "def _run_vulners(",
         "def _collect_apihunter_targets(",
+        "def _collect_vulners_fingerprints(",
+        "def _query_vulners_for_fingerprint(",
         "def _export_apihunter_targets(",
+        "def _export_vulners_results(",
         "def _stop_apihunter(",
+        "def _stop_vulners(",
         "def _create_sqlmap_verify_tab(",
         "def _create_dalfox_verify_tab(",
         "def _create_api_asset_discovery_tab(",
@@ -1141,6 +1148,12 @@ def test_new_verification_and_discovery_tabs_are_wired():
     assert text.index('self.tabbed_pane.addTab("ApiHunter", apihunter_panel)') < text.index(
         'self.tabbed_pane.addTab("Nuclei", nuclei_panel)'
     ), "ApiHunter tab should appear before Nuclei tab"
+    assert text.index('self.tabbed_pane.addTab("ApiHunter", apihunter_panel)') < text.index(
+        'self.tabbed_pane.addTab("Vulners", vulners_panel)'
+    ), "ApiHunter tab should appear before Vulners tab"
+    assert text.index('self.tabbed_pane.addTab("Vulners", vulners_panel)') < text.index(
+        'self.tabbed_pane.addTab("Nuclei", nuclei_panel)'
+    ), "Vulners tab should appear before Nuclei tab"
     print("[PASS] test_new_verification_and_discovery_tabs_are_wired")
 
 
@@ -1220,6 +1233,27 @@ def test_apihunter_custom_targets_popup_and_enforcement_are_wired():
     for token in required_tokens:
         assert token in text, "Missing ApiHunter custom targets token: {}".format(token)
     print("[PASS] test_apihunter_custom_targets_popup_and_enforcement_are_wired")
+
+def test_vulners_custom_targets_popup_and_enforcement_are_wired():
+    text = _source_text()
+    required_tokens = [
+        'self.vulners_use_custom_targets_checkbox = JCheckBox("Use Custom Targets", False)',
+        "lambda e: self._open_vulners_custom_targets_popup()",
+        "def _open_vulners_custom_targets_popup(",
+        "def _get_vulners_custom_targets_override(",
+        "custom_override = self._get_vulners_custom_targets_override()",
+        "use_custom_targets = bool(custom_override.get(\"enabled\"))",
+        'if use_custom_targets:',
+        '"[*] Target Source: Custom Targets popup\\n"',
+        'self._collect_vulners_fingerprints_from_custom_targets(',
+        "def _collect_vulners_fingerprints_from_custom_targets(",
+        "def _vulners_fetch_target_material(",
+        '"vulners_custom_targets_lines"',
+        '"Vulners custom targets is enabled but no valid URLs are configured."',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Vulners custom targets token: {}".format(token)
+    print("[PASS] test_vulners_custom_targets_popup_and_enforcement_are_wired")
 
 
 def test_balanced_runtime_defaults_and_safe_pipe_read_present():
@@ -1725,6 +1759,8 @@ def test_heavy_runner_methods_are_delegated_for_jython_compile_safety():
         "return heavy_runners._run_graphql_analysis(self, event)",
         "def _run_nuclei(self):",
         "return heavy_runners._run_nuclei(self)",
+        "def _run_vulners(self, event):",
+        "return heavy_runners._run_vulners(self, event)",
         "def _run_httpx(self, event):",
         "return heavy_runners._run_httpx(self, event)",
         "def _run_katana(self, event):",

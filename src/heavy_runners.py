@@ -2834,6 +2834,303 @@ def _run_wayback(self):
     thread.daemon = True
     thread.start()
 
+def _run_vulners(self, event):
+    """Query Vulners using software/version fingerprints extracted from captured traffic."""
+    import threading
+    import time as time_module
+
+    api_key = self._ascii_safe(self.vulners_api_key_field.getText() or "").strip()
+    if not api_key:
+        self.vulners_area.setText("[!] Configure Vulners API key first\n")
+        return
+
+    max_signatures = self._parse_positive_int(
+        self.vulners_max_signatures_field.getText(), 20, 1, 80
+    )
+    per_query = 20
+    try:
+        per_query = self._parse_positive_int(
+            str(self.vulners_results_per_query_combo.getSelectedItem()), 20, 1, 50
+        )
+    except Exception as combo_err:
+        self._callbacks.printError(
+            "Vulners results/query read error: {}".format(str(combo_err))
+        )
+
+    custom_override = {"enabled": False, "targets": [], "error": ""}
+    if hasattr(self, "_get_vulners_custom_targets_override"):
+        try:
+            custom_override = self._get_vulners_custom_targets_override()
+        except Exception as custom_err:
+            self._callbacks.printError(
+                "Vulners custom targets read error: {}".format(str(custom_err))
+            )
+    use_custom_targets = bool(custom_override.get("enabled"))
+    if use_custom_targets and self._ascii_safe(custom_override.get("error") or "").strip():
+        self.vulners_area.setText(
+            "[!] {}\n".format(self._ascii_safe(custom_override.get("error") or ""))
+        )
+        return
+    if (not use_custom_targets) and (not self.api_data):
+        self.vulners_area.setText("[!] No endpoints in Recon tab\n")
+        return
+
+    self.vulners_area.setText("[*] Running Vulners enrichment...\n")
+    if use_custom_targets:
+        custom_targets = list(custom_override.get("targets", []) or [])
+        self.vulners_area.append("[*] Target Source: Custom Targets popup\n")
+        self.vulners_area.append("[*] Targets: {}\n".format(len(custom_targets)))
+        self.vulners_area.append("[*] Target URLs:\n")
+        for target_url in custom_targets:
+            self.vulners_area.append("    {}\n".format(self._ascii_safe(target_url)))
+    else:
+        self.vulners_area.append("[*] Target Source: Recon filtered scope\n")
+    self.vulners_area.append("[*] Results Per Query: {}\n".format(per_query))
+    self.vulners_area.append("[*] Max Signatures: {}\n\n".format(max_signatures))
+    self._clear_tool_cancel("vulners")
+
+    def run_scan():
+        start_time = time_module.time()
+        all_findings = []
+        finding_keys = set()
+        query_errors = 0
+        fingerprints = []
+        meta = {}
+
+        try:
+            if use_custom_targets:
+                fingerprints, meta = self._collect_vulners_fingerprints_from_custom_targets(
+                    list(custom_override.get("targets", []) or []),
+                    max_signatures,
+                    cancel_check=lambda: self._is_tool_cancelled("vulners"),
+                )
+            else:
+                fingerprints, meta = self._collect_vulners_fingerprints(max_signatures)
+
+            if self._is_tool_cancelled("vulners"):
+                SwingUtilities.invokeLater(
+                    lambda: self.vulners_area.append("\n[!] Vulners scan cancelled by user\n")
+                )
+                return
+
+            source_count = int(meta.get("source_count", 0) or 0)
+            signal_count = int(meta.get("signal_count", 0) or 0)
+            fetched_count = int(meta.get("fetched_count", source_count) or 0)
+            fetch_error_count = int(meta.get("fetch_error_count", 0) or 0)
+            fetch_error_details = list(meta.get("fetch_error_details", []) or [])
+            SwingUtilities.invokeLater(
+                lambda s=source_count, sig=signal_count: self.vulners_area.append(
+                    "[*] Source Entries: {}\n[*] Fingerprint Signals: {}\n".format(s, sig)
+                )
+            )
+            if use_custom_targets:
+                SwingUtilities.invokeLater(
+                    lambda ok=fetched_count, err=fetch_error_count: self.vulners_area.append(
+                        "[*] Target Fetch: success={} errors={}\n".format(ok, err)
+                    )
+                )
+                if fetch_error_details:
+                    SwingUtilities.invokeLater(
+                        lambda: self.vulners_area.append("[*] Fetch Errors:\n")
+                    )
+                    for detail in fetch_error_details[:8]:
+                        SwingUtilities.invokeLater(
+                            lambda d=self._ascii_safe(detail): self.vulners_area.append(
+                                "  - {}\n".format(d)
+                            )
+                        )
+            SwingUtilities.invokeLater(
+                lambda count=len(fingerprints), max_count=max_signatures: self.vulners_area.append(
+                    "[*] Fingerprints Queried: {} (max={})\n".format(count, max_count)
+                )
+            )
+            SwingUtilities.invokeLater(lambda: self.vulners_area.append("[*] Fingerprints:\n"))
+            for fp in fingerprints:
+                label = self._ascii_safe(fp.get("signature") or "").strip()
+                urls = list(fp.get("sample_urls", []) or [])
+                preview_url = self._ascii_safe(urls[0]) if urls else ""
+                if preview_url:
+                    SwingUtilities.invokeLater(
+                        lambda l=label, u=preview_url: self.vulners_area.append(
+                            "  - {} [{}]\n".format(l, u)
+                        )
+                    )
+                else:
+                    SwingUtilities.invokeLater(
+                        lambda l=label: self.vulners_area.append("  - {}\n".format(l))
+                    )
+            SwingUtilities.invokeLater(lambda: self.vulners_area.append("\n"))
+
+            if not fingerprints:
+                if use_custom_targets:
+                    SwingUtilities.invokeLater(
+                        lambda: self.vulners_area.append(
+                            "[!] No Vulners fingerprints found from custom targets\n"
+                            "[*] Try different targets or verify target reachability.\n"
+                        )
+                    )
+                else:
+                    SwingUtilities.invokeLater(
+                        lambda: self.vulners_area.append(
+                            "[!] No Vulners fingerprints found in filtered captured traffic\n"
+                            "[*] Capture/import more traffic, then retry.\n"
+                        )
+                    )
+                return
+
+            for index, fingerprint in enumerate(fingerprints):
+                if self._is_tool_cancelled("vulners"):
+                    SwingUtilities.invokeLater(
+                        lambda: self.vulners_area.append(
+                            "\n[!] Vulners scan cancelled by user\n"
+                        )
+                    )
+                    return
+
+                signature = self._ascii_safe(
+                    fingerprint.get("signature") or "unknown"
+                ).strip()
+                SwingUtilities.invokeLater(
+                    lambda s=signature, i=index + 1, total=len(fingerprints): self.vulners_area.append(
+                        "[*] Query {}/{}: {}\n".format(i, total, s)
+                    )
+                )
+
+                docs, err = self._query_vulners_for_fingerprint(
+                    fingerprint, api_key, per_query
+                )
+                if err:
+                    query_errors += 1
+                    SwingUtilities.invokeLater(
+                        lambda e=self._ascii_safe(err), s=signature: self.vulners_area.append(
+                            "[!] {} -> {}\n".format(s, e)
+                        )
+                    )
+                    continue
+
+                matched = 0
+                for doc in docs:
+                    finding_id = self._ascii_safe(doc.get("id") or "").strip()
+                    href = self._ascii_safe(doc.get("href") or "").strip()
+                    title = self._ascii_safe(doc.get("title") or "").strip()
+                    dedup_key = finding_id or href or title
+                    if not dedup_key:
+                        continue
+                    if dedup_key in finding_keys:
+                        continue
+                    finding_keys.add(dedup_key)
+                    matched += 1
+                    all_findings.append(
+                        {
+                            "signature": signature,
+                            "product": self._ascii_safe(
+                                fingerprint.get("product") or ""
+                            ).strip(),
+                            "version": self._ascii_safe(
+                                fingerprint.get("version") or ""
+                            ).strip(),
+                            "sample_urls": list(
+                                fingerprint.get("sample_urls", []) or []
+                            ),
+                            "id": finding_id,
+                            "title": title,
+                            "type": self._ascii_safe(doc.get("type") or "").strip(),
+                            "cvss": float(doc.get("cvss", 0.0) or 0.0),
+                            "severity": self._ascii_safe(
+                                doc.get("severity") or "info", lower=True
+                            ).strip(),
+                            "href": href,
+                            "published": self._ascii_safe(
+                                doc.get("published") or ""
+                            ).strip(),
+                        }
+                    )
+
+                SwingUtilities.invokeLater(
+                    lambda c=matched, s=signature: self.vulners_area.append(
+                        "[+] {} -> {} unique finding(s)\n".format(s, c)
+                    )
+                )
+
+            all_findings.sort(
+                key=lambda item: (
+                    float(item.get("cvss", 0.0) or 0.0),
+                    self._ascii_safe(item.get("severity") or "", lower=True),
+                ),
+                reverse=True,
+            )
+            elapsed = int(time_module.time() - start_time)
+
+            with getattr(self, "vulners_lock", threading.Lock()):
+                self.vulners_findings = list(all_findings)
+
+            SwingUtilities.invokeLater(
+                lambda: self.vulners_area.append(
+                    "\n" + "=" * 80 + "\nVULNERS RESULTS\n" + "=" * 80 + "\n"
+                )
+            )
+            SwingUtilities.invokeLater(
+                lambda total=len(all_findings), errors=query_errors, e=elapsed: self.vulners_area.append(
+                    "[*] Completed in {}s | findings={} | query_errors={}\n".format(
+                        e, total, errors
+                    )
+                )
+            )
+
+            if all_findings:
+                SwingUtilities.invokeLater(
+                    lambda: self.vulners_area.append("\nTOP FINDINGS\n")
+                )
+                for finding in all_findings[:40]:
+                    sev = self._ascii_safe(
+                        finding.get("severity") or "info", lower=True
+                    ).upper()
+                    title = self._ascii_safe(finding.get("title") or "").strip()
+                    finding_id = self._ascii_safe(finding.get("id") or "").strip()
+                    cvss = float(finding.get("cvss", 0.0) or 0.0)
+                    signature = self._ascii_safe(
+                        finding.get("signature") or ""
+                    ).strip()
+                    href = self._ascii_safe(finding.get("href") or "").strip()
+                    sample_urls = list(finding.get("sample_urls", []) or [])
+                    sample_url = self._ascii_safe(sample_urls[0]) if sample_urls else ""
+                    lines = [
+                        "[{}] {} {}".format(sev, finding_id, title),
+                        "  Signature: {}".format(signature),
+                        "  CVSS: {:.1f}".format(cvss),
+                    ]
+                    if sample_url:
+                        lines.append("  Sample URL: {}".format(sample_url))
+                    if href:
+                        lines.append("  Ref: {}".format(href))
+                    SwingUtilities.invokeLater(
+                        lambda t="\n".join(lines) + "\n": self.vulners_area.append(t)
+                    )
+            else:
+                SwingUtilities.invokeLater(
+                    lambda: self.vulners_area.append(
+                        "[*] No matching advisories were returned by Vulners.\n"
+                    )
+                )
+
+            self.log_to_ui(
+                "[+] Vulners enrichment complete: {} findings from {} fingerprint(s)".format(
+                    len(all_findings), len(fingerprints)
+                )
+            )
+        except Exception as e:
+            err = self._ascii_safe(e)
+            SwingUtilities.invokeLater(
+                lambda m=err: self.vulners_area.append("[!] Vulners error: {}\n".format(m))
+            )
+            self.log_to_ui("[!] Vulners error: {}".format(err))
+        finally:
+            self._clear_tool_cancel("vulners")
+
+    thread = threading.Thread(target=run_scan)
+    thread.daemon = True
+    thread.start()
+
 def _run_apihunter(self, event):
     """Run ApiHunter with calibration preset support."""
     import os
