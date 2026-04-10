@@ -2555,6 +2555,17 @@ def _run_wayback(self):
                         )
             else:
                 idx = 0
+                request_spacing_s = 8.0
+                max_retries = 4
+                retry_delay_s = 5.0
+                rate_limit_cooldown_s = 0.0
+                SwingUtilities.invokeLater(
+                    lambda: self.wayback_area.append(
+                        "[*] Throttle: spacing={}s | retries={} | base-retry-delay={}s\n".format(
+                            int(request_spacing_s), max_retries, int(retry_delay_s)
+                        )
+                    )
+                )
                 for host, path in queries:
                     if self._is_tool_cancelled("wayback"):
                         cancelled_by_user = True
@@ -2567,9 +2578,16 @@ def _run_wayback(self):
                         )
                     )
 
-                    # Retry logic with exponential backoff
-                    max_retries = 2
-                    retry_delay = 2
+                    if rate_limit_cooldown_s > 0.0:
+                        cooldown = float(rate_limit_cooldown_s)
+                        SwingUtilities.invokeLater(
+                            lambda c=cooldown: self.wayback_area.append(
+                                "  [*] Cooling down {:.0f}s after recent rate-limit\n".format(
+                                    c
+                                )
+                            )
+                        )
+                        time_module.sleep(cooldown)
                     success = False
                     data = None
 
@@ -2578,7 +2596,7 @@ def _run_wayback(self):
                             try:
                                 # Query Wayback CDX API with date range
                                 match_type = "prefix" if path else "domain"
-                                api_url = "http://web.archive.org/cdx/search/cdx?url={}&matchType={}&output=json&filter=statuscode:200&collapse=urlkey&from={}&to={}&limit={}".format(
+                                api_url = "https://web.archive.org/cdx/search/cdx?url={}&matchType={}&output=json&filter=statuscode:200&collapse=urlkey&from={}&to={}&limit={}".format(
                                     target, match_type, from_year, to_year, limit
                                 )
 
@@ -2599,7 +2617,15 @@ def _run_wayback(self):
                                         )
                                     elif http_err.code == 429:
                                         if attempt < max_retries:
-                                            time_module.sleep(retry_delay * (2 ** attempt))
+                                            wait_s = float(retry_delay_s) * (2 ** attempt)
+                                            SwingUtilities.invokeLater(
+                                                lambda a=attempt + 1, m=max_retries, w=wait_s: self.wayback_area.append(
+                                                    "  [*] 429 received; retry {}/{} in {:.0f}s\n".format(
+                                                        a, m, w
+                                                    )
+                                                )
+                                            )
+                                            time_module.sleep(wait_s)
                                             continue
                                         raise Exception(  # noqa: B904
                                             "HTTP Error 429: Too Many Requests"
@@ -2613,7 +2639,7 @@ def _run_wayback(self):
                                 except urllib2.URLError as url_err:
                                     if "timed out" in str(url_err).lower():
                                         if attempt < max_retries:
-                                            time_module.sleep(retry_delay)
+                                            time_module.sleep(retry_delay_s)
                                             continue
                                         raise Exception(  # noqa: B904
                                             "Timeout after {} retries".format(max_retries)
@@ -2633,7 +2659,7 @@ def _run_wayback(self):
                                         attempt, str(retry_err)
                                     )
                                 )
-                                time_module.sleep(retry_delay)
+                                time_module.sleep(retry_delay_s)
                     except Exception as e:
                         err_msg = str(e)
                         SwingUtilities.invokeLater(
@@ -2643,7 +2669,17 @@ def _run_wayback(self):
                         )
                         error_count += 1
                         if "429" in err_msg or "Too Many Requests" in err_msg:
-                            backoff_time = min(backoff_time * 2, 60.0)
+                            backoff_time = min(backoff_time * 2, 90.0)
+                            rate_limit_cooldown_s = max(
+                                float(rate_limit_cooldown_s), float(backoff_time)
+                            )
+                            SwingUtilities.invokeLater(
+                                lambda b=backoff_time: self.wayback_area.append(
+                                    "  [*] Rate-limit backoff increased to {:.0f}s\n".format(
+                                        b
+                                    )
+                                )
+                            )
                             time_module.sleep(backoff_time)
                         continue
 
@@ -2700,10 +2736,12 @@ def _run_wayback(self):
                     # Reset error tracking on success
                     error_count = 0
                     backoff_time = 3.0
+                    if rate_limit_cooldown_s > 0.0:
+                        rate_limit_cooldown_s = max(0.0, float(rate_limit_cooldown_s) - 2.0)
                     if self._is_tool_cancelled("wayback"):
                         cancelled_by_user = True
                         break
-                    time_module.sleep(4.0)  # 15 req/min (safe rate limiting)
+                    time_module.sleep(request_spacing_s)
 
             if cancelled_by_user:
                 with self.wayback_lock:
