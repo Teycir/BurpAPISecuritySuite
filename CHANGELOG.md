@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.11] - 2026-04-10
+
+### Fixed
+- Improved Recon -> Logger detail navigation visibility:
+  - the destination Logger row now gets an explicit attention marker when opened from Recon detail flow,
+  - attention style now uses red text plus italic font (instead of relying only on subtle background contrast),
+  - attention highlight is endpoint-scoped and time-bounded to reduce persistent UI noise.
+- Updated feature-contract coverage for the Recon->Logger highlight behavior to prevent regression.
+
 ## [1.4.10] - 2026-04-10
 
 ### Removed

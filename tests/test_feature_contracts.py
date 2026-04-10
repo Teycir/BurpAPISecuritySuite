@@ -877,6 +877,26 @@ def test_loggerplusplus_tab_long_session_controls_are_wired():
     print("[PASS] test_loggerplusplus_tab_long_session_controls_are_wired")
 
 
+def test_recon_to_logger_jump_adds_visible_attention_highlight():
+    text = _source_text()
+    required_tokens = [
+        "self._logger_attention_endpoint_key = \"\"",
+        "self._logger_attention_until_ts = 0.0",
+        "def _mark_logger_attention(target_key):",
+        "self._logger_attention_until_ts = time.time() + 45.0 if focus_key else 0.0",
+        "_mark_logger_attention(target_key)",
+        "attention_active = bool(",
+        "attention_fg = Color(198, 40, 40)",
+        "attention_bg = Color(255, 241, 118) if isSelected else Color(255, 249, 196)",
+        "attention_font_style = Font.ITALIC",
+        "attention_font_style = Font.BOLD | Font.ITALIC",
+        "Recon jump highlight",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Recon->Logger highlight token: {}".format(token)
+    print("[PASS] test_recon_to_logger_jump_adds_visible_attention_highlight")
+
+
 def test_shared_noise_filter_helpers_are_wired_for_recon_and_logger():
     text = _source_text()
     required_tokens = [

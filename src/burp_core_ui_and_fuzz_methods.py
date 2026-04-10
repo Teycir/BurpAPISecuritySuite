@@ -411,26 +411,55 @@ class _LoggerTableCellRenderer(DefaultTableCellRenderer):
         primary, row_fg, row_bg, tag_fg, tag_bg, is_high_risk = self._resolve_palette(
             tags, style_map
         )
+        event_endpoint_key = self.extender._ascii_safe(
+            event.get("endpoint_key") or ""
+        ).strip()
+        attention_key = self.extender._ascii_safe(
+            getattr(self.extender, "_logger_attention_endpoint_key", "") or ""
+        ).strip()
+        try:
+            attention_until = float(
+                getattr(self.extender, "_logger_attention_until_ts", 0.0) or 0.0
+            )
+        except (TypeError, ValueError):
+            attention_until = 0.0
+        attention_active = bool(
+            attention_key
+            and (event_endpoint_key == attention_key)
+            and (time.time() <= attention_until)
+        )
+        attention_bg = Color(255, 241, 118) if isSelected else Color(255, 249, 196)
+        attention_fg = Color(198, 40, 40)
 
         is_tag_column = int(column) == 12
         if is_tag_column:
             tooltip = "Tags: {} | Primary: {}".format(
                 tags_text if tags_text else "(none)", primary if primary else "none"
             )
+            if attention_active:
+                tooltip = "{} | Recon jump highlight".format(tooltip)
             component.setToolTipText(tooltip)
             # Keep a plain-text fallback to avoid Swing/Jython HTML rendering glitches
             # where markup can appear literally in the table cell.
             component.setText(tags_text if tags_text else "")
         else:
             component.setToolTipText(None)
-        if isSelected:
+        if attention_active:
+            component.setForeground(attention_fg)
+            component.setBackground(attention_bg)
+        elif isSelected:
             component.setForeground(table.getSelectionForeground())
             component.setBackground(table.getSelectionBackground())
         else:
             component.setForeground(tag_fg if is_tag_column else row_fg)
             component.setBackground(tag_bg if is_tag_column else row_bg)
         base_font = table.getFont()
-        if is_high_risk or is_tag_column:
+        if attention_active:
+            attention_font_style = Font.ITALIC
+            if is_high_risk or is_tag_column:
+                attention_font_style = Font.BOLD | Font.ITALIC
+            component.setFont(base_font.deriveFont(attention_font_style))
+        elif is_high_risk or is_tag_column:
             component.setFont(base_font.deriveFont(Font.BOLD))
         else:
             component.setFont(base_font.deriveFont(Font.PLAIN))
@@ -727,6 +756,8 @@ def _initialize_runtime_state(self):
     self._syncing_logger_controls = False
     self.logger_backfill_running = False
     self.logger_backfilled_once = False
+    self._logger_attention_endpoint_key = ""
+    self._logger_attention_until_ts = 0.0
     self.recon_backfill_running = False
     self.recon_backfilled_once = False
     self.recon_logger_backfill_pipeline_running = False

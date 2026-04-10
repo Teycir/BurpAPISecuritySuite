@@ -4898,6 +4898,21 @@ def _recon_show_selected_in_logger(self):
     if hasattr(self, "_recon_set_detail_redirect_text"):
         self._recon_set_detail_redirect_text(endpoint_key)
 
+    def _mark_logger_attention(target_key):
+        focus_key = self._ascii_safe(target_key or "").strip()
+        self._logger_attention_endpoint_key = focus_key
+        self._logger_attention_until_ts = time.time() + 45.0 if focus_key else 0.0
+        table = getattr(self, "logger_table", None)
+        if table is not None:
+            try:
+                table.repaint()
+            except Exception as repaint_err:
+                self._callbacks.printError(
+                    "Recon->Logger highlight repaint error: {}".format(
+                        str(repaint_err)
+                    )
+                )
+
     def _focus_logger_tab():
         tabbed = getattr(self, "tabbed_pane", None)
         if tabbed is None:
@@ -4941,6 +4956,7 @@ def _recon_show_selected_in_logger(self):
                 "Recon->Logger row select error: {}".format(str(select_err))
             )
             return False
+        _mark_logger_attention(target_key)
         self._logger_show_selected()
         return True
 
@@ -4976,6 +4992,7 @@ def _recon_show_selected_in_logger(self):
             return
 
     _focus_logger_tab()
+    _mark_logger_attention("")
     message = (
         "No Logger row matched selected Recon endpoint.\n"
         "Try Logger 'Backfill History' or relax Logger filters."
