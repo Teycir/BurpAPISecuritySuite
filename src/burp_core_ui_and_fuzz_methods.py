@@ -101,6 +101,7 @@ _PERSISTED_TEXT_ATTRS = (
     "asset_custom_cmd_field",
     "openapi_spec_field",
     "passive_max_field",
+    "sensitive_data_max_field",
     "vulners_api_key_field",
     "vulners_max_signatures_field",
     "nuclei_path_field",
@@ -162,6 +163,9 @@ _PERSISTED_COMBO_ATTRS = (
     "asset_profile_combo",
     "passive_scope_combo",
     "passive_mode_combo",
+    "sensitive_data_scope_combo",
+    "sensitive_data_source_combo",
+    "sensitive_data_mode_combo",
     "apihunter_top_findings_min_combo",
     "vulners_results_per_query_combo",
     "nuclei_profile_combo",
@@ -650,6 +654,8 @@ def _initialize_runtime_state(self):
         "graphqlanalysis": threading.Event(),
     }
     self.passive_discovery_findings = []
+    self.sensitive_data_findings = []
+    self.sensitive_data_summary = {}
     self.passive_discovery_lock = threading.Lock()
     self.sequence_invariant_findings = []
     self.sequence_invariant_ledger = {}
@@ -1481,6 +1487,7 @@ def _create_tabs(self, recon_panel):
     openapi_drift_panel = self._create_openapi_drift_tab()
     auth_replay_panel = self._create_auth_replay_tab()
     passive_discovery_panel = self._create_passive_discovery_tab()
+    sensitive_data_panel = self._create_sensitive_data_tab()
     apihunter_panel = self._create_apihunter_tab()
     vulners_panel = self._create_vulners_tab()
     nuclei_panel = self._create_nuclei_tab()
@@ -1498,6 +1505,7 @@ def _create_tabs(self, recon_panel):
     self.tabbed_pane.addTab("Fuzzer", fuzzer_panel)
     self.tabbed_pane.addTab("Auth Replay", auth_replay_panel)
     self.tabbed_pane.addTab("Passive Discovery", passive_discovery_panel)
+    self.tabbed_pane.addTab("Sensitive Data", sensitive_data_panel)
     self.tabbed_pane.addTab("ApiHunter", apihunter_panel)
     self.tabbed_pane.addTab("Vulners", vulners_panel)
     self.tabbed_pane.addTab("Nuclei", nuclei_panel)
@@ -2712,6 +2720,14 @@ def _refresh_append_report_buttons(self):
     for button in list(getattr(self, "_append_report_buttons", []) or []):
         try:
             button.setEnabled(enabled)
+            if enabled:
+                button.setToolTipText(
+                    "Append this tab output into the active Export All report folder for this session"
+                )
+            else:
+                button.setToolTipText(
+                    "Append Report is disabled. Run Export All first, then append tab outputs."
+                )
         except Exception as button_err:
             _ = button_err
     return enabled
@@ -2763,6 +2779,7 @@ def _resolve_append_report_output_area(self, source_label):
         "vulners": "vulners_area",
         "graphql analysis": "graphql_area",
         "auth replay": "auth_replay_area",
+        "sensitive data": "sensitive_data_area",
     }
     attr_name = area_map.get(label)
     if not attr_name:
@@ -4402,6 +4419,98 @@ def _create_passive_discovery_tab(self):
     self.parity_drift_ledger = {}
     self.parity_drift_meta = {}
     self.advanced_logic_packages = {}
+    return panel
+
+def _create_sensitive_data_tab(self):
+    """Create regex-based sensitive data discovery tab for API traffic."""
+    panel = JPanel(BorderLayout())
+    top_panel = JPanel()
+    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+
+    controls = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls.add(JLabel("Scope:"))
+    self.sensitive_data_scope_combo = JComboBox(
+        ["Selected Endpoint", "Filtered View", "All Endpoints"]
+    )
+    self.sensitive_data_scope_combo.setSelectedItem("All Endpoints")
+    controls.add(self.sensitive_data_scope_combo)
+    controls.add(JLabel("Source:"))
+    self.sensitive_data_source_combo = JComboBox(
+        ["All Captured+Imported", "Proxy/Live Capture", "Imported HAR/Replay"]
+    )
+    controls.add(self.sensitive_data_source_combo)
+    controls.add(JLabel("Pattern Pack:"))
+    self.sensitive_data_mode_combo = JComboBox(
+        [
+            "All API Sensitive",
+            "Secrets & Tokens",
+            "PII & Financial",
+            "Credentials & Session",
+            "Infra/Internal Exposure",
+        ]
+    )
+    controls.add(self.sensitive_data_mode_combo)
+    controls.add(JLabel("Max Findings:"))
+    self.sensitive_data_max_field = JTextField("800", 5)
+    controls.add(self.sensitive_data_max_field)
+
+    actions_row = JPanel(FlowLayout(FlowLayout.LEFT))
+    actions_row.add(
+        self._create_action_button(
+            "Run Scan",
+            Color(40, 167, 69),
+            lambda e: self._run_sensitive_data_discovery(e),
+        )
+    )
+    actions_row.add(
+        self._create_action_button(
+            "Export",
+            Color(70, 130, 180),
+            lambda e: self._export_sensitive_data_results(),
+        )
+    )
+    actions_row.add(
+        self._create_action_button(
+            "Clear",
+            Color(220, 53, 69),
+            lambda e: self.sensitive_data_area.setText(""),
+        )
+    )
+    actions_row.add(
+        self._create_action_button(
+            "Copy",
+            Color(108, 117, 125),
+            lambda e: self._copy_to_clipboard(self.sensitive_data_area.getText()),
+        )
+    )
+    actions_row.add(
+        self._create_append_report_button(
+            "Sensitive Data", lambda: self.sensitive_data_area.getText()
+        )
+    )
+    actions_row.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Sensitive Data", self.sensitive_data_area.getText()
+            ),
+        )
+    )
+    actions_row.add(
+        JLabel(
+            "Regex scan across request/response sections for API secrets, PII, credentials, and internal exposure."
+        )
+    )
+
+    top_panel.add(controls)
+    top_panel.add(actions_row)
+    panel.add(top_panel, BorderLayout.NORTH)
+
+    self.sensitive_data_area, scroll = self._create_text_area_panel()
+    panel.add(scroll, BorderLayout.CENTER)
+    self.sensitive_data_findings = []
+    self.sensitive_data_summary = {}
     return panel
 
 def _create_nuclei_tab(self):
@@ -7314,6 +7423,7 @@ __all__ = [
     "_create_openapi_drift_tab",
     "_create_auth_replay_tab",
     "_create_passive_discovery_tab",
+    "_create_sensitive_data_tab",
     "_create_vulners_tab",
     "_create_nuclei_tab",
     "_create_httpx_tab",

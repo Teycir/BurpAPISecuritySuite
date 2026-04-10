@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.9] - 2026-04-10
+
+### Added
+- New `Sensitive Data` tab for regex-driven API-sensitive data extraction:
+  - Scans captured Recon samples from both live Proxy traffic and imported HAR/replay data.
+  - Supports scope targeting (`Selected Endpoint`, `Filtered View`, `All Endpoints`).
+  - Supports source filtering (`All Captured+Imported`, `Proxy/Live Capture`, `Imported HAR/Replay`).
+  - Includes API-focused pattern packs (`All API Sensitive`, `Secrets & Tokens`, `PII & Financial`, `Credentials & Session`, `Infra/Internal Exposure`).
+  - Emits richer evidence output per finding: severity, category, pattern, endpoint, source tool, section, match, and contextual snippet.
+- Sensitive findings export flow:
+  - Added JSON + TXT export artifacts under `SensitiveData_Export`.
+  - Added tab-level `Append Report` + `To AI` wiring parity for Sensitive Data output.
+
+### Changed
+- Updated tab documentation/index to include the new `Sensitive Data` workflow in operator quick references.
+
 ## [1.4.8] - 2026-04-10
 
 ### Added

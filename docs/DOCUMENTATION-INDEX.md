@@ -53,7 +53,7 @@ BurpAPISecuritySuite/
 - Extension overview
 - Installation instructions
 - Feature list (15 attack types, 108+ vectors)
-- Tab overview (Recon, Logger, Diff, Version Scanner, Param Miner, Fuzzer, Auth Replay, Passive Discovery, ApiHunter, Vulners, Nuclei, HTTPX, Katana, FFUF, Wayback, SQLMap Verify, Dalfox Verify, API Assets, OpenAPI Drift, GraphQL)
+- Tab overview (Recon, Logger, Diff, Version Scanner, Param Miner, Fuzzer, Auth Replay, Passive Discovery, Sensitive Data, ApiHunter, Vulners, Nuclei, HTTPX, Katana, FFUF, Wayback, SQLMap Verify, Dalfox Verify, API Assets, OpenAPI Drift, GraphQL)
 - Export formats (JSON, Intruder, Turbo, Nuclei, cURL, AI Bundle)
 - Use cases (API pentesting, bug bounty, security research)
 - FAQ and troubleshooting
@@ -123,19 +123,20 @@ BurpAPISecuritySuite/
    - "Send to Intruder" → BOLA testing
    - "Turbo Intruder" → Race conditions
 4. **Passive Discovery Tab** → "Run Invariants" → Deep-logic analysis
-5. **Auth Replay Tab** → Multi-profile authorization testing
-6. **ApiHunter Tab** → "Run ApiHunter" → Gap-fill endpoint discovery
-7. **Vulners Tab** → "Run Enrichment" → CVE advisory lookup
-8. **Nuclei Tab** → "Run Nuclei" → Automated scanning
-9. **HTTPX Tab** → "Probe Endpoints" → Technology detection
-10. **Katana Tab** → "Crawl Endpoints" → Deep discovery
-11. **FFUF Tab** → "Fuzz Directories" → Directory fuzzing
-12. **Wayback Tab** → "Discover" → Historical endpoints
-13. **SQLMap Verify Tab** → "Run Verify" → SQLi confirmation
-14. **Dalfox Verify Tab** → "Run Verify" → XSS confirmation
-15. **API Assets Tab** → "Run Discovery" → Asset enumeration
-16. **OpenAPI Drift Tab** → "Run Drift" → Spec comparison
-17. **GraphQL Tab** → "Run Analysis" → GraphQL testing
+5. **Sensitive Data Tab** → "Run Scan" → Regex-based secret/PII extraction
+6. **Auth Replay Tab** → Multi-profile authorization testing
+7. **ApiHunter Tab** → "Run ApiHunter" → Gap-fill endpoint discovery
+8. **Vulners Tab** → "Run Enrichment" → CVE advisory lookup
+9. **Nuclei Tab** → "Run Nuclei" → Automated scanning
+10. **HTTPX Tab** → "Probe Endpoints" → Technology detection
+11. **Katana Tab** → "Crawl Endpoints" → Deep discovery
+12. **FFUF Tab** → "Fuzz Directories" → Directory fuzzing
+13. **Wayback Tab** → "Discover" → Historical endpoints
+14. **SQLMap Verify Tab** → "Run Verify" → SQLi confirmation
+15. **Dalfox Verify Tab** → "Run Verify" → XSS confirmation
+16. **API Assets Tab** → "Run Discovery" → Asset enumeration
+17. **OpenAPI Drift Tab** → "Run Drift" → Spec comparison
+18. **GraphQL Tab** → "Run Analysis" → GraphQL testing
 
 ### Output Locations
 ```

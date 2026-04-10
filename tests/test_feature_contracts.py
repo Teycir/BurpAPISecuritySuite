@@ -139,6 +139,85 @@ def test_passive_scope_defaults_to_all_endpoints():
     print("[PASS] test_passive_scope_defaults_to_all_endpoints")
 
 
+def test_sensitive_data_tab_wiring_and_actions_exist():
+    text = _source_text()
+    required_tokens = [
+        'self.tabbed_pane.addTab("Sensitive Data", sensitive_data_panel)',
+        "def _create_sensitive_data_tab(",
+        'self.sensitive_data_scope_combo = JComboBox(',
+        'self.sensitive_data_source_combo = JComboBox(',
+        'self.sensitive_data_mode_combo = JComboBox(',
+        "self._run_sensitive_data_discovery(e)",
+        "self._export_sensitive_data_results()",
+        "def _run_sensitive_data_discovery(",
+        "def _export_sensitive_data_results(",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Sensitive Data tab token: {}".format(token)
+    print("[PASS] test_sensitive_data_tab_wiring_and_actions_exist")
+
+
+def test_sensitive_data_scope_defaults_to_all_endpoints_and_higher_cap():
+    text = _source_text()
+    required_tokens = [
+        'self.sensitive_data_scope_combo.setSelectedItem("All Endpoints")',
+        'self.sensitive_data_max_field = JTextField("800", 5)',
+        'scope_label = "All Endpoints"',
+        "max_findings = 800",
+        'max_findings = int(self.sensitive_data_max_field.getText() or "800")',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Sensitive Data default/cap token: {}".format(token)
+    print("[PASS] test_sensitive_data_scope_defaults_to_all_endpoints_and_higher_cap")
+
+
+def test_sensitive_data_has_fp_reduction_validators_and_gates():
+    text = _source_text()
+    required_tokens = [
+        "def _sensitive_credit_card_luhn_valid(",
+        "def _sensitive_iban_valid(",
+        "def _sensitive_extract_password_candidate(",
+        "def _sensitive_pattern_allowed_for_target(",
+        "def _sensitive_match_is_valid(",
+        "def _sensitive_match_confidence(",
+        "self._sensitive_pattern_allowed_for_target(",
+        "self._sensitive_match_is_valid(",
+        "self._sensitive_credit_card_luhn_valid(digits)",
+        "return self._sensitive_iban_valid(value)",
+        '"_sensitive_pattern_allowed_for_target",',
+        '"_sensitive_match_is_valid",',
+        '"_sensitive_match_confidence",',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Sensitive Data FP-reduction token: {}".format(token)
+    print("[PASS] test_sensitive_data_has_fp_reduction_validators_and_gates")
+
+
+def test_sensitive_data_sorting_uses_severity_then_confidence():
+    text = _source_text()
+    required_tokens = [
+        'severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}',
+        "section_order = {",
+        '-int(x.get("confidence", 0) or 0)',
+        '"    source={} sample=#{} status={} confidence={} match={}".format(',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Sensitive Data sorting/report token: {}".format(token)
+    print("[PASS] test_sensitive_data_sorting_uses_severity_then_confidence")
+
+
+def test_append_report_disabled_tooltip_guidance_exists():
+    text = _source_text()
+    required_tokens = [
+        "def _refresh_append_report_buttons(",
+        'button.setToolTipText(',
+        "Append Report is disabled. Run Export All first, then append tab outputs.",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Append Report tooltip token: {}".format(token)
+    print("[PASS] test_append_report_disabled_tooltip_guidance_exists")
+
+
 def test_auth_replay_scope_defaults_to_all_endpoints():
     text = _source_text()
     required_tokens = [

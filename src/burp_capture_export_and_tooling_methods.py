@@ -6490,6 +6490,752 @@ def _run_recon_grep(self):
         )
     )
 
+def _sensitive_data_pattern_specs(self):
+    """Return curated API-sensitive regex pattern specs."""
+    return [
+        {
+            "id": "aws_access_key",
+            "label": "AWS Access Key",
+            "category": "Cloud Secret",
+            "severity": "high",
+            "regex": r"\bAKIA[0-9A-Z]{16}\b",
+        },
+        {
+            "id": "aws_secret",
+            "label": "AWS Secret Access Key",
+            "category": "Cloud Secret",
+            "severity": "critical",
+            "regex": r"(?i)(aws[^\r\n]{0,24}(secret|access)[^\r\n]{0,12})[\"'=:\\s]+([A-Za-z0-9/+=]{40})",
+        },
+        {
+            "id": "google_api_key",
+            "label": "Google API Key",
+            "category": "API Token",
+            "severity": "high",
+            "regex": r"\bAIza[0-9A-Za-z\-_]{35}\b",
+        },
+        {
+            "id": "github_token",
+            "label": "GitHub Token",
+            "category": "API Token",
+            "severity": "critical",
+            "regex": r"\bgh[pousr]_[A-Za-z0-9]{36}\b",
+        },
+        {
+            "id": "github_pat",
+            "label": "GitHub Fine-Grained Token",
+            "category": "API Token",
+            "severity": "critical",
+            "regex": r"\bgithub_pat_[0-9A-Za-z]{22}_[0-9A-Za-z]{59}\b",
+        },
+        {
+            "id": "slack_token",
+            "label": "Slack Token",
+            "category": "API Token",
+            "severity": "high",
+            "regex": r"\bx(ox[aboprs]|app)-[A-Za-z0-9\-]{10,140}\b",
+        },
+        {
+            "id": "stripe_secret",
+            "label": "Stripe Secret Key",
+            "category": "API Token",
+            "severity": "critical",
+            "regex": r"\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{24}\b",
+        },
+        {
+            "id": "openai_key",
+            "label": "OpenAI Key",
+            "category": "API Token",
+            "severity": "critical",
+            "regex": r"\bsk-[A-Za-z0-9]{40,128}\b",
+        },
+        {
+            "id": "generic_api_key",
+            "label": "Generic API Key Assignment",
+            "category": "API Token",
+            "severity": "medium",
+            "regex": r"(?i)\b(api[_\- ]?key|apikey|x-api-key)\b[^\r\n]{0,40}[\"'=:\\s]+[A-Za-z0-9_\-+=/]{12,}",
+        },
+        {
+            "id": "bearer_token",
+            "label": "Bearer Token",
+            "category": "Session",
+            "severity": "high",
+            "regex": r"(?i)\bAuthorization\s*:\s*Bearer\s+[A-Za-z0-9\-_\.=]{16,}\b",
+        },
+        {
+            "id": "jwt_token",
+            "label": "JWT Token",
+            "category": "Session",
+            "severity": "high",
+            "regex": r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b",
+        },
+        {
+            "id": "password_assignment",
+            "label": "Password Assignment",
+            "category": "Credential",
+            "severity": "high",
+            "regex": r"(?i)(?:[\"']?(?:password|passwd|pwd|passphrase)[\"']?\s*[:=]\s*(?:[\"'][^\"'\r\n]{6,128}[\"']|[^\s,&}{)(]{6,128})|(?:^|[?&])(?:password|passwd|pwd|passphrase)=[^&\s]{6,128})",
+        },
+        {
+            "id": "private_key_block",
+            "label": "Private Key Block",
+            "category": "Credential",
+            "severity": "critical",
+            "regex": r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
+        },
+        {
+            "id": "ssn",
+            "label": "US SSN",
+            "category": "PII",
+            "severity": "high",
+            "regex": r"\b\d{3}-\d{2}-\d{4}\b",
+        },
+        {
+            "id": "credit_card",
+            "label": "Card Number Candidate",
+            "category": "Financial",
+            "severity": "high",
+            "regex": r"\b(?:\d[ -]?){13,19}\b",
+        },
+        {
+            "id": "iban",
+            "label": "IBAN Candidate",
+            "category": "Financial",
+            "severity": "high",
+            "regex": r"\b[A-Z]{2}\d{2}[A-Z0-9 ]{11,34}\b",
+        },
+        {
+            "id": "internal_ipv4",
+            "label": "Internal IPv4",
+            "category": "Infra",
+            "severity": "medium",
+            "regex": r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b",
+        },
+        {
+            "id": "metadata_url",
+            "label": "Cloud Metadata Endpoint",
+            "category": "Infra",
+            "severity": "high",
+            "regex": r"(?i)\b(?:169\.254\.169\.254|metadata\.google\.internal|metadata\.azure\.internal)\b",
+        },
+    ]
+
+def _sensitive_data_pattern_pack(self, pack_label):
+    """Return pattern subset for selected Sensitive Data pack."""
+    label = self._ascii_safe(pack_label or "", lower=True).strip()
+    patterns = list(self._sensitive_data_pattern_specs())
+    if label in ["", "all api sensitive"]:
+        return patterns
+    if label == "secrets & tokens":
+        return [
+            x
+            for x in patterns
+            if x.get("category") in ["Cloud Secret", "API Token", "Session"]
+        ]
+    if label == "pii & financial":
+        return [x for x in patterns if x.get("category") in ["PII", "Financial"]]
+    if label == "credentials & session":
+        return [x for x in patterns if x.get("category") in ["Credential", "Session"]]
+    if label == "infra/internal exposure":
+        return [x for x in patterns if x.get("category") == "Infra"]
+    return patterns
+
+def _sensitive_source_allowed(self, entry, source_label):
+    """Decide whether one sample should be scanned for the selected source mode."""
+    selected = self._ascii_safe(source_label or "", lower=True).strip()
+    source_tool = self._ascii_safe(entry.get("source_tool") or "", lower=True)
+    imported = any(
+        marker in source_tool
+        for marker in ["import", "har", "excalibur", "replay", "bridge"]
+    )
+    if selected == "proxy/live capture":
+        return not imported
+    if selected == "imported har/replay":
+        return imported
+    return True
+
+def _resolve_sensitive_scope_keys(self, scope_label):
+    """Resolve endpoint keys for Sensitive Data scanning scope."""
+    scope = self._ascii_safe(scope_label or "", lower=True).strip()
+    with self.lock:
+        snapshot = dict(self.api_data)
+        selected_key = self._ascii_safe(getattr(self, "_recon_selected_endpoint_key", "") or "")
+        filtered_keys = list(getattr(self, "recon_view_keys", []) or [])
+    if scope == "selected endpoint":
+        if selected_key and selected_key in snapshot:
+            return [selected_key], snapshot
+        return [], snapshot
+    if scope == "filtered view":
+        keys = [k for k in filtered_keys if k in snapshot]
+        if keys:
+            return keys, snapshot
+    return sorted(snapshot.keys()), snapshot
+
+def _collect_sensitive_sample_targets(self, entry):
+    """Build section texts scanned by Sensitive Data regexes."""
+    method = self._ascii_safe(entry.get("method") or "").upper()
+    path = self._ascii_safe(entry.get("path") or entry.get("normalized_path") or "/")
+    query = self._ascii_safe(entry.get("query_string") or "")
+    req_headers = json.dumps(entry.get("headers", {}) or {}, sort_keys=True)
+    req_body = self._ascii_safe(entry.get("request_body") or "")[:50000]
+    resp_headers = json.dumps(entry.get("response_headers", {}) or {}, sort_keys=True)
+    resp_body = self._ascii_safe(entry.get("response_body") or "")[:50000]
+    return [
+        ("request_url", "{} {}?{}".format(method, path, query)),
+        ("request_headers", req_headers),
+        ("request_body", req_body),
+        ("response_headers", resp_headers),
+        ("response_body", resp_body),
+    ]
+
+def _extract_sensitive_match_context(self, text, start_index, end_index, window=48):
+    """Return bounded context snippet around one regex match."""
+    raw = self._ascii_safe(text or "")
+    begin = max(0, int(start_index) - int(window))
+    end = min(len(raw), int(end_index) + int(window))
+    snippet = raw[begin:end].replace("\r", " ").replace("\n", " ")
+    snippet = re.sub(r"\s+", " ", snippet).strip()
+    if len(snippet) > 180:
+        snippet = snippet[:177] + "..."
+    return snippet
+
+def _sensitive_endpoint_path(self, endpoint_key):
+    """Extract lowercase path portion from METHOD:/path endpoint keys."""
+    raw = self._ascii_safe(endpoint_key or "")
+    if ":" in raw:
+        _, path = raw.split(":", 1)
+    else:
+        path = raw
+    return self._ascii_safe(path.split("?", 1)[0], lower=True).strip()
+
+def _sensitive_is_static_asset_endpoint(self, endpoint_key):
+    """Detect static/media asset endpoints that commonly generate noisy matches."""
+    path = self._sensitive_endpoint_path(endpoint_key)
+    if not path:
+        return False
+    static_exts = (
+        ".js",
+        ".css",
+        ".map",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".ico",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".m3u8",
+        ".m4s",
+        ".mp4",
+        ".webm",
+        ".mp3",
+        ".aac",
+        ".wav",
+    )
+    if path.endswith(static_exts):
+        return True
+    if "/amplify_video/" in path or "/ext_tw_video/" in path:
+        return True
+    if "/responsive-web/client-web/" in path:
+        return True
+    return False
+
+def _sensitive_credit_card_luhn_valid(self, digits):
+    """Return True when digits satisfy Luhn checksum."""
+    if not digits or len(digits) < 13 or len(digits) > 19:
+        return False
+    total = 0
+    doubled = False
+    for ch in digits[::-1]:
+        if ch < "0" or ch > "9":
+            return False
+        num = ord(ch) - 48
+        if doubled:
+            num *= 2
+            if num > 9:
+                num -= 9
+        total += num
+        doubled = not doubled
+    return (total % 10) == 0
+
+def _sensitive_iban_country_lengths(self):
+    """Known IBAN country lengths used to reduce false positives."""
+    return {
+        "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16,
+        "BG": 22, "BH": 22, "BR": 29, "BY": 28, "CH": 21, "CR": 22, "CY": 28,
+        "CZ": 24, "DE": 22, "DK": 18, "DO": 28, "EE": 20, "EG": 29, "ES": 24,
+        "FI": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23, "GL": 18,
+        "GR": 27, "GT": 28, "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23,
+        "IS": 26, "IT": 27, "JO": 30, "KW": 30, "KZ": 20, "LB": 28, "LC": 32,
+        "LI": 21, "LT": 20, "LU": 20, "LV": 21, "MC": 27, "MD": 24, "ME": 22,
+        "MK": 19, "MR": 27, "MT": 31, "MU": 30, "NL": 18, "NO": 15, "PK": 24,
+        "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22, "SA": 24,
+        "SC": 31, "SE": 24, "SI": 19, "SK": 24, "SM": 27, "ST": 25, "SV": 28,
+        "TL": 23, "TN": 24, "TR": 26, "UA": 29, "VG": 24, "XK": 20,
+    }
+
+def _sensitive_iban_valid(self, value):
+    """Return True when value passes IBAN structure and MOD-97 checksum."""
+    clean = re.sub(r"[^A-Za-z0-9]", "", self._ascii_safe(value or "")).upper()
+    if not re.match(r"^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$", clean):
+        return False
+    if len(clean) < 15 or len(clean) > 34:
+        return False
+    country = clean[:2]
+    expected_lengths = self._sensitive_iban_country_lengths()
+    expected = expected_lengths.get(country)
+    if expected is not None and len(clean) != expected:
+        return False
+
+    rearranged = clean[4:] + clean[:4]
+    remainder = 0
+    for ch in rearranged:
+        if "0" <= ch <= "9":
+            expanded = ch
+        elif "A" <= ch <= "Z":
+            expanded = str(ord(ch) - 55)
+        else:
+            return False
+        for digit in expanded:
+            remainder = (remainder * 10 + (ord(digit) - 48)) % 97
+    return remainder == 1
+
+def _sensitive_extract_password_candidate(self, value):
+    """Extract likely password value token from assignment/query-style match text."""
+    raw = self._ascii_safe(value or "")
+    if not raw:
+        return ""
+
+    query_match = re.search(
+        r"(?i)(?:^|[?&])(?:password|passwd|pwd|passphrase)=([^&\s]{1,256})",
+        raw,
+    )
+    if query_match:
+        return self._ascii_safe(query_match.group(1) or "").strip()
+
+    assign_match = re.search(
+        r"(?i)(?:password|passwd|pwd|passphrase)[\"']?\s*[:=]\s*([^\r\n]{1,256})",
+        raw,
+    )
+    if not assign_match:
+        return ""
+
+    candidate = self._ascii_safe(assign_match.group(1) or "").strip()
+    candidate = candidate.lstrip("\"'").rstrip("\"'")
+    if candidate.endswith(","):
+        candidate = candidate[:-1].strip()
+    return candidate
+
+def _sensitive_pattern_allowed_for_target(self, pattern, endpoint_key, section_name):
+    """Gate patterns by section and endpoint type to limit noisy detections."""
+    pattern_id = self._ascii_safe((pattern or {}).get("id") or "", lower=True)
+    section = self._ascii_safe(section_name or "", lower=True)
+    if not pattern_id or not section:
+        return False
+
+    section_limited = {
+        "credit_card": set(["request_url", "request_body", "response_body"]),
+        "iban": set(["request_url", "request_body", "response_body"]),
+        "ssn": set(["request_url", "request_body", "response_body"]),
+        "password_assignment": set(["request_url", "request_body", "response_body"]),
+    }
+    allowed = section_limited.get(pattern_id)
+    if allowed is not None and section not in allowed:
+        return False
+
+    if self._sensitive_is_static_asset_endpoint(endpoint_key):
+        high_signal_static_ids = set(
+            [
+                "aws_access_key",
+                "aws_secret",
+                "google_api_key",
+                "github_token",
+                "github_pat",
+                "slack_token",
+                "stripe_secret",
+                "openai_key",
+                "generic_api_key",
+                "bearer_token",
+                "jwt_token",
+                "private_key_block",
+                "metadata_url",
+            ]
+        )
+        if pattern_id == "password_assignment":
+            # Keep password signal on URLs/request bodies, suppress noisy minified JS response hits.
+            return section in set(["request_url", "request_body"])
+        if pattern_id not in high_signal_static_ids:
+            return False
+    return True
+
+def _sensitive_match_is_valid(self, pattern, endpoint_key, section_name, match_text):
+    """Apply pattern-specific validation to suppress common false positives."""
+    pattern_id = self._ascii_safe((pattern or {}).get("id") or "", lower=True)
+    value = self._ascii_safe(match_text or "")
+    if not pattern_id or not value:
+        return False
+
+    if pattern_id == "credit_card":
+        digits = re.sub(r"\D", "", value)
+        if len(set(digits)) <= 2:
+            return False
+        return self._sensitive_credit_card_luhn_valid(digits)
+
+    if pattern_id == "iban":
+        return self._sensitive_iban_valid(value)
+
+    if pattern_id == "internal_ipv4":
+        octets = value.split(".")
+        if len(octets) != 4:
+            return False
+        for octet in octets:
+            if not octet.isdigit():
+                return False
+            if len(octet) > 1 and octet.startswith("0"):
+                return False
+            if int(octet) > 255:
+                return False
+        return True
+
+    if pattern_id == "password_assignment":
+        lowered = self._ascii_safe(value, lower=True)
+        if "setenabled" in lowered or "verifypassword" in lowered or "function(" in lowered:
+            return False
+        candidate = self._sensitive_extract_password_candidate(value)
+        if not candidate:
+            return False
+        if len(candidate) < 6:
+            return False
+        candidate_lower = self._ascii_safe(candidate, lower=True)
+        if candidate_lower in ["null", "undefined", "true", "false"]:
+            return False
+        # Reject obvious code symbols/property paths (common in minified JS, not leaked credentials).
+        if re.match(
+            r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*){1,8}$",
+            candidate,
+        ):
+            return False
+        if any(token in candidate for token in ["{", "}", "(", ")", ";"]):
+            return False
+        return True
+
+    return True
+
+def _sensitive_match_confidence(self, pattern, endpoint_key, section_name):
+    """Compute confidence score used as a severity tie-breaker."""
+    pattern_id = self._ascii_safe((pattern or {}).get("id") or "", lower=True)
+    section = self._ascii_safe(section_name or "", lower=True)
+    score = 50
+
+    if section in ["request_body", "response_body"]:
+        score += 15
+    elif section == "request_url":
+        score += 10
+    elif section.endswith("headers"):
+        score -= 10
+
+    if self._sensitive_is_static_asset_endpoint(endpoint_key):
+        score -= 15
+
+    if pattern_id in ["private_key_block", "aws_secret", "github_token", "github_pat", "openai_key"]:
+        score += 25
+    elif pattern_id in ["jwt_token", "bearer_token", "google_api_key", "stripe_secret", "slack_token"]:
+        score += 15
+    elif pattern_id in ["credit_card", "iban", "ssn"]:
+        score += 5
+
+    if score < 0:
+        return 0
+    if score > 100:
+        return 100
+    return score
+
+def _format_sensitive_data_report(self, findings, summary):
+    """Render Sensitive Data discovery report text."""
+    lines = []
+    lines.append("SENSITIVE DATA DISCOVERY")
+    lines.append("=" * 90)
+    lines.append("[*] Scope: {}".format(self._ascii_safe(summary.get("scope"))))
+    lines.append("[*] Source: {}".format(self._ascii_safe(summary.get("source"))))
+    lines.append("[*] Pattern Pack: {}".format(self._ascii_safe(summary.get("pack"))))
+    lines.append("[*] Endpoints Scanned: {}".format(int(summary.get("endpoint_count", 0) or 0)))
+    lines.append("[*] Samples Scanned: {}".format(int(summary.get("sample_count", 0) or 0)))
+    lines.append("[*] Findings: {}".format(len(findings)))
+    lines.append("")
+
+    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    category_counts = {}
+    for finding in findings:
+        severity = self._ascii_safe(finding.get("severity") or "", lower=True)
+        if severity in severity_counts:
+            severity_counts[severity] += 1
+        category = self._ascii_safe(finding.get("category") or "")
+        category_counts[category] = int(category_counts.get(category, 0) or 0) + 1
+
+    lines.append("[Summary]")
+    lines.append(
+        "  Critical={} High={} Medium={} Low={}".format(
+            severity_counts["critical"],
+            severity_counts["high"],
+            severity_counts["medium"],
+            severity_counts["low"],
+        )
+    )
+    if category_counts:
+        category_parts = []
+        for key in sorted(category_counts.keys()):
+            category_parts.append("{}={}".format(key, int(category_counts.get(key, 0) or 0)))
+        lines.append("  Categories: {}".format(", ".join(category_parts)))
+    lines.append("")
+
+    if not findings:
+        lines.append("[+] No sensitive matches found for selected scope/source.")
+        return "\n".join(lines)
+
+    lines.append("[Findings]")
+    for idx, finding in enumerate(findings, 1):
+        lines.append(
+            "{}. [{}] {} | {} | {} | {}".format(
+                idx,
+                self._ascii_safe(finding.get("severity", "")).upper(),
+                self._ascii_safe(finding.get("category", "")),
+                self._ascii_safe(finding.get("pattern_label", "")),
+                self._ascii_safe(finding.get("endpoint", "")),
+                self._ascii_safe(finding.get("section", "")),
+            )
+        )
+        lines.append(
+            "    source={} sample=#{} status={} confidence={} match={}".format(
+                self._ascii_safe(finding.get("source_tool", "")),
+                int(finding.get("sample_index", 0) or 0) + 1,
+                int(finding.get("response_status", 0) or 0),
+                int(finding.get("confidence", 0) or 0),
+                self._ascii_safe(finding.get("match", "")),
+            )
+        )
+        lines.append("    context={}".format(self._ascii_safe(finding.get("context", ""))))
+    return "\n".join(lines)
+
+def _run_sensitive_data_discovery(self, _event=None):
+    """Run API-sensitive regex discovery across captured and imported samples."""
+    area = getattr(self, "sensitive_data_area", None)
+    if area is None:
+        self.log_to_ui("[!] Sensitive Data tab is not initialized")
+        return
+
+    scope_label = "All Endpoints"
+    source_label = "All Captured+Imported"
+    pack_label = "All API Sensitive"
+    max_findings = 800
+    if getattr(self, "sensitive_data_scope_combo", None) is not None:
+        scope_label = str(self.sensitive_data_scope_combo.getSelectedItem())
+    if getattr(self, "sensitive_data_source_combo", None) is not None:
+        source_label = str(self.sensitive_data_source_combo.getSelectedItem())
+    if getattr(self, "sensitive_data_mode_combo", None) is not None:
+        pack_label = str(self.sensitive_data_mode_combo.getSelectedItem())
+    if getattr(self, "sensitive_data_max_field", None) is not None:
+        try:
+            max_findings = int(self.sensitive_data_max_field.getText() or "800")
+        except (TypeError, ValueError):
+            max_findings = 800
+    if max_findings < 50:
+        max_findings = 50
+    if max_findings > 5000:
+        max_findings = 5000
+
+    endpoint_keys, snapshot = self._resolve_sensitive_scope_keys(scope_label)
+    if not endpoint_keys:
+        area.setText("[!] Sensitive Data: no endpoints in selected scope\n")
+        return
+
+    patterns = self._sensitive_data_pattern_pack(pack_label)
+    compiled_patterns = []
+    for pattern in patterns:
+        try:
+            compiled_patterns.append(
+                (pattern, re.compile(pattern.get("regex") or "", re.IGNORECASE | re.MULTILINE))
+            )
+        except re.error as regex_err:
+            self._callbacks.printError(
+                "Sensitive Data regex compile failed ({}): {}".format(
+                    self._ascii_safe(pattern.get("id") or "pattern"),
+                    self._ascii_safe(regex_err),
+                )
+            )
+
+    findings = []
+    seen = set()
+    scanned_samples = 0
+    for endpoint_key in endpoint_keys:
+        entries = snapshot.get(endpoint_key, [])
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for sample_index, entry in enumerate(entries_list):
+            if not isinstance(entry, dict):
+                continue
+            if not self._sensitive_source_allowed(entry, source_label):
+                continue
+            scanned_samples += 1
+            targets = self._collect_sensitive_sample_targets(entry)
+            for section_name, section_text in targets:
+                if not section_text:
+                    continue
+                for pattern, regex_obj in compiled_patterns:
+                    if not self._sensitive_pattern_allowed_for_target(
+                        pattern, endpoint_key, section_name
+                    ):
+                        continue
+                    for match_obj in regex_obj.finditer(section_text):
+                        match_text = self._ascii_safe(match_obj.group(0) or "")
+                        if not self._sensitive_match_is_valid(
+                            pattern, endpoint_key, section_name, match_text
+                        ):
+                            continue
+                        if len(match_text) > 120:
+                            match_text = match_text[:117] + "..."
+                        confidence = self._sensitive_match_confidence(
+                            pattern, endpoint_key, section_name
+                        )
+                        key = (
+                            endpoint_key,
+                            int(sample_index),
+                            section_name,
+                            self._ascii_safe(pattern.get("id") or ""),
+                            match_text,
+                        )
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        findings.append(
+                            {
+                                "endpoint": endpoint_key,
+                                "pattern_id": self._ascii_safe(pattern.get("id") or ""),
+                                "pattern_label": self._ascii_safe(pattern.get("label") or ""),
+                                "severity": self._ascii_safe(pattern.get("severity") or "medium", lower=True),
+                                "category": self._ascii_safe(pattern.get("category") or "Sensitive"),
+                                "section": section_name,
+                                "match": match_text,
+                                "context": self._extract_sensitive_match_context(
+                                    section_text, match_obj.start(), match_obj.end()
+                                ),
+                                "sample_index": int(sample_index),
+                                "source_tool": self._ascii_safe(entry.get("source_tool") or ""),
+                                "response_status": int(entry.get("response_status", 0) or 0),
+                                "confidence": int(confidence),
+                            }
+                        )
+                        if len(findings) >= max_findings:
+                            break
+                    if len(findings) >= max_findings:
+                        break
+                if len(findings) >= max_findings:
+                    break
+            if len(findings) >= max_findings:
+                break
+        if len(findings) >= max_findings:
+            break
+
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    section_order = {
+        "request_body": 0,
+        "response_body": 1,
+        "request_url": 2,
+        "request_headers": 3,
+        "response_headers": 4,
+    }
+    findings.sort(
+        key=lambda x: (
+            severity_order.get(self._ascii_safe(x.get("severity") or "", lower=True), 9),
+            -int(x.get("confidence", 0) or 0),
+            section_order.get(self._ascii_safe(x.get("section") or "", lower=True), 9),
+            self._ascii_safe(x.get("endpoint") or "", lower=True),
+            self._ascii_safe(x.get("pattern_label") or "", lower=True),
+        )
+    )
+    self.sensitive_data_findings = list(findings)
+    self.sensitive_data_summary = {
+        "scope": scope_label,
+        "source": source_label,
+        "pack": pack_label,
+        "endpoint_count": len(endpoint_keys),
+        "sample_count": scanned_samples,
+        "findings_count": len(findings),
+        "max_findings": max_findings,
+    }
+    report = self._format_sensitive_data_report(findings, self.sensitive_data_summary)
+    if len(findings) >= max_findings:
+        report += "\n\n[*] Output capped at max findings: {}".format(max_findings)
+    area.setText(report + "\n")
+    self.log_to_ui(
+        "[+] Sensitive Data scan complete: {} findings | scope={} | source={} | pack={}".format(
+            len(findings),
+            self._ascii_safe(scope_label),
+            self._ascii_safe(source_label),
+            self._ascii_safe(pack_label),
+        )
+    )
+
+def _export_sensitive_data_results(self):
+    """Export Sensitive Data findings to JSON + TXT."""
+    findings = list(getattr(self, "sensitive_data_findings", []) or [])
+    area = getattr(self, "sensitive_data_area", None)
+    if not findings:
+        if area is not None:
+            area.append("\n[!] No sensitive data findings to export\n")
+        self.log_to_ui("[!] Sensitive Data export skipped: no findings")
+        return
+
+    export_dir = self._get_export_dir("SensitiveData_Export")
+    if not export_dir:
+        if area is not None:
+            area.append("\n[!] Sensitive Data export failed: cannot create export dir\n")
+        return
+
+    import os
+
+    json_path = os.path.join(export_dir, "sensitive_data_findings.json")
+    txt_path = os.path.join(export_dir, "sensitive_data_findings.txt")
+    json_writer = None
+    txt_writer = None
+    try:
+        payload = {
+            "summary": dict(getattr(self, "sensitive_data_summary", {}) or {}),
+            "findings": findings,
+        }
+        json_writer = FileWriter(json_path)
+        json_writer.write(json.dumps(payload, indent=2))
+        txt_writer = FileWriter(txt_path)
+        txt_writer.write(self._ascii_safe(area.getText() if area is not None else ""))
+        if area is not None:
+            area.append(
+                "\n[+] Exported {} sensitive findings\n[+] Folder: {}\n[+] Files:\n  - {}\n  - {}\n".format(
+                    len(findings), export_dir, json_path, txt_path
+                )
+            )
+        self.log_to_ui("[+] Sensitive Data export complete: {}".format(export_dir))
+    except Exception as export_err:
+        if area is not None:
+            area.append("\n[!] Sensitive Data export failed: {}\n".format(self._ascii_safe(export_err)))
+        self.log_to_ui("[!] Sensitive Data export error: {}".format(self._ascii_safe(export_err)))
+    finally:
+        if json_writer is not None:
+            try:
+                json_writer.close()
+            except Exception as close_err:
+                self._callbacks.printError(
+                    "Sensitive Data export close(json) failed: {}".format(self._ascii_safe(close_err))
+                )
+        if txt_writer is not None:
+            try:
+                txt_writer.close()
+            except Exception as close_err:
+                self._callbacks.printError(
+                    "Sensitive Data export close(txt) failed: {}".format(self._ascii_safe(close_err))
+                )
+
 def _iter_recon_param_items(self, entry):
     """Delegate Recon parameter iteration to extracted helper module."""
     return recon_param_intel.iter_recon_param_items(self, entry)
@@ -10372,6 +11118,24 @@ __all__ = [
     "_show_ai_copy_exit_dialog",
     "_collect_recon_grep_targets",
     "_run_recon_grep",
+    "_sensitive_data_pattern_specs",
+    "_sensitive_data_pattern_pack",
+    "_sensitive_source_allowed",
+    "_resolve_sensitive_scope_keys",
+    "_collect_sensitive_sample_targets",
+    "_extract_sensitive_match_context",
+    "_sensitive_endpoint_path",
+    "_sensitive_is_static_asset_endpoint",
+    "_sensitive_credit_card_luhn_valid",
+    "_sensitive_iban_country_lengths",
+    "_sensitive_iban_valid",
+    "_sensitive_extract_password_candidate",
+    "_sensitive_pattern_allowed_for_target",
+    "_sensitive_match_is_valid",
+    "_sensitive_match_confidence",
+    "_format_sensitive_data_report",
+    "_run_sensitive_data_discovery",
+    "_export_sensitive_data_results",
     "_iter_recon_param_items",
     "_tokenize_recon_words",
     "_collect_hidden_param_candidates",

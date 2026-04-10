@@ -96,6 +96,7 @@ This design philosophy prioritizes performance and user experience while deliver
       - [5. Fuzzer Tab](#5-fuzzer-tab)
       - [6. Auth Replay Tab](#6-auth-replay-tab)
       - [7. Passive Discovery Tab](#7-passive-discovery-tab)
+      - [Sensitive Data Tab](#sensitive-data-tab)
       - [8. ApiHunter Tab](#8-apihunter-tab)
       - [9. Vulners Tab](#9-vulners-tab)
       - [10. Nuclei Tab](#10-nuclei-tab)
@@ -396,6 +397,16 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Ledger**: Save Differential + Sequence + Golden + State Matrix + Token Lineage artifacts as JSON files
 - **Advanced Exports**: Also writes `abuse_chain_*`, `proof_mode_packet_sets`, `spec_guardrails_*`, and `role_delta_*` JSON artifacts
 - **Output**: Severity/categorical summary plus top findings for triage
+
+#### Sensitive Data Tab
+- **Goal**: Regex-first extraction of API-sensitive material from captured proxy traffic and imported HAR/replay data already loaded into Recon.
+- **Scope**: Scan `Selected Endpoint`, `Filtered View`, or `All Endpoints`.
+- **Source Mode**: Restrict to `Proxy/Live Capture`, `Imported HAR/Replay`, or scan both together.
+- **Pattern Packs**: `All API Sensitive`, `Secrets & Tokens`, `PII & Financial`, `Credentials & Session`, `Infra/Internal Exposure`.
+- **Max Findings**: Hard cap to keep output actionable during large captures.
+- **Run Scan**: Produces grouped findings with severity/category, endpoint, source, section, match snippet, and local context.
+- **Export**: Writes both machine-readable JSON and analyst-friendly TXT report output.
+- **Append Report / To AI**: Reuses the same workflow as other analysis tabs for session reporting and AI triage.
 
 #### 8. ApiHunter Tab
 - **ApiHunter Path**: Configure `apihunter` binary path (default auto-detection searches runtime `PATH`, then shell probes (`bash -lc` and `bash -ic`) via `command -v`, and copies the discovered absolute path; no static fallback candidates)
