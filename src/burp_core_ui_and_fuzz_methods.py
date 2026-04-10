@@ -176,9 +176,9 @@ UI_CORE_LIMITS = {
     "persist_text_delay_ms": 300,
     "max_endpoints_default": 800,
     "max_body_min_bytes": 5000,
-    "max_body_default_bytes": 15000,
+    "max_body_default_bytes": 10000,
     "capture_ui_refresh_min_interval_ms": 250,
-    "logger_max_rows_default": 20000,
+    "logger_max_rows_default": 10000,
     "logger_trim_batch_default": 500,
     "logger_refresh_min_interval_ms": 450,
     "logger_request_preview_max": 1200,
@@ -191,16 +191,16 @@ UI_CORE_LIMITS = {
 
 UI_CORE_CHOICES = {
     "sample_limit": ["1", "3", "5", "10"],
-    "recon_max_body_size": ["5000", "7500", "10000", "15000"],
-    "logger_max_rows": ["2000", "5000", "10000", "20000"],
+    "recon_max_body_size": ["5000", "7500", "10000"],
+    "logger_max_rows": ["2000", "5000", "10000"],
     "page_size": ["50", "100", "200", "500"],
     "logger_show_last": ["200", "500", "1000", "2000", "5000"],
 }
 
 UI_CORE_DEFAULTS = {
     "sample_limit": "3",
-    "recon_max_body_size": "15000",
-    "logger_max_rows": "20000",
+    "recon_max_body_size": "10000",
+    "logger_max_rows": "10000",
     "page_size": "100",
     "logger_show_last": "1000",
     "sqlmap_max_targets": "12",
@@ -683,6 +683,7 @@ def _initialize_runtime_state(self):
     self._capture_ui_refresh_min_interval_ms = UI_CORE_LIMITS[
         "capture_ui_refresh_min_interval_ms"
     ]
+    self._recon_view_refresh_seq = 0
     self._recon_last_regex_error = ""
     self._recon_filter_endpoint_tags_snapshot = None
     self._syncing_recon_controls = False
@@ -690,6 +691,11 @@ def _initialize_runtime_state(self):
     self.recon_filter_library = []
     self.recon_view_keys = []
     self._recon_selected_endpoint_key = None
+    self._ui_log_buffer = []
+    self._ui_log_lock = threading.Lock()
+    self._ui_log_flush_timer = None
+    self._ui_log_flush_delay_ms = 700
+    self._ui_log_max_lines = UI_CORE_LIMITS["logger_max_rows_default"]
     self.recon_hidden_param_results = []
     self.recon_param_intel_snapshot = None
     self.logger_events = []
@@ -709,6 +715,7 @@ def _initialize_runtime_state(self):
     self._logger_refresh_min_interval_ms = UI_CORE_LIMITS[
         "logger_refresh_min_interval_ms"
     ]
+    self._logger_view_refresh_seq = 0
     self._logger_tool_combo_signature = ()
     self._logger_filter_library_signature = ()
     self.logger_request_preview_max = UI_CORE_LIMITS["logger_request_preview_max"]
@@ -720,6 +727,9 @@ def _initialize_runtime_state(self):
     self.recon_backfilled_once = False
     self.recon_logger_backfill_pipeline_running = False
     self.recon_logger_backfill_pipeline_force_pending = False
+    self.recon_import_running = False
+    self._import_progress_last_ts = 0.0
+    self._import_progress_min_interval_s = 0.35
     self.recon_autopopulate_on_open = True
     self.recon_noise_filter_enabled = True
     # Internal extension traffic can flood Recon/Logger and stall UI during heavy runs.
@@ -727,6 +737,8 @@ def _initialize_runtime_state(self):
     self.capture_extender_traffic = False
     self.excalibur_auto_pipeline_enabled = True
     self._suspend_logger_capture_during_recon_backfill = False
+    self._suspend_recon_progress_logging_during_backfill = False
+    self._suspend_capture_ui_refresh_during_recon_backfill = False
     self._applying_graphql_profile = False
     self.logger_import_on_open = True
     self.logger_active_regex = ""

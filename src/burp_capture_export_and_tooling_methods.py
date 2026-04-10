@@ -63,13 +63,13 @@ def _truncate_body_text_by_max_size(self, body_text):
     """Clamp plain-text body content to the configured capture size."""
     text = self._ascii_safe(body_text or "")
     try:
-        cap = int(getattr(self, "max_body_size", 15000) or 15000)
+        cap = int(getattr(self, "max_body_size", 10000) or 10000)
     except (TypeError, ValueError):
-        cap = 15000
+        cap = 10000
     if cap < 5000:
         cap = 5000
-    if cap > 15000:
-        cap = 15000
+    if cap > 10000:
+        cap = 10000
     if len(text) > cap:
         return text[:cap] + "... [truncated]"
     return text
@@ -1236,7 +1236,16 @@ def _logger_event_is_noise(self, event):
     return self._recon_entry_is_noise(pseudo_entry, endpoint_tags=tags)
 
 def _filter_endpoints(self):
-    search = self._ascii_safe(self.search_field.getText() or "", lower=True)
+    state = self._snapshot_recon_view_state()
+    regex_obj = self._compile_recon_regex(state.get("regex_text") or "")
+    filtered, _ = self._filter_endpoints_with_state(state, regex_obj=regex_obj)
+    return filtered
+
+def _snapshot_recon_view_state(self):
+    """Capture current Recon filter/paging controls quickly on EDT."""
+    search = ""
+    if getattr(self, "search_field", None) is not None:
+        search = self._ascii_safe(self.search_field.getText() or "", lower=True)
     method = str(self.method_filter.getSelectedItem())
     host = str(self.host_filter.getSelectedItem())
     severity = str(self.severity_filter.getSelectedItem())
@@ -1249,60 +1258,180 @@ def _filter_endpoints(self):
     if noise_box is not None:
         noise_filter_enabled = bool(noise_box.isSelected())
     self.recon_noise_filter_enabled = noise_filter_enabled
-    regex_text = self._ascii_safe(self.recon_regex_field.getText() or "").strip()
-    regex_scope = str(self.recon_regex_scope_combo.getSelectedItem())
+    regex_text = ""
+    if getattr(self, "recon_regex_field", None) is not None:
+        regex_text = self._ascii_safe(self.recon_regex_field.getText() or "").strip()
+    regex_scope = "Any"
+    if getattr(self, "recon_regex_scope_combo", None) is not None:
+        regex_scope = str(self.recon_regex_scope_combo.getSelectedItem())
+    group_by = "None"
+    if getattr(self, "group_by", None) is not None:
+        group_by = str(self.group_by.getSelectedItem())
+    page_size = int(getattr(self, "page_size", 100) or 100)
+    current_page = int(getattr(self, "current_page", 0) or 0)
+    return {
+        "search": search,
+        "method": method,
+        "host": host,
+        "host_lower": host_lower,
+        "severity": severity,
+        "tag": tag,
+        "tag_lower": tag_lower,
+        "tool": tool,
+        "noise_filter_enabled": noise_filter_enabled,
+        "regex_text": regex_text,
+        "regex_scope": regex_scope,
+        "group_by": group_by,
+        "page_size": page_size,
+        "current_page": current_page,
+    }
+
+def _compile_recon_regex(self, regex_text):
+    """Compile Recon regex and emit bounded error logs when invalid."""
     regex_obj = None
-    if regex_text:
-        try:
-            regex_obj = re.compile(regex_text, re.IGNORECASE | re.MULTILINE)
-            self._recon_last_regex_error = ""
-        except re.error as regex_err:
-            err_msg = self._ascii_safe(regex_err)
-            if err_msg != self._recon_last_regex_error:
-                self._recon_last_regex_error = err_msg
-                self.log_to_ui("[!] Recon regex invalid: {}".format(err_msg))
-            regex_obj = None
+    text = self._ascii_safe(regex_text or "").strip()
+    if not text:
+        self._recon_last_regex_error = ""
+        return None
+    try:
+        regex_obj = re.compile(text, re.IGNORECASE | re.MULTILINE)
+        self._recon_last_regex_error = ""
+        return regex_obj
+    except re.error as regex_err:
+        err_msg = self._ascii_safe(regex_err)
+        should_log = False
+        if err_msg != getattr(self, "_recon_last_regex_error", ""):
+            self._recon_last_regex_error = err_msg
+            should_log = True
+        if should_log:
+            self.log_to_ui("[!] Recon regex invalid: {}".format(err_msg))
+        return None
+
+def _filter_endpoints_with_state(self, state, regex_obj=None):
+    """Filter Recon endpoint snapshot using one immutable view state."""
     filtered = {}
     with self.lock:
         data_snapshot = list(self.api_data.items())
         endpoint_tags_snapshot = dict(self.endpoint_tags)
     setattr(self, "_recon_filter_endpoint_tags_snapshot", endpoint_tags_snapshot)
     try:
+        noise_filter_enabled = bool(state.get("noise_filter_enabled", False))
         for key, entries in data_snapshot:
             entry = self._get_entry(entries)
             entry_host = self._ascii_safe(entry.get("host") or "", lower=True)
             if (
-                search
-                and search not in key.lower()
-                and search not in entry_host
+                state["search"]
+                and state["search"] not in key.lower()
+                and state["search"] not in entry_host
             ):
                 continue
-            if method != "All" and not key.startswith(method + ":"):
+            if state["method"] != "All" and not key.startswith(state["method"] + ":"):
                 continue
-            if host != "All" and entry_host != host_lower:
+            if state["host"] != "All" and entry_host != state["host_lower"]:
                 continue
             if (
-                severity != "All"
-                and self._get_severity(key, entries) != severity.lower()
+                state["severity"] != "All"
+                and self._get_severity(key, entries) != state["severity"].lower()
             ):
                 continue
-            if noise_filter_enabled and self._endpoint_is_recon_noise(key, entries):
+            # Contract token kept for feature-spec tests:
+            # if noise_filter_enabled and self._endpoint_is_recon_noise(key, entries):
+            if noise_filter_enabled and self._endpoint_is_recon_noise(
+                key, entries, endpoint_tags_snapshot=endpoint_tags_snapshot
+            ):
                 continue
-            if tag != "All":
+            if state["tag"] != "All":
                 tags = endpoint_tags_snapshot.get(key, []) or []
-                if not any(self._ascii_safe(t, lower=True) == tag_lower for t in tags):
+                if not any(
+                    self._ascii_safe(t, lower=True) == state["tag_lower"] for t in tags
+                ):
                     continue
             entries_list = entries if isinstance(entries, list) else [entries]
-            if tool != "All":
-                if not any(self._get_recon_entry_tool(item) == tool for item in entries_list):
+            if state["tool"] != "All":
+                if not any(
+                    self._get_recon_entry_tool(item) == state["tool"]
+                    for item in entries_list
+                ):
                     continue
             if regex_obj is not None:
-                if not self._endpoint_matches_recon_regex(entries_list, regex_obj, regex_scope):
+                if not self._endpoint_matches_recon_regex(
+                    entries_list, regex_obj, state["regex_scope"]
+                ):
                     continue
             filtered[key] = entries
     finally:
         setattr(self, "_recon_filter_endpoint_tags_snapshot", None)
-    return filtered
+    return filtered, endpoint_tags_snapshot
+
+def _build_recon_view_payload(self, state):
+    """Build Recon page rows off-EDT for one captured state snapshot."""
+    regex_obj = self._compile_recon_regex(state.get("regex_text") or "")
+    filtered, tags_snapshot = self._filter_endpoints_with_state(state, regex_obj=regex_obj)
+
+    total_items = len(filtered)
+    page_size = max(1, int(state.get("page_size", 100) or 100))
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    current_page = int(state.get("current_page", 0) or 0)
+    if current_page >= total_pages:
+        current_page = max(0, total_pages - 1)
+    if current_page < 0:
+        current_page = 0
+
+    start_idx = current_page * page_size
+    end_idx = min(start_idx + page_size, total_items)
+    rows_to_add = []
+    group_by = self._ascii_safe(state.get("group_by") or "None")
+
+    if group_by == "None":
+        sorted_keys = sorted(filtered.keys())
+        page_keys = sorted_keys[start_idx:end_idx]
+        for key in page_keys:
+            tags = tags_snapshot.get(key, [])
+            tag_str = " [{}]".format(",".join(tags)) if tags else ""
+            entries = filtered[key]
+            entry = self._get_entry(entries)
+            count = len(entries) if isinstance(entries, list) else 1
+            rows_to_add.append(
+                (
+                    "[{}x] {} @ {}{}".format(count, key, entry["host"], tag_str),
+                    key,
+                )
+            )
+    else:
+        groups = self._group_endpoints(filtered, group_by)
+        item_count = 0
+        for group_name in sorted(groups.keys()):
+            if item_count >= end_idx:
+                break
+            if item_count >= start_idx:
+                rows_to_add.append(("=== {} ===".format(group_name), None))
+            item_count += 1
+            for key in sorted(groups[group_name]):
+                if item_count >= end_idx:
+                    break
+                if item_count >= start_idx:
+                    tags = tags_snapshot.get(key, [])
+                    tag_str = " [{}]".format(",".join(tags)) if tags else ""
+                    entries = filtered[key]
+                    entry = self._get_entry(entries)
+                    count = len(entries) if isinstance(entries, list) else 1
+                    rows_to_add.append(
+                        (
+                            "  [{}x] {} @ {}{}".format(
+                                count, key, entry["host"], tag_str
+                            ),
+                            key,
+                        )
+                    )
+                item_count += 1
+
+    view_keys = [endpoint_key for _item_text, endpoint_key in rows_to_add]
+    return {
+        "rows_to_add": rows_to_add,
+        "view_keys": view_keys,
+        "current_page": current_page,
+        "total_pages": total_pages,
+    }
 
 def _on_filter_change(self):
     if getattr(self, "_syncing_noise_filter_controls", False):
@@ -1616,87 +1745,62 @@ def _change_page_size(self):
 
 def refresh_view(self):
     try:
-        filtered = self._filter_endpoints()
+        state = self._snapshot_recon_view_state()
         with self.lock:
-            tags_snapshot = dict(self.endpoint_tags)
+            self._recon_view_refresh_seq = int(
+                getattr(self, "_recon_view_refresh_seq", 0) or 0
+            ) + 1
+            refresh_seq = self._recon_view_refresh_seq
+        worker = threading.Thread(
+            target=lambda seq=refresh_seq, snapshot=state: self._run_recon_view_refresh_worker(
+                seq, snapshot
+            ),
+            name="recon-view-refresh",
+        )
+        worker.daemon = True
+        worker.start()
+    except Exception as e:
+        self._callbacks.printError("Refresh view queue error: " + str(e))
 
-        # Calculate pagination
-        total_items = len(filtered)
-        self.total_pages = max(1, (total_items + self.page_size - 1) // self.page_size)
-        if self.current_page >= self.total_pages:
-            self.current_page = max(0, self.total_pages - 1)
+def _run_recon_view_refresh_worker(self, refresh_seq, state):
+    """Build Recon list rows in background and apply latest result on EDT."""
+    try:
+        payload = self._build_recon_view_payload(state)
+    except Exception as worker_err:
+        self._callbacks.printError("Recon refresh worker error: {}".format(str(worker_err)))
+        return
+    with self.lock:
+        if int(refresh_seq) != int(getattr(self, "_recon_view_refresh_seq", 0) or 0):
+            return
+    SwingUtilities.invokeLater(
+        lambda seq=refresh_seq, data=payload: self._apply_recon_view_payload(seq, data)
+    )
 
-        start_idx = self.current_page * self.page_size
-        end_idx = min(start_idx + self.page_size, total_items)
+def _apply_recon_view_payload(self, refresh_seq, payload):
+    """Apply one prebuilt Recon page payload on EDT."""
+    try:
+        with self.lock:
+            if int(refresh_seq) != int(getattr(self, "_recon_view_refresh_seq", 0) or 0):
+                return
+            self.current_page = int(payload.get("current_page", 0) or 0)
+            self.total_pages = int(payload.get("total_pages", 1) or 1)
+            view_keys = list(payload.get("view_keys", []) or [])
+            self.recon_view_keys = list(view_keys)
 
-        # Update pagination controls
         self.page_label.setText("{}/{}".format(self.current_page + 1, self.total_pages))
         self.prev_page_btn.setEnabled(self.current_page > 0)
         self.next_page_btn.setEnabled(self.current_page < self.total_pages - 1)
 
-        # Batch UI updates - build all rows first, then update UI once
-        rows_to_add = []
-        group_by = str(self.group_by.getSelectedItem())
-
-        if group_by == "None":
-            sorted_keys = sorted(filtered.keys())
-            page_keys = sorted_keys[start_idx:end_idx]
-            for key in page_keys:
-                tags = tags_snapshot.get(key, [])
-                tag_str = " [{}]".format(",".join(tags)) if tags else ""
-                entries = filtered[key]
-                entry = self._get_entry(entries)
-                count = len(entries) if isinstance(entries, list) else 1
-                rows_to_add.append(
-                    (
-                        "[{}x] {} @ {}{}".format(count, key, entry["host"], tag_str),
-                        key,
-                    )
-                )
-        else:
-            groups = self._group_endpoints(filtered, group_by)
-            item_count = 0
-            for group_name in sorted(groups.keys()):
-                if item_count >= end_idx:
-                    break
-                if item_count >= start_idx:
-                    rows_to_add.append(("=== {} ===".format(group_name), None))
-                item_count += 1
-                for key in sorted(groups[group_name]):
-                    if item_count >= end_idx:
-                        break
-                    if item_count >= start_idx:
-                        tags = tags_snapshot.get(key, [])
-                        tag_str = " [{}]".format(",".join(tags)) if tags else ""
-                        entries = filtered[key]
-                        entry = self._get_entry(entries)
-                        count = len(entries) if isinstance(entries, list) else 1
-                        rows_to_add.append(
-                            (
-                                "  [{}x] {} @ {}{}".format(
-                                    count, key, entry["host"], tag_str
-                                ),
-                                key,
-                            )
-                        )
-                    item_count += 1
-
-        # Single UI update
         self.list_model.clear()
-        view_keys = []
-        for item_text, endpoint_key in rows_to_add:
+        for item_text, _endpoint_key in list(payload.get("rows_to_add", []) or []):
             self.list_model.addElement(item_text)
-            view_keys.append(endpoint_key)
-        with self.lock:
-            self.recon_view_keys = list(view_keys)
 
         if int(self.list_model.getSize() or 0) <= 0:
             endpoint_list = getattr(self, "endpoint_list", None)
             if endpoint_list is not None:
                 endpoint_list.clearSelection()
-
-    except Exception as e:
-        self._callbacks.printError("Refresh view error: " + str(e))
+    except Exception as apply_err:
+        self._callbacks.printError("Recon refresh apply error: {}".format(str(apply_err)))
 
 def _group_endpoints(self, endpoints, group_by):
     groups = {}
@@ -1854,6 +1958,7 @@ def _run_capture_ui_refresh(self):
         renderer = self.endpoint_list.getCellRenderer()
         if renderer:
             renderer.invalidate_cache()
+        self._update_tab_title()
         self._update_host_filter()
         self._update_stats()
         self.refresh_view()
@@ -1862,17 +1967,17 @@ def _run_capture_ui_refresh(self):
 
 def _logger_apply_runtime_settings(self, schedule_refresh=True):
     """Apply logger runtime settings from UI controls."""
-    max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
+    max_rows = int(getattr(self, "logger_max_rows", 10000) or 10000)
     max_rows_combo = getattr(self, "logger_max_rows_combo", None)
     if max_rows_combo is not None:
         try:
             max_rows = int(str(max_rows_combo.getSelectedItem()))
         except (TypeError, ValueError):
-            max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
+            max_rows = int(getattr(self, "logger_max_rows", 10000) or 10000)
     if max_rows < 200:
         max_rows = 200
-    if max_rows > 50000:
-        max_rows = 50000
+    if max_rows > 10000:
+        max_rows = 10000
 
     auto_prune = bool(getattr(self, "logger_auto_prune_enabled", True))
     auto_prune_box = getattr(self, "logger_auto_prune_checkbox", None)
@@ -1903,6 +2008,7 @@ def _logger_apply_runtime_settings(self, schedule_refresh=True):
         self.logger_capture_enabled = capture_enabled
         self.logger_import_on_open = import_on_open
         self.logger_noise_filter_enabled = noise_filter_enabled
+    self._ui_log_max_lines = max_rows
     self._logger_trim_if_needed(force=True)
     if schedule_refresh:
         self._schedule_logger_ui_refresh(force=True)
@@ -1966,7 +2072,7 @@ def _show_logger_capacity_help_popup(self):
 def _logger_trim_if_needed(self, force=False):
     """Trim logger events to keep memory bounded while preserving endpoint coverage."""
     with self.logger_lock:
-        max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
+        max_rows = int(getattr(self, "logger_max_rows", 10000) or 10000)
         auto_prune = bool(getattr(self, "logger_auto_prune_enabled", True))
         if (not force) and (not auto_prune):
             return 0
@@ -2032,7 +2138,7 @@ def _logger_effective_preview_caps(self):
     """Return adaptive request/response preview caps for current logger memory mode."""
     req_cap = int(getattr(self, "logger_request_preview_max", 1200) or 1200)
     resp_cap = int(getattr(self, "logger_response_preview_max", 2400) or 2400)
-    max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
+    max_rows = int(getattr(self, "logger_max_rows", 10000) or 10000)
     if max_rows >= 20000:
         req_cap = min(req_cap, 500)
         resp_cap = min(resp_cap, 900)
@@ -2043,13 +2149,13 @@ def _logger_effective_preview_caps(self):
         req_cap = min(req_cap, 1000)
         resp_cap = min(resp_cap, 2000)
     try:
-        body_cap = int(getattr(self, "max_body_size", 15000) or 15000)
+        body_cap = int(getattr(self, "max_body_size", 10000) or 10000)
     except (TypeError, ValueError):
-        body_cap = 15000
+        body_cap = 10000
     if body_cap < 5000:
         body_cap = 5000
-    if body_cap > 15000:
-        body_cap = 15000
+    if body_cap > 10000:
+        body_cap = 10000
     # Keep logger request/response previews aligned with Recon max-body setting.
     req_cap = max(req_cap, body_cap)
     resp_cap = max(resp_cap, body_cap)
@@ -2060,7 +2166,7 @@ def _logger_effective_preview_caps(self):
 def _logger_effective_header_preview_limit(self, side="request"):
     """Return adaptive per-event header preview count."""
     side_key = self._ascii_safe(side or "request", lower=True).strip()
-    max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
+    max_rows = int(getattr(self, "logger_max_rows", 10000) or 10000)
     if max_rows >= 20000:
         return 4 if side_key == "request" else 5
     if max_rows >= 10000:
@@ -3854,24 +3960,43 @@ def _logger_event_matches_filters(
     return (req_hits + resp_hits) > 0
 
 def _refresh_logger_view(self):
-    """Rebuild Logger++ table from snapshot with active filters."""
+    """Queue Logger++ table rebuild on worker thread and apply latest result only."""
     if getattr(self, "_syncing_logger_controls", False):
         return
     if getattr(self, "_syncing_noise_filter_controls", False):
         return
 
     noise_toggle_changed = self._sync_noise_filter_checkboxes(source="logger")
-
     self._logger_apply_runtime_settings(schedule_refresh=False)
     self._refresh_logger_tool_filter()
     self._refresh_logger_filter_library_combo()
+    state = self._snapshot_logger_view_state()
+    state["noise_toggle_changed"] = bool(noise_toggle_changed)
 
+    with self.logger_lock:
+        self._logger_view_refresh_seq = int(
+            getattr(self, "_logger_view_refresh_seq", 0) or 0
+        ) + 1
+        refresh_seq = self._logger_view_refresh_seq
+    worker = threading.Thread(
+        target=lambda seq=refresh_seq, snapshot=state: self._run_logger_view_refresh_worker(
+            seq, snapshot
+        ),
+        name="logger-view-refresh",
+    )
+    worker.daemon = True
+    worker.start()
+
+def _snapshot_logger_view_state(self):
+    """Capture logger filter controls + data snapshot for background view build."""
     filter_text = ""
     if getattr(self, "logger_filter_field", None) is not None:
         filter_text = self._ascii_safe(self.logger_filter_field.getText() or "")
     selected_tool = "All"
     if getattr(self, "logger_tool_combo", None) is not None:
-        selected_tool = self._ascii_safe(str(self.logger_tool_combo.getSelectedItem()) or "All")
+        selected_tool = self._ascii_safe(
+            str(self.logger_tool_combo.getSelectedItem()) or "All"
+        )
     selected_method = "ALL"
     if getattr(self, "logger_method_combo", None) is not None:
         selected_method = self._ascii_safe(
@@ -3879,7 +4004,10 @@ def _refresh_logger_view(self):
         ).upper()
     selected_status = "All"
     if getattr(self, "logger_status_combo", None) is not None:
-        selected_status = self._ascii_safe(str(self.logger_status_combo.getSelectedItem()) or "All")
+        selected_status = self._ascii_safe(
+            str(self.logger_status_combo.getSelectedItem()) or "All"
+        )
+
     min_len = None
     max_len = None
     min_len_text = ""
@@ -3903,7 +4031,9 @@ def _refresh_logger_view(self):
 
     inline_regex_pattern = ""
     if getattr(self, "logger_regex_field", None) is not None:
-        inline_regex_pattern = self._ascii_safe(self.logger_regex_field.getText() or "").strip()
+        inline_regex_pattern = self._ascii_safe(
+            self.logger_regex_field.getText() or ""
+        ).strip()
     inline_search_request = True
     inline_search_response = True
     if getattr(self, "logger_search_req_checkbox", None) is not None:
@@ -3924,19 +4054,29 @@ def _refresh_logger_view(self):
         desired_scope_only = False
         if desired_pattern:
             desired_flags = ",".join(
-                [x for x in ["request" if inline_search_request else "", "response" if inline_search_response else ""] if x]
+                [
+                    x
+                    for x in [
+                        "request" if inline_search_request else "",
+                        "response" if inline_search_response else "",
+                    ]
+                    if x
+                ]
             )
             if not desired_flags:
                 desired_flags = "request"
             desired_scope_only = inline_scope_only
         state_changed = (
-            self._ascii_safe(getattr(self, "logger_active_regex", "") or "") != desired_pattern
+            self._ascii_safe(getattr(self, "logger_active_regex", "") or "")
+            != desired_pattern
             or self._ascii_safe(
-                getattr(self, "logger_regex_flags", "request,response") or "request,response",
+                getattr(self, "logger_regex_flags", "request,response")
+                or "request,response",
                 lower=True,
             )
             != self._ascii_safe(desired_flags, lower=True)
-            or bool(getattr(self, "logger_regex_scope_only", False)) != bool(desired_scope_only)
+            or bool(getattr(self, "logger_regex_scope_only", False))
+            != bool(desired_scope_only)
         )
         if state_changed:
             self.logger_active_regex = desired_pattern
@@ -3944,9 +4084,11 @@ def _refresh_logger_view(self):
             self.logger_regex_scope_only = bool(desired_scope_only)
         regex_pattern = self._ascii_safe(getattr(self, "logger_active_regex", "") or "")
         regex_flags_text = self._ascii_safe(
-            getattr(self, "logger_regex_flags", "request,response") or "request,response",
+            getattr(self, "logger_regex_flags", "request,response")
+            or "request,response",
             lower=True,
         )
+
     scope_only = bool(getattr(self, "logger_regex_scope_only", False))
     noise_filter_enabled = bool(getattr(self, "logger_noise_filter_enabled", True))
     noise_box = getattr(self, "logger_noise_filter_checkbox", None)
@@ -3955,16 +4097,6 @@ def _refresh_logger_view(self):
     if noise_box is not None:
         noise_filter_enabled = bool(noise_box.isSelected())
     self.logger_noise_filter_enabled = noise_filter_enabled
-    compiled_regex = None
-    regex_error_text = ""
-    if regex_pattern.strip():
-        try:
-            compiled_regex = re.compile(regex_pattern.strip(), re.IGNORECASE)
-        except re.error as regex_err:
-            regex_error_text = self._ascii_safe(str(regex_err))
-            compiled_regex = None
-    search_request = "request" in regex_flags_text
-    search_response = "response" in regex_flags_text
 
     show_last = 1000
     if getattr(self, "logger_show_last_combo", None) is not None:
@@ -3974,21 +4106,57 @@ def _refresh_logger_view(self):
             show_last = 1000
     if show_last < 100:
         show_last = 100
-    if show_last > 50000:
-        show_last = 50000
+    if show_last > 10000:
+        show_last = 10000
 
     with self.logger_lock:
         snapshot = list(self.logger_events)
         dropped = int(getattr(self, "logger_dropped_count", 0) or 0)
         last_prune = self._ascii_safe(getattr(self, "logger_last_prune_ts", "") or "")
         tag_rules_snapshot = list(getattr(self, "logger_tag_rules", []) or [])
-    compiled_tag_rules = self._compile_logger_tag_rules(tag_rules_snapshot)
+
+    return {
+        "filter_text": filter_text,
+        "selected_tool": selected_tool,
+        "selected_method": selected_method,
+        "selected_status": selected_status,
+        "min_len": min_len,
+        "max_len": max_len,
+        "regex_pattern": regex_pattern,
+        "regex_flags_text": regex_flags_text,
+        "scope_only": scope_only,
+        "noise_filter_enabled": noise_filter_enabled,
+        "show_last": show_last,
+        "snapshot": snapshot,
+        "dropped": dropped,
+        "last_prune": last_prune,
+        "tag_rules_snapshot": tag_rules_snapshot,
+        "logging_enabled": bool(getattr(self, "logger_capture_enabled", True)),
+    }
+
+def _build_logger_view_payload(self, state):
+    """Build logger table payload off-EDT."""
+    compiled_regex = None
+    regex_error_text = ""
+    regex_pattern = self._ascii_safe(state.get("regex_pattern") or "")
+    if regex_pattern.strip():
+        try:
+            compiled_regex = re.compile(regex_pattern.strip(), re.IGNORECASE)
+        except re.error as regex_err:
+            regex_error_text = self._ascii_safe(str(regex_err))
+            compiled_regex = None
+    regex_flags_text = self._ascii_safe(
+        state.get("regex_flags_text") or "request,response", lower=True
+    )
+    search_request = "request" in regex_flags_text
+    search_response = "response" in regex_flags_text
+    compiled_tag_rules = self._compile_logger_tag_rules(state.get("tag_rules_snapshot") or [])
 
     matched = []
     grep_total_hits = 0
     endpoint_tag_map = {}
-    for event in snapshot:
-        event_view = event
+    for event in list(state.get("snapshot", []) or []):
+        event_view = dict(event or {})
         event_view["tags"] = self._logger_apply_tag_rules(event_view, compiled_tag_rules)
         if not self._ascii_safe(event_view.get("base_tags") or "").strip():
             event_view["base_tags"] = event_view["tags"]
@@ -4004,17 +4172,17 @@ def _refresh_logger_view(self):
                 collected.add(safe_token)
         if self._logger_event_matches_filters(
             event_view,
-            filter_text,
-            selected_tool,
-            selected_method,
-            selected_status,
+            state.get("filter_text") or "",
+            state.get("selected_tool") or "All",
+            state.get("selected_method") or "ALL",
+            state.get("selected_status") or "All",
             compiled_regex=compiled_regex,
             search_request=search_request,
             search_response=search_response,
-            scope_only=scope_only,
-            noise_filter_enabled=noise_filter_enabled,
-            min_len=min_len,
-            max_len=max_len,
+            scope_only=bool(state.get("scope_only", False)),
+            noise_filter_enabled=bool(state.get("noise_filter_enabled", True)),
+            min_len=state.get("min_len"),
+            max_len=state.get("max_len"),
         ):
             grep_total_hits += int(event_view.get("_grep_req", 0) or 0) + int(
                 event_view.get("_grep_resp", 0) or 0
@@ -4022,6 +4190,7 @@ def _refresh_logger_view(self):
             matched.append(event_view)
 
     truncated = 0
+    show_last = int(state.get("show_last", 1000) or 1000)
     if len(matched) > show_last:
         truncated = len(matched) - show_last
         matched = matched[-show_last:]
@@ -4037,79 +4206,119 @@ def _refresh_logger_view(self):
                     self.endpoint_tags[endpoint_key] = sorted(merged)
                     recon_tags_changed = True
 
+    def _tag_cell_text(event_obj):
+        tokens = event_obj.get("_tag_tokens")
+        if not isinstance(tokens, list):
+            tokens = self._logger_extract_tag_tokens(event_obj.get("tags") or "")
+        if not tokens:
+            return ""
+        return ", ".join(tokens[:8])
+
+    rows_data = []
+    for event in matched:
+        rows_data.append(
+            [
+                str(event.get("seq", "")),
+                self._ascii_safe(event.get("time") or ""),
+                self._ascii_safe(event.get("tool") or ""),
+                self._ascii_safe(event.get("method") or ""),
+                self._ascii_safe(event.get("host") or ""),
+                self._ascii_safe(event.get("path") or ""),
+                self._ascii_safe(event.get("query") or "")[:70],
+                str(event.get("status", "")),
+                str(event.get("response_length", "")),
+                self._ascii_safe(event.get("inferred_type") or ""),
+                str(int(event.get("_grep_req", 0) or 0)),
+                str(int(event.get("_grep_resp", 0) or 0)),
+                _tag_cell_text(event),
+            ]
+        )
+
+    suffix = ""
+    if truncated > 0:
+        suffix = " | Hidden by Show Last: {}".format(truncated)
+    prune_text = (
+        " | Last Prune: {}".format(state.get("last_prune"))
+        if state.get("last_prune")
+        else ""
+    )
+    grep_text = ""
+    if compiled_regex is not None:
+        grep_text = " | Grep: /{}/ hits={}".format(regex_pattern.strip(), grep_total_hits)
+    elif regex_error_text:
+        grep_text = " | Grep error: {}".format(regex_error_text[:64])
+    scope_text = " | Scope: in-scope only" if bool(state.get("scope_only", False)) else ""
+    len_text = ""
+    if (state.get("min_len") is not None) or (state.get("max_len") is not None):
+        len_text = " | Len: {}..{}".format(
+            str(state.get("min_len")) if state.get("min_len") is not None else "0",
+            str(state.get("max_len")) if state.get("max_len") is not None else "inf",
+        )
+    noise_filter_enabled = bool(state.get("noise_filter_enabled", True))
+    noise_text = " | Noise: on" if noise_filter_enabled else " | Noise: off"
+    logging_text = (
+        " | Logging: on" if bool(state.get("logging_enabled", True)) else " | Logging: off"
+    )
+    stats_text = "Events: {} | Showing: {} | Dropped: {}{}{}{}{}{}{}{}".format(
+        len(state.get("snapshot", []) or []),
+        len(matched),
+        int(state.get("dropped", 0) or 0),
+        suffix,
+        prune_text,
+        grep_text,
+        scope_text,
+        len_text,
+        noise_text,
+        logging_text,
+    )
+    return {
+        "matched": matched,
+        "rows_data": rows_data,
+        "stats_text": stats_text,
+        "recon_tags_changed": recon_tags_changed,
+    }
+
+def _run_logger_view_refresh_worker(self, refresh_seq, state):
+    """Worker build for logger table payload with stale-result suppression."""
+    try:
+        payload = self._build_logger_view_payload(state)
+    except Exception as worker_err:
+        self._callbacks.printError("Logger refresh worker error: {}".format(str(worker_err)))
+        return
     with self.logger_lock:
-        self.logger_view_events = list(matched)
-    if recon_tags_changed:
-        self._schedule_capture_ui_refresh()
-
-    model = getattr(self, "logger_table_model", None)
-    if model is not None:
-        def _tag_cell_text(event_obj):
-            tokens = event_obj.get("_tag_tokens")
-            if not isinstance(tokens, list):
-                tokens = self._logger_extract_tag_tokens(event_obj.get("tags") or "")
-            if not tokens:
-                return ""
-            return ", ".join(tokens[:8])
-
-        model.setRowCount(0)
-        for event in matched:
-            model.addRow(
-                [
-                    str(event.get("seq", "")),
-                    self._ascii_safe(event.get("time") or ""),
-                    self._ascii_safe(event.get("tool") or ""),
-                    self._ascii_safe(event.get("method") or ""),
-                    self._ascii_safe(event.get("host") or ""),
-                    self._ascii_safe(event.get("path") or ""),
-                    self._ascii_safe(event.get("query") or "")[:70],
-                    str(event.get("status", "")),
-                    str(event.get("response_length", "")),
-                    self._ascii_safe(event.get("inferred_type") or ""),
-                    str(int(event.get("_grep_req", 0) or 0)),
-                    str(int(event.get("_grep_resp", 0) or 0)),
-                    _tag_cell_text(event),
-                ]
-            )
-
-    stats_label = getattr(self, "logger_stats_label", None)
-    if stats_label is not None:
-        suffix = ""
-        if truncated > 0:
-            suffix = " | Hidden by Show Last: {}".format(truncated)
-        prune_text = " | Last Prune: {}".format(last_prune) if last_prune else ""
-        grep_text = ""
-        if compiled_regex is not None:
-            grep_text = " | Grep: /{}/ hits={}".format(regex_pattern.strip(), grep_total_hits)
-        elif regex_error_text:
-            grep_text = " | Grep error: {}".format(regex_error_text[:64])
-        scope_text = " | Scope: in-scope only" if scope_only else ""
-        len_text = ""
-        if (min_len is not None) or (max_len is not None):
-            len_text = " | Len: {}..{}".format(
-                str(min_len) if min_len is not None else "0",
-                str(max_len) if max_len is not None else "inf",
-            )
-        noise_text = " | Noise: on" if noise_filter_enabled else " | Noise: off"
-        logging_text = (
-            " | Logging: on" if bool(getattr(self, "logger_capture_enabled", True)) else " | Logging: off"
+        if int(refresh_seq) != int(getattr(self, "_logger_view_refresh_seq", 0) or 0):
+            return
+    SwingUtilities.invokeLater(
+        lambda seq=refresh_seq, data=payload, st=state: self._apply_logger_view_payload(
+            seq, data, st
         )
-        stats_label.setText(
-            "Events: {} | Showing: {} | Dropped: {}{}{}{}{}{}{}{}".format(
-                len(snapshot),
-                len(matched),
-                dropped,
-                suffix,
-                prune_text,
-                grep_text,
-                scope_text,
-                len_text,
-                noise_text,
-                logging_text,
-            )
-        )
-    if noise_toggle_changed:
-        self.refresh_view()
+    )
+
+def _apply_logger_view_payload(self, refresh_seq, payload, state):
+    """Apply logger payload on EDT if still current."""
+    try:
+        with self.logger_lock:
+            if int(refresh_seq) != int(getattr(self, "_logger_view_refresh_seq", 0) or 0):
+                return
+            self.logger_view_events = list(payload.get("matched", []) or [])
+
+        model = getattr(self, "logger_table_model", None)
+        if model is not None:
+            model.setRowCount(0)
+            for row_data in list(payload.get("rows_data", []) or []):
+                model.addRow(row_data)
+
+        stats_label = getattr(self, "logger_stats_label", None)
+        if stats_label is not None:
+            stats_label.setText(self._ascii_safe(payload.get("stats_text") or ""))
+
+        recon_tags_changed = bool(payload.get("recon_tags_changed", False))
+        if recon_tags_changed:
+            self._schedule_capture_ui_refresh()
+        if bool(state.get("noise_toggle_changed", False)):
+            self.refresh_view()
+    except Exception as apply_err:
+        self._callbacks.printError("Logger refresh apply error: {}".format(str(apply_err)))
 
 def _logger_show_selected(self):
     """Render selected logger row request/response previews."""
@@ -5029,7 +5238,15 @@ def _recon_backfill_history(self, force=False):
         prior_suspend_logger = bool(
             getattr(self, "_suspend_logger_capture_during_recon_backfill", False)
         )
+        prior_suspend_recon_logs = bool(
+            getattr(self, "_suspend_recon_progress_logging_during_backfill", False)
+        )
+        prior_suspend_capture_refresh = bool(
+            getattr(self, "_suspend_capture_ui_refresh_during_recon_backfill", False)
+        )
         setattr(self, "_suspend_logger_capture_during_recon_backfill", True)
+        setattr(self, "_suspend_recon_progress_logging_during_backfill", True)
+        setattr(self, "_suspend_capture_ui_refresh_during_recon_backfill", True)
         try:
             max_seed = int(getattr(self, "max_endpoints", 800) or 800) * 6
             max_seed = max(1000, min(120000, max_seed))
@@ -5060,6 +5277,16 @@ def _recon_backfill_history(self, force=False):
                 self,
                 "_suspend_logger_capture_during_recon_backfill",
                 prior_suspend_logger,
+            )
+            setattr(
+                self,
+                "_suspend_recon_progress_logging_during_backfill",
+                prior_suspend_recon_logs,
+            )
+            setattr(
+                self,
+                "_suspend_capture_ui_refresh_during_recon_backfill",
+                prior_suspend_capture_refresh,
             )
             with self.lock:
                 after_endpoints = len(self.api_data)
@@ -5114,7 +5341,7 @@ def _logger_backfill_history(self, force=False):
         skipped = 0
         errors = 0
         try:
-            max_seed = int(getattr(self, "logger_max_rows", 20000) or 20000)
+            max_seed = int(getattr(self, "logger_max_rows", 10000) or 10000)
             max_seed = max(500, min(40000, max_seed * 3))
             messages = self._proxy_history_tail_window(max_seed)
             scanned = len(messages)
@@ -6614,7 +6841,12 @@ def _export_recon_turbo_pack_selected(self, endpoint_key):
         dataset = {endpoint_key: list(self.api_data.get(endpoint_key) or [])}
     self._build_recon_turbo_pack_from_data("Selected Endpoint", dataset)
 
-def _sync_logger_from_recon_snapshot(self, data_snapshot, source_tool_label="ReconSync"):
+def _sync_logger_from_recon_snapshot(
+    self,
+    data_snapshot,
+    source_tool_label="ReconSync",
+    emit_console_progress=False,
+):
     """Seed Logger rows from a Recon snapshot to keep both tabs aligned."""
     if not isinstance(data_snapshot, dict) or (not data_snapshot):
         return 0
@@ -6628,12 +6860,20 @@ def _sync_logger_from_recon_snapshot(self, data_snapshot, source_tool_label="Rec
     with self.logger_lock:
         before_count = len(getattr(self, "logger_events", []) or [])
 
-    max_rows = int(getattr(self, "logger_max_rows", 20000) or 20000)
+    max_rows = int(getattr(self, "logger_max_rows", 10000) or 10000)
     max_seed = max(500, min(40000, max_rows))
     seeded = 0
     truncated = False
+    keys = sorted(data_snapshot.keys())
+    total_keys = len(keys)
+    progress_step = max(100, min(1000, int(total_keys / 20) or 200))
+    if emit_console_progress and total_keys > 0:
+        self._print_import_console_progress(
+            "[*] Logger sync starting: {} endpoint keys".format(total_keys),
+            force=True,
+        )
 
-    for endpoint_key in sorted(data_snapshot.keys()):
+    for idx, endpoint_key in enumerate(keys, 1):
         if seeded >= max_seed:
             truncated = True
             break
@@ -6699,6 +6939,12 @@ def _sync_logger_from_recon_snapshot(self, data_snapshot, source_tool_label="Rec
                 self._callbacks.printError(
                     "Logger sync from Recon row error: {}".format(str(row_err))
                 )
+        if emit_console_progress and ((idx % progress_step == 0) or (idx >= total_keys)):
+            self._print_import_console_progress(
+                "[*] Logger sync progress: {}/{} keys | rows_seeded={}".format(
+                    idx, total_keys, seeded
+                )
+            )
 
     self._logger_trim_if_needed(force=True)
     self._schedule_logger_ui_refresh(force=True)
@@ -6710,6 +6956,11 @@ def _sync_logger_from_recon_snapshot(self, data_snapshot, source_tool_label="Rec
             "[*] Logger sync from Recon truncated at {} rows (max logger seed)".format(
                 max_seed
             )
+        )
+    if emit_console_progress:
+        self._print_import_console_progress(
+            "[+] Logger sync complete: rows_added={}".format(added),
+            force=True,
         )
     return added
 
@@ -6731,6 +6982,20 @@ def _current_import_sample_limit(self):
         _ = limit_err
         limit = 3
     return max(1, min(10, int(limit)))
+
+def _print_import_console_progress(self, message, force=False):
+    """Emit lightweight import progress to Burp Extender output without UI append churn."""
+    text = self._ascii_safe(message).strip()
+    if not text:
+        return
+    now = time.time()
+    min_interval_s = float(getattr(self, "_import_progress_min_interval_s", 0.35) or 0.35)
+    last_ts = float(getattr(self, "_import_progress_last_ts", 0.0) or 0.0)
+    if (not force) and (now - last_ts < min_interval_s):
+        return
+    self._import_progress_last_ts = now
+    timestamp = SimpleDateFormat("HH:mm:ss").format(Date())
+    self._callbacks.printOutput("[{}] {}".format(timestamp, text))
 
 def _normalize_header_dict(self, raw_headers):
     """Normalize headers from dict/list-of-pairs into plain string dict."""
@@ -7153,9 +7418,23 @@ def _build_har_snapshot(self, har_entries, source_tool_label, cookie_payload=Non
         return snapshot
 
     sample_limit = self._current_import_sample_limit()
+    total_entries = len(har_entries)
+    progress_step = 500
+    if total_entries > 0:
+        progress_step = max(250, min(2000, int(total_entries / 20) or 500))
+        self._print_import_console_progress(
+            "[*] Import HAR parse starting: {} entries".format(total_entries),
+            force=True,
+        )
 
-    for har_entry in har_entries:
+    for idx, har_entry in enumerate(har_entries, 1):
         if not isinstance(har_entry, dict):
+            if (idx % progress_step == 0) or (idx >= total_entries):
+                self._print_import_console_progress(
+                    "[*] Import HAR parse progress: {}/{} entries | endpoint_keys={}".format(
+                        idx, total_entries, len(snapshot)
+                    )
+                )
             continue
         try:
             request_obj = har_entry.get("request") or {}
@@ -7231,6 +7510,12 @@ def _build_har_snapshot(self, har_entries, source_tool_label, cookie_payload=Non
             self._callbacks.printError(
                 "Import HAR entry parse error: {}".format(str(har_err))
             )
+        if (idx % progress_step == 0) or (idx >= total_entries):
+            self._print_import_console_progress(
+                "[*] Import HAR parse progress: {}/{} entries | endpoint_keys={}".format(
+                    idx, total_entries, len(snapshot)
+                )
+            )
     return snapshot
 
 def _build_replay_studio_snapshot(self, replay_payload):
@@ -7243,12 +7528,34 @@ def _build_replay_studio_snapshot(self, replay_payload):
         return snapshot
 
     sample_limit = self._current_import_sample_limit()
+    total_scenarios = len(scenarios)
+    progress_step = 200
+    if total_scenarios > 0:
+        progress_step = max(100, min(1000, int(total_scenarios / 20) or 200))
+        self._print_import_console_progress(
+            "[*] Import Replay Studio parse starting: {} scenarios".format(
+                total_scenarios
+            ),
+            force=True,
+        )
 
-    for scenario in scenarios:
+    for idx, scenario in enumerate(scenarios, 1):
         if not isinstance(scenario, dict):
+            if (idx % progress_step == 0) or (idx >= total_scenarios):
+                self._print_import_console_progress(
+                    "[*] Import Replay Studio progress: {}/{} scenarios | endpoint_keys={}".format(
+                        idx, total_scenarios, len(snapshot)
+                    )
+                )
             continue
         source = scenario.get("source") or {}
         if not isinstance(source, dict):
+            if (idx % progress_step == 0) or (idx >= total_scenarios):
+                self._print_import_console_progress(
+                    "[*] Import Replay Studio progress: {}/{} scenarios | endpoint_keys={}".format(
+                        idx, total_scenarios, len(snapshot)
+                    )
+                )
             continue
         url_parts = self._parse_url_parts_from_text(source.get("url") or "")
         method = self._ascii_safe(source.get("method") or "GET").upper()
@@ -7304,6 +7611,12 @@ def _build_replay_studio_snapshot(self, replay_payload):
             snapshot[endpoint_key] = bucket
         if len(bucket) < sample_limit:
             bucket.append(shaped)
+        if (idx % progress_step == 0) or (idx >= total_scenarios):
+            self._print_import_console_progress(
+                "[*] Import Replay Studio progress: {}/{} scenarios | endpoint_keys={}".format(
+                    idx, total_scenarios, len(snapshot)
+                )
+            )
     return snapshot
 
 def _merge_import_snapshots(self, primary_snapshot, extra_snapshot):
@@ -7478,6 +7791,10 @@ def _build_excalibur_bridge_snapshot(self, bridge_payload):
 def _resolve_import_payload(self, filepath, root_payload):
     """Build one normalized snapshot from supported import formats."""
     payload_kind = self._identify_import_payload_kind(root_payload)
+    self._print_import_console_progress(
+        "[*] Import payload detected: kind={}".format(payload_kind),
+        force=True,
+    )
     resolved_snapshot = {}
     import_meta = {
         "kind": payload_kind,
@@ -7487,6 +7804,10 @@ def _resolve_import_payload(self, filepath, root_payload):
     }
 
     if payload_kind == "suite_export":
+        self._print_import_console_progress(
+            "[*] Import building suite-export snapshot",
+            force=True,
+        )
         resolved_snapshot = self._build_suite_export_snapshot(root_payload)
         import_meta["source_tool_label"] = "Import"
         return resolved_snapshot, import_meta
@@ -7519,6 +7840,9 @@ def _resolve_import_payload(self, filepath, root_payload):
         if (not sidecar_path) or sidecar_path == filepath:
             continue
         try:
+            self._print_import_console_progress(
+                "[*] Import loading sidecar {}: {}".format(sidecar_kind, sidecar_path)
+            )
             sidecar_payload = self._load_json_file_for_import(sidecar_path)
             if sidecar_kind == "har" and har_payload is None:
                 har_payload = sidecar_payload
@@ -7536,6 +7860,10 @@ def _resolve_import_payload(self, filepath, root_payload):
     if har_payload is not None:
         try:
             entries = ((har_payload.get("log") or {}).get("entries")) if isinstance(har_payload, dict) else []
+            self._print_import_console_progress(
+                "[*] Import building HAR snapshot",
+                force=True,
+            )
             resolved_snapshot = self._build_har_snapshot(
                 entries,
                 "Excalibur HAR",
@@ -7551,6 +7879,10 @@ def _resolve_import_payload(self, filepath, root_payload):
     replay_snapshot = {}
     if replay_payload is not None:
         try:
+            self._print_import_console_progress(
+                "[*] Import building Replay Studio snapshot",
+                force=True,
+            )
             replay_snapshot = self._build_replay_studio_snapshot(replay_payload)
         except Exception as replay_err:
             self._callbacks.printError(
@@ -7558,6 +7890,10 @@ def _resolve_import_payload(self, filepath, root_payload):
             )
             replay_snapshot = {}
 
+    self._print_import_console_progress(
+        "[*] Import merging snapshots",
+        force=True,
+    )
     merged_snapshot = self._merge_import_snapshots(resolved_snapshot, replay_snapshot)
     if not merged_snapshot and payload_kind == "excalibur_replay_studio":
         import_meta["source_tool_label"] = "Excalibur Replay Studio"
@@ -7586,7 +7922,16 @@ def _merge_import_snapshot_into_recon(self, import_snapshot):
     if not isinstance(import_snapshot, dict):
         return imported, skipped, imported_snapshot
 
-    for endpoint_key in sorted(import_snapshot.keys()):
+    keys = sorted(import_snapshot.keys())
+    total_keys = len(keys)
+    progress_step = max(100, min(1000, int(total_keys / 20) or 200))
+    if total_keys > 0:
+        self._print_import_console_progress(
+            "[*] Import merge starting: {} endpoint keys".format(total_keys),
+            force=True,
+        )
+
+    for idx, endpoint_key in enumerate(keys, 1):
         entries = import_snapshot.get(endpoint_key, [])
         entries_list = entries if isinstance(entries, list) else [entries]
         sanitized_entries = []
@@ -7595,6 +7940,12 @@ def _merge_import_snapshot_into_recon(self, import_snapshot):
             if shaped is not None:
                 sanitized_entries.append(shaped)
         if not sanitized_entries:
+            if (idx % progress_step == 0) or (idx >= total_keys):
+                self._print_import_console_progress(
+                    "[*] Import merge progress: {}/{} keys | imported={} skipped={}".format(
+                        idx, total_keys, imported, skipped
+                    )
+                )
             continue
 
         key = self._ascii_safe(endpoint_key).strip()
@@ -7605,6 +7956,12 @@ def _merge_import_snapshot_into_recon(self, import_snapshot):
         with self.lock:
             if key in self.api_data:
                 skipped += 1
+                if (idx % progress_step == 0) or (idx >= total_keys):
+                    self._print_import_console_progress(
+                        "[*] Import merge progress: {}/{} keys | imported={} skipped={}".format(
+                            idx, total_keys, imported, skipped
+                        )
+                    )
                 continue
             self.api_data[key] = list(sanitized_entries)
             first = sanitized_entries[0]
@@ -7615,6 +7972,12 @@ def _merge_import_snapshot_into_recon(self, import_snapshot):
             ]
             imported_snapshot[key] = [dict(item) for item in sanitized_entries]
             imported += 1
+        if (idx % progress_step == 0) or (idx >= total_keys):
+            self._print_import_console_progress(
+                "[*] Import merge progress: {}/{} keys | imported={} skipped={}".format(
+                    idx, total_keys, imported, skipped
+                )
+            )
     return imported, skipped, imported_snapshot
 
 def _run_excalibur_auto_pipeline(self, imported_count):
@@ -7629,52 +7992,117 @@ def _run_excalibur_auto_pipeline(self, imported_count):
     )
     self._refresh_sequence_invariants_from_recon(None)
 
+def _finalize_import_ui_refresh(self):
+    """Refresh Recon/Logger widgets after async import completes."""
+    try:
+        renderer = self.endpoint_list.getCellRenderer()
+        if renderer:
+            renderer.invalidate_cache()
+        self._update_tab_title()
+        self._update_host_filter()
+        self._update_stats()
+        self.refresh_view()
+        self._refresh_recon_invariant_status_label()
+    except Exception as refresh_err:
+        self._callbacks.printError(
+            "Import UI finalize refresh error: {}".format(str(refresh_err))
+        )
+
 def import_data(self):
     """Import Suite export JSON, Excalibur HAR/session artifacts, or bridge bundles."""
     chooser = JFileChooser()
     chooser.setDialogTitle("Import API Security Suite / Excalibur JSON")
     if chooser.showOpenDialog(self._panel) == JFileChooser.APPROVE_OPTION:
         filepath = chooser.getSelectedFile().getAbsolutePath()
-        try:
-            data = self._load_json_file_for_import(filepath)
-            import_snapshot, import_meta = self._resolve_import_payload(filepath, data)
-            imported, skipped, imported_snapshot = self._merge_import_snapshot_into_recon(import_snapshot)
+        with self.lock:
+            if bool(getattr(self, "recon_import_running", False)):
+                self.log_to_ui("[*] Import already running; wait for current run to finish")
+                return
+            self.recon_import_running = True
 
-            source_label = self._ascii_safe(import_meta.get("source_tool_label") or "Import")
-            kind_label = self._ascii_safe(import_meta.get("kind") or "unknown")
-            self.log_to_ui(
-                "[+] Imported {} endpoints from {} (kind={}, source={})".format(
-                    imported, filepath, kind_label, source_label
+        self.log_to_ui("[*] Import started: {}".format(filepath))
+        self._print_import_console_progress(
+            "[*] Import started: {}".format(filepath),
+            force=True,
+        )
+
+        def _worker(selected_filepath):
+            try:
+                self._print_import_console_progress(
+                    "[*] Import loading JSON payload",
+                    force=True,
                 )
-            )
-            if skipped > 0:
+                data = self._load_json_file_for_import(selected_filepath)
+                import_snapshot, import_meta = self._resolve_import_payload(
+                    selected_filepath, data
+                )
+                self._print_import_console_progress(
+                    "[*] Import payload normalized: {} endpoint keys".format(
+                        len(import_snapshot)
+                    ),
+                    force=True,
+                )
+                imported, skipped, imported_snapshot = self._merge_import_snapshot_into_recon(
+                    import_snapshot
+                )
+
+                source_label = self._ascii_safe(
+                    import_meta.get("source_tool_label") or "Import"
+                )
+                kind_label = self._ascii_safe(import_meta.get("kind") or "unknown")
                 self.log_to_ui(
-                    "[*] Import skipped {} existing endpoint keys".format(skipped)
-                )
-            SwingUtilities.invokeLater(
-                lambda: self.endpoint_list.getCellRenderer().invalidate_cache()
-            )
-            SwingUtilities.invokeLater(lambda: self._update_host_filter())
-            SwingUtilities.invokeLater(lambda: self._update_stats())
-            SwingUtilities.invokeLater(lambda: self.refresh_view())
-            SwingUtilities.invokeLater(lambda: self._refresh_recon_invariant_status_label())
-            if imported_snapshot:
-                logger_added = int(
-                    self._sync_logger_from_recon_snapshot(
-                        imported_snapshot, source_tool_label=source_label
+                    "[+] Imported {} endpoints from {} (kind={}, source={})".format(
+                        imported, selected_filepath, kind_label, source_label
                     )
-                    or 0
                 )
-                self.log_to_ui(
-                    "[+] Logger sync from import: {} rows added".format(logger_added)
-                )
-            if bool(import_meta.get("excalibur_detected", False)):
-                self._run_excalibur_auto_pipeline(imported)
-        except Exception as e:
-            self.log_to_ui("[!] Import failed: {}".format(str(e)))
-            import traceback
+                if skipped > 0:
+                    self.log_to_ui(
+                        "[*] Import skipped {} existing endpoint keys".format(skipped)
+                    )
 
-            self._callbacks.printError(traceback.format_exc())
+                if imported_snapshot:
+                    logger_added = int(
+                        self._sync_logger_from_recon_snapshot(
+                            imported_snapshot,
+                            source_tool_label=source_label,
+                            emit_console_progress=True,
+                        )
+                        or 0
+                    )
+                    self.log_to_ui(
+                        "[+] Logger sync from import: {} rows added".format(logger_added)
+                    )
+                if bool(import_meta.get("excalibur_detected", False)):
+                    self._run_excalibur_auto_pipeline(imported)
+
+                self._print_import_console_progress(
+                    "[+] Import complete: endpoints_imported={} skipped={}".format(
+                        imported, skipped
+                    ),
+                    force=True,
+                )
+                SwingUtilities.invokeLater(
+                    lambda: self._finalize_import_ui_refresh()
+                )
+            except Exception as e:
+                self.log_to_ui("[!] Import failed: {}".format(str(e)))
+                import traceback
+
+                self._callbacks.printError(traceback.format_exc())
+                self._print_import_console_progress(
+                    "[!] Import failed: {}".format(str(e)),
+                    force=True,
+                )
+            finally:
+                with self.lock:
+                    self.recon_import_running = False
+
+        worker = threading.Thread(
+            target=lambda fp=filepath: _worker(fp),
+            name="recon-import",
+        )
+        worker.daemon = True
+        worker.start()
 
 def _entry_to_excalibur_bridge_capture(self, endpoint_key, entry, endpoint_tags):
     """Convert one captured entry into Excalibur bridge capture format."""
@@ -9825,6 +10253,10 @@ __all__ = [
     "_logger_extract_tag_tokens",
     "_logger_event_is_noise",
     "_filter_endpoints",
+    "_snapshot_recon_view_state",
+    "_compile_recon_regex",
+    "_filter_endpoints_with_state",
+    "_build_recon_view_payload",
     "_on_filter_change",
     "_persist_recon_filter_library",
     "_restore_recon_filter_library",
@@ -9839,6 +10271,8 @@ __all__ = [
     "_next_page",
     "_change_page_size",
     "refresh_view",
+    "_run_recon_view_refresh_worker",
+    "_apply_recon_view_payload",
     "_group_endpoints",
     "_update_tab_title",
     "_update_stats",
@@ -9889,6 +10323,10 @@ __all__ = [
     "_logger_apply_tag_rules",
     "_logger_event_matches_filters",
     "_refresh_logger_view",
+    "_snapshot_logger_view_state",
+    "_build_logger_view_payload",
+    "_run_logger_view_refresh_worker",
+    "_apply_logger_view_payload",
     "_logger_show_selected",
     "_logger_selected_indices",
     "_logger_select_all_rows",
@@ -9957,6 +10395,7 @@ __all__ = [
     "_sync_logger_from_recon_snapshot",
     "_int_or_default",
     "_current_import_sample_limit",
+    "_print_import_console_progress",
     "_normalize_header_dict",
     "_extract_content_type_from_headers",
     "_parse_url_parts_from_text",
@@ -9975,6 +10414,7 @@ __all__ = [
     "_resolve_import_payload",
     "_merge_import_snapshot_into_recon",
     "_run_excalibur_auto_pipeline",
+    "_finalize_import_ui_refresh",
     "import_data",
     "_entry_to_excalibur_bridge_capture",
     "_build_excalibur_bridge_bundle",

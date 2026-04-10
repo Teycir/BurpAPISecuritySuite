@@ -1117,41 +1117,51 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
         if (not skip_logger_capture) and hasattr(self, "_logger_capture_event"):
             self._logger_capture_event(endpoint_key, api_entry, logger_tags)
 
-        count = len(self.api_data)
-        self._callbacks.setExtensionName(
-            "API Recon" if count == 0 else "API Recon ({})".format(count)
-        )
-
         if is_new:
-            SwingUtilities.invokeLater(
-                lambda: self.endpoint_list.getCellRenderer().invalidate_cache()
+            suspend_ui_refresh = bool(
+                getattr(
+                    self,
+                    "_suspend_capture_ui_refresh_during_recon_backfill",
+                    False,
+                )
             )
-            severity = self._get_severity(endpoint_key, [api_entry])
-            if severity == "critical":
-                self.log_to_ui(
-                    "[!] CRITICAL: {} {} @ {} (Total: {})".format(
-                        method, normalized_path, url.getHost(), len(self.api_data)
-                    )
+            suspend_progress_logs = bool(
+                getattr(
+                    self,
+                    "_suspend_recon_progress_logging_during_backfill",
+                    False,
                 )
-            elif severity == "high":
-                self.log_to_ui(
-                    "[!] HIGH: {} {} @ {} (Total: {})".format(
-                        method, normalized_path, url.getHost(), len(self.api_data)
+            )
+
+            if not suspend_progress_logs:
+                severity = self._get_severity(endpoint_key, [api_entry])
+                if severity == "critical":
+                    self.log_to_ui(
+                        "[!] CRITICAL: {} {} @ {} (Total: {})".format(
+                            method, normalized_path, url.getHost(), len(self.api_data)
+                        )
                     )
-                )
-            elif severity == "medium":
-                self.log_to_ui(
-                    "[*] MEDIUM: {} {} @ {} (Total: {})".format(
-                        method, normalized_path, url.getHost(), len(self.api_data)
+                elif severity == "high":
+                    self.log_to_ui(
+                        "[!] HIGH: {} {} @ {} (Total: {})".format(
+                            method, normalized_path, url.getHost(), len(self.api_data)
+                        )
                     )
-                )
-            else:
-                self.log_to_ui(
-                    "[+] Captured: {} {} @ {} (Total: {})".format(
-                        method, normalized_path, url.getHost(), len(self.api_data)
+                elif severity == "medium":
+                    self.log_to_ui(
+                        "[*] MEDIUM: {} {} @ {} (Total: {})".format(
+                            method, normalized_path, url.getHost(), len(self.api_data)
+                        )
                     )
-                )
-            self._schedule_capture_ui_refresh()
+                else:
+                    self.log_to_ui(
+                        "[+] Captured: {} {} @ {} (Total: {})".format(
+                            method, normalized_path, url.getHost(), len(self.api_data)
+                        )
+                    )
+
+            if not suspend_ui_refresh:
+                self._schedule_capture_ui_refresh()
 
     except Exception as e:
         self._callbacks.printError("Error processing: " + str(e))

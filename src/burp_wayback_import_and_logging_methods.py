@@ -136,25 +136,90 @@ def _import_wayback_to_recon(self):
 
     self.wayback_area.append(summary)
     self.log_to_ui("[+] Wayback: {} new, {} skipped".format(imported, skipped))
-    SwingUtilities.invokeLater(
-        lambda: self.endpoint_list.getCellRenderer().invalidate_cache()
-    )
-    SwingUtilities.invokeLater(lambda: self._update_host_filter())
-    SwingUtilities.invokeLater(lambda: self._update_stats())
-    SwingUtilities.invokeLater(lambda: self.refresh_view())
+    self._schedule_capture_ui_refresh(force=True)
 
 def log_to_ui(self, message):
     timestamp = SimpleDateFormat("HH:mm:ss").format(Date())
     timestamped = "[{}] {}".format(timestamp, message)
     self._callbacks.printOutput(timestamped)
-    SwingUtilities.invokeLater(lambda: self._append_log(timestamped))
+    if not hasattr(self, "_ui_log_lock"):
+        self._ui_log_lock = threading.Lock()
+    if not hasattr(self, "_ui_log_buffer"):
+        self._ui_log_buffer = []
+    if not hasattr(self, "_ui_log_flush_delay_ms"):
+        self._ui_log_flush_delay_ms = 700
+    if not hasattr(self, "_ui_log_max_lines"):
+        self._ui_log_max_lines = int(
+            getattr(self, "logger_max_rows", 10000) or 10000
+        )
+
+    with self._ui_log_lock:
+        self._ui_log_buffer.append(timestamped)
+        existing_timer = getattr(self, "_ui_log_flush_timer", None)
+        if existing_timer is not None:
+            try:
+                existing_timer.cancel()
+            except Exception as cancel_err:
+                self._callbacks.printError(
+                    "UI log timer cancel error: {}".format(str(cancel_err))
+                )
+
+        def _queue_flush():
+            with self._ui_log_lock:
+                self._ui_log_flush_timer = None
+            SwingUtilities.invokeLater(lambda: self._flush_ui_log_buffer())
+
+        timer = threading.Timer(
+            float(self._ui_log_flush_delay_ms) / 1000.0, _queue_flush
+        )
+        timer.daemon = True
+        self._ui_log_flush_timer = timer
+        timer.start()
+
+def _flush_ui_log_buffer(self):
+    if getattr(self, "log_area", None) is None:
+        return
+    with self._ui_log_lock:
+        pending = list(getattr(self, "_ui_log_buffer", []) or [])
+        self._ui_log_buffer = []
+    if not pending:
+        return
+    self._append_log("\n".join(pending))
 
 def _append_log(self, message):
-    self.log_area.append(message + "\n")
+    if not message:
+        return
+    payload = self._ascii_safe(message)
+    if not payload.endswith("\n"):
+        payload += "\n"
+    self.log_area.append(payload)
+    max_lines = int(
+        getattr(
+            self,
+            "_ui_log_max_lines",
+            int(getattr(self, "logger_max_rows", 10000) or 10000),
+        )
+        or 0
+    )
+    if max_lines <= 0:
+        max_lines = int(getattr(self, "logger_max_rows", 10000) or 10000)
+    if max_lines <= 0:
+        max_lines = 1
+    line_count = int(self.log_area.getLineCount() or 0)
+    if line_count > max_lines:
+        trim_lines = line_count - max_lines
+        try:
+            trim_offset = int(self.log_area.getLineEndOffset(trim_lines - 1))
+            self.log_area.replaceRange("", 0, trim_offset)
+        except Exception as trim_err:
+            self._callbacks.printError(
+                "UI log trim error: {}".format(str(trim_err))
+            )
     self.log_area.setCaretPosition(self.log_area.getDocument().getLength())
 
 __all__ = [
     "_import_wayback_to_recon",
     "log_to_ui",
+    "_flush_ui_log_buffer",
     "_append_log",
 ]
