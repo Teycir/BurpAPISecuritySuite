@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.7] - 2026-04-10
+
+### Changed
+- Auth Replay execution now isolates UI updates from the hot replay loop:
+  - replay result rows are buffered off-EDT and rendered in chunked Swing updates,
+  - progress output appends are batched to reduce `invokeLater(...)` pressure during long runs.
+- Recon/Logger capture pipeline now applies the same anti-freeze traffic policy:
+  - internal `Extender` traffic is skipped by default from auto-capture (`capture_extender_traffic = false` runtime default),
+  - listener and deep capture paths both short-circuit extension-generated traffic for layered safety.
+
+### Fixed
+- Fixed UI freeze/stall behavior during heavy Auth Replay runs caused by capture/UI churn.
+- Fixed equivalent responsiveness degradation in Recon and Logger when extension-generated traffic was re-captured during active extension workflows.
+
 ## [1.4.6] - 2026-04-08
 
 ### Added

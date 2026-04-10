@@ -722,6 +722,9 @@ def _initialize_runtime_state(self):
     self.recon_logger_backfill_pipeline_force_pending = False
     self.recon_autopopulate_on_open = True
     self.recon_noise_filter_enabled = True
+    # Internal extension traffic can flood Recon/Logger and stall UI during heavy runs.
+    # Keep it disabled by default; capture pipeline can still ingest Proxy/Repeater/Scanner data.
+    self.capture_extender_traffic = False
     self.excalibur_auto_pipeline_enabled = True
     self._suspend_logger_capture_during_recon_backfill = False
     self._applying_graphql_profile = False

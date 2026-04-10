@@ -987,6 +987,8 @@ def _build_auth_replay_request(self, entry, profile_header):
         headers.append("User-Agent: BurpAPISecuritySuite/AuthReplay")
     if "accept" not in added:
         headers.append("Accept: */*")
+    if "x-burp-api-suite-replay" not in added:
+        headers.append("X-Burp-API-Suite-Replay: 1")
     headers.append("Connection: close")
 
     if profile_header:

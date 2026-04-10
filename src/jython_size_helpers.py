@@ -977,6 +977,23 @@ def process_traffic(extender, messageInfo, source_tool="Unknown"):
         req_info = self._helpers.analyzeRequest(messageInfo)
         resp_info = self._helpers.analyzeResponse(response)
 
+        source_tool_text = self._ascii_safe(source_tool, lower=True).strip()
+        if source_tool_text == "extender" and (
+            not bool(getattr(self, "capture_extender_traffic", False))
+        ):
+            return
+        if bool(getattr(self, "_auth_replay_active", False)) and source_tool_text == "extender":
+            return
+
+        request_headers = req_info.getHeaders() or []
+        if len(request_headers) > 1:
+            for header_line in request_headers[1:]:
+                header_text = self._ascii_safe(header_line, lower=True).strip()
+                if header_text.startswith("x-burp-api-suite-replay:"):
+                    return
+                if header_text.startswith("user-agent:") and "burpapisecuritysuite/authreplay" in header_text:
+                    return
+
         url = req_info.getUrl()
         method = req_info.getMethod()
         path = url.getPath()
@@ -1725,8 +1742,31 @@ def run_auth_replay(extender, event):
         scanned = 0
         cancelled = False
         errors = 0
+        table_rows = []
+        pending_log_lines = []
+        self._auth_replay_active = True
 
         try:
+            def flush_pending_logs():
+                if not pending_log_lines:
+                    return
+                text_batch = "".join(pending_log_lines)
+                del pending_log_lines[:]
+                SwingUtilities.invokeLater(
+                    lambda t=text_batch: self.auth_replay_area.append(t)
+                )
+
+            def append_rows_chunked(rows, start_index=0, chunk_size=25):
+                end_index = min(start_index + chunk_size, len(rows))
+                for batch_row in rows[start_index:end_index]:
+                    self.auth_replay_table_model.addRow(batch_row)
+                if end_index < len(rows):
+                    SwingUtilities.invokeLater(
+                        lambda r=rows, s=end_index, c=chunk_size: append_rows_chunked(
+                            r, s, c
+                        )
+                    )
+
             idx = 0
             for endpoint_key in endpoint_keys:
                 if self._is_tool_cancelled("authreplay"):
@@ -1735,11 +1775,11 @@ def run_auth_replay(extender, event):
 
                 idx += 1
                 if idx == 1 or idx % 5 == 0:
-                    SwingUtilities.invokeLater(
-                        lambda i=idx, total=len(endpoint_keys): self.auth_replay_area.append(
-                            "[*] Replaying {}/{}...\n".format(i, total)
-                        )
+                    pending_log_lines.append(
+                        "[*] Replaying {}/{}...\n".format(idx, len(endpoint_keys))
                     )
+                    if len(pending_log_lines) >= 2:
+                        flush_pending_logs()
 
                 with self.lock:
                     entries = self.api_data.get(endpoint_key)
@@ -1774,8 +1814,12 @@ def run_auth_replay(extender, event):
                 row_data = _auth_replay_build_result_row(
                     self, idx, endpoint_key, entry, row_role_results, endpoint_findings
                 )
+                table_rows.append(row_data)
+
+            flush_pending_logs()
+            if table_rows:
                 SwingUtilities.invokeLater(
-                    lambda row=row_data: self.auth_replay_table_model.addRow(row)
+                    lambda rows=list(table_rows): append_rows_chunked(rows)
                 )
 
             severity_order = {"critical": 0, "high": 1, "medium": 2}
@@ -1869,6 +1913,7 @@ def run_auth_replay(extender, event):
                 lambda m=err_msg: self.log_to_ui("[!] Auth Replay error: {}".format(m))
             )
         finally:
+            self._auth_replay_active = False
             self._clear_tool_cancel("authreplay")
 
     thread = threading.Thread(target=run_replay)

@@ -3994,9 +3994,15 @@ def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
     if not self.auto_capture.isSelected():
         return
     if not messageIsRequest:
+        source_tool = self._resolve_tool_name(toolFlag)
+        source_tool_lower = self._ascii_safe(source_tool, lower=True).strip()
+        if source_tool_lower == "extender" and (
+            not bool(getattr(self, "capture_extender_traffic", False))
+        ):
+            return
         self._process_traffic(
             messageInfo,
-            source_tool=self._resolve_tool_name(toolFlag),
+            source_tool=source_tool,
         )
 
 def processProxyMessage(self, messageIsRequest, message):
