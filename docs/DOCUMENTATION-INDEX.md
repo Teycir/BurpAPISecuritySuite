@@ -53,8 +53,8 @@ BurpAPISecuritySuite/
 - Extension overview
 - Installation instructions
 - Feature list (15 attack types, 108+ vectors)
-- Tab overview (Recon, Fuzzer, Nuclei, HTTPX, Katana, FFUF, Wayback, etc.)
-- Export formats (JSON, Intruder, Turbo, Nuclei, cURL)
+- Tab overview (Recon, Logger, Diff, Version Scanner, Param Miner, Fuzzer, Auth Replay, Passive Discovery, ApiHunter, Vulners, Nuclei, HTTPX, Katana, FFUF, Wayback, SQLMap Verify, Dalfox Verify, API Assets, OpenAPI Drift, GraphQL)
+- Export formats (JSON, Intruder, Turbo, Nuclei, cURL, AI Bundle)
 - Use cases (API pentesting, bug bounty, security research)
 - FAQ and troubleshooting
 
@@ -118,22 +118,52 @@ BurpAPISecuritySuite/
 1. **Recon Tab** → Enable Auto-Capture → Browse target
 2. **Fuzzer Tab** → "All" → "Generate" → Review attacks
 3. **Export Options:**
-   - "Export for LLM" → api_analysis.json
+   - "Export AI Bundle" → Complete AI-ready context
+   - "Export All" → api_analysis.json
    - "Send to Intruder" → BOLA testing
    - "Turbo Intruder" → Race conditions
-   - "AI Payloads" → Custom payload generation
-4. **Nuclei Tab** → "Run Nuclei" → Automated scanning
-5. **HTTPX Tab** → "Probe Endpoints" → Technology detection
-6. **Katana Tab** → "Crawl Endpoints" → Deep discovery
-7. **FFUF Tab** → "Fuzz Directories" → Directory fuzzing
-8. **Wayback Tab** → "Discover" → Historical endpoints
+4. **Passive Discovery Tab** → "Run Invariants" → Deep-logic analysis
+5. **Auth Replay Tab** → Multi-profile authorization testing
+6. **ApiHunter Tab** → "Run ApiHunter" → Gap-fill endpoint discovery
+7. **Vulners Tab** → "Run Enrichment" → CVE advisory lookup
+8. **Nuclei Tab** → "Run Nuclei" → Automated scanning
+9. **HTTPX Tab** → "Probe Endpoints" → Technology detection
+10. **Katana Tab** → "Crawl Endpoints" → Deep discovery
+11. **FFUF Tab** → "Fuzz Directories" → Directory fuzzing
+12. **Wayback Tab** → "Discover" → Historical endpoints
+13. **SQLMap Verify Tab** → "Run Verify" → SQLi confirmation
+14. **Dalfox Verify Tab** → "Run Verify" → XSS confirmation
+15. **API Assets Tab** → "Run Discovery" → Asset enumeration
+16. **OpenAPI Drift Tab** → "Run Drift" → Spec comparison
+17. **GraphQL Tab** → "Run Analysis" → GraphQL testing
 
 ### Output Locations
 ```
 ~/burp_APIRecon/
-├── FullExport_TIMESTAMP/api_analysis.json
-├── HostExport_HOSTNAME_TIMESTAMP/api_analysis.json
-├── AI_Context_TIMESTAMP/ai_context.json
+├── FullExport_TIMESTAMP/
+│   ├── api_analysis.json
+│   └── excalibur_bridge_bundle.json
+├── HostExport_HOSTNAME_TIMESTAMP/
+│   ├── api_analysis.json
+│   └── excalibur_bridge_bundle.json
+├── AI_Context_TIMESTAMP/
+│   ├── ai_bundle.json
+│   ├── ai_all_tabs_context.json
+│   ├── ai_openai_request.json
+│   ├── ai_anthropic_request.json
+│   ├── ai_ollama_request.json
+│   ├── ai_sequence_invariant_findings.json
+│   ├── ai_sequence_evidence_ledger.json
+│   ├── ai_golden_ticket_findings.json
+│   ├── ai_token_lineage_findings.json
+│   └── ai_parity_drift_findings.json
+├── SequenceInvariant_Export_TIMESTAMP/
+│   ├── counterfactual_differential_findings.json
+│   ├── sequence_invariant_findings.json
+│   ├── golden_ticket_findings.json
+│   ├── state_transition_findings.json
+│   ├── token_lineage_findings.json
+│   └── parity_drift_findings.json
 ├── Payloads_TIMESTAMP/payloads.json
 ├── TurboIntruder_TIMESTAMP/*.py
 ├── NucleiTargets_TIMESTAMP/targets.txt
@@ -161,10 +191,13 @@ BurpAPISecuritySuite/
 
 #### 3. AI-Powered Testing
 ```
-1. Generate attacks in Fuzzer tab
-2. Click "AI Payloads" button
-3. Feed ai_context.json to ChatGPT/Claude
-4. Get custom payloads for your API
+1. (Optional) Run Passive Discovery → "Run Invariants"
+2. (Optional) In Recon, click "Refresh Invariants"
+3. In Recon tab, click "Export AI Bundle"
+4. Use APIPentesting to scan from that export:
+   ./scripts/scan-nuclei-prioritize.sh /path/to/ai_bundle.json burp-ai-scan
+5. Feed Reports/.../priority.json + results.jsonl to AI with
+   scripts/AI_TRIAGE_PROMPT.md for sensitive-data-first triage
 ```
 
 #### 4. External Tool Integration
@@ -177,6 +210,17 @@ BurpAPISecuritySuite/
 ```
 
 ## Document Updates
+
+### v1.4.8 (2026-04-10)
+- Updated DOCUMENTATION-INDEX.md with all current tabs
+- Updated README.md with v1.4.8 changelog
+- Added Wayback rate limiting and UI responsiveness improvements
+- Updated roadmap with completed features
+
+### v1.4.6 (2026-04-08)
+- Added Vulners tab documentation
+- Updated tab overview with ApiHunter and Vulners
+- Added incremental report appending workflow
 
 ### v1.2.1 (2026-04-05)
 - Added NUCLEI_OPTIMIZATION.md

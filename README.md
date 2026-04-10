@@ -60,6 +60,7 @@ This design philosophy prioritizes performance and user experience while deliver
 
 - [BurpAPISecuritySuite](#burpapisecuritysuite)
   - [Table of Contents](#table-of-contents)
+  - [Why One Extension with Multiple Tabs?](#why-one-extension-with-multiple-tabs)
   - [Screenshots](#screenshots)
     - [Main Interface](#main-interface)
     - [Fuzzer Tab](#fuzzer-tab)
@@ -88,6 +89,7 @@ This design philosophy prioritizes performance and user experience while deliver
     - [Basic Workflow](#basic-workflow)
     - [Tab Overview](#tab-overview)
       - [1. Recon Tab](#1-recon-tab)
+      - [Logger Tab](#logger-tab)
       - [2. Diff Tab](#2-diff-tab)
       - [3. Version Scanner Tab](#3-version-scanner-tab)
       - [4. Param Miner Tab](#4-param-miner-tab)
@@ -95,16 +97,17 @@ This design philosophy prioritizes performance and user experience while deliver
       - [6. Auth Replay Tab](#6-auth-replay-tab)
       - [7. Passive Discovery Tab](#7-passive-discovery-tab)
       - [8. ApiHunter Tab](#8-apihunter-tab)
-      - [9. Nuclei Tab](#9-nuclei-tab)
-      - [10. HTTPX Tab](#10-httpx-tab)
-      - [11. Katana Tab](#11-katana-tab)
-      - [12. FFUF Tab](#12-ffuf-tab)
-      - [13. Wayback Tab](#13-wayback-tab)
-      - [14. SQLMap Verify Tab](#14-sqlmap-verify-tab)
-      - [15. Dalfox Verify Tab](#15-dalfox-verify-tab)
-      - [16. API Assets Tab](#16-api-assets-tab)
-      - [17. OpenAPI Drift Tab](#17-openapi-drift-tab)
-      - [18. GraphQL Tab](#18-graphql-tab)
+      - [9. Vulners Tab](#9-vulners-tab)
+      - [10. Nuclei Tab](#10-nuclei-tab)
+      - [11. HTTPX Tab](#11-httpx-tab)
+      - [12. Katana Tab](#12-katana-tab)
+      - [13. FFUF Tab](#13-ffuf-tab)
+      - [14. Wayback Tab](#14-wayback-tab)
+      - [15. SQLMap Verify Tab](#15-sqlmap-verify-tab)
+      - [16. Dalfox Verify Tab](#16-dalfox-verify-tab)
+      - [17. API Assets Tab](#17-api-assets-tab)
+      - [18. OpenAPI Drift Tab](#18-openapi-drift-tab)
+      - [19. GraphQL Tab](#19-graphql-tab)
   - [Advanced Fuzzing Capabilities](#advanced-fuzzing-capabilities)
     - [Attack Types Detected](#attack-types-detected)
     - [Exported Data Structure](#exported-data-structure)
@@ -148,19 +151,6 @@ This design philosophy prioritizes performance and user experience while deliver
   - [Changelog](#changelog)
   - [Updates \& Roadmap](#updates--roadmap)
     - [Recent Updates](#recent-updates)
-    - [v1.4.3 - Token Lineage + Cross-Interface Parity Drift](#v143---token-lineage--cross-interface-parity-drift)
-    - [v1.4.2 - Counterfactual Differential Pipeline + Deep-Logic Expansion](#v142---counterfactual-differential-pipeline--deep-logic-expansion)
-    - [v1.4.1 - Logger Clear Data + Two-Line Toolbar](#v141---logger-clear-data--two-line-toolbar)
-    - [v1.4.0 - Logger/Recon Parity + Stability + Sorting](#v140---loggerrecon-parity--stability--sorting)
-    - [v1.3.9 - Logger Tab + Recon Hidden Params + Param Intel](#v139---logger-tab--recon-hidden-params--param-intel)
-    - [v1.3.5 - AI Export + Invariants + Tooltip UX](#v135---ai-export--invariants--tooltip-ux)
-    - [v1.3.1 - Tab Order and External Tool UX Alignment](#v131---tab-order-and-external-tool-ux-alignment)
-    - [v1.3.0 - Verification and Spec Drift Tabs](#v130---verification-and-spec-drift-tabs)
-    - [v1.2.2 - Enhanced GraphQL Fuzzing](#v122---enhanced-graphql-fuzzing)
-    - [v1.2.1 - Nuclei Performance Optimization](#v121---nuclei-performance-optimization)
-    - [v1.2.0 - Auth Replay and Header Extraction UX](#v120---auth-replay-and-header-extraction-ux)
-    - [v1.1.0 - External Tool UX and Control Update](#v110---external-tool-ux-and-control-update)
-    - [v1.0 - Initial Release](#v10---initial-release)
     - [Roadmap](#roadmap)
 
 ## Screenshots
@@ -428,7 +418,18 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Top Findings Signal Mode**: Shows findings returned by ApiHunter command output (sorted by severity with evidence/remediation context)
 - **Top Findings Display Filtering**: Selected minimum severity is applied to Burp Top Findings rendering (`Critical` / `High` / `Medium`), while scanner output statistics remain complete.
 
-#### 9. Nuclei Tab
+#### 9. Vulners Tab
+- **Vulners Path**: Configure path to vulners binary (optional, uses API by default)
+- **Fingerprint Collection**: Automatic software/version detection from Recon traffic
+- **Custom Targets**: Optional manual fingerprint input for specific software/versions
+- **Run Enrichment**: Query Vulners database for CVE advisories and security context
+- **Ranked Findings**: Top findings sorted by severity with CVE IDs and references
+- **Advisory Context**: Detailed vulnerability descriptions, CVSS scores, and remediation guidance
+- **Stop / PKill Tools**: Cancel active enrichment or emergency-stop processes
+- **Export Results**: Save Vulners findings to file
+- **Append Report**: Append findings to active export session
+
+#### 10. Nuclei Tab
 - **Nuclei Path**: Configure path to nuclei binary
 - **Profile**: `Fast`, `Balanced`, `Deep` API-discovery scan presets
 - **Run Nuclei**: Execute Nuclei scanner with WAF evasion
@@ -443,7 +444,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Targets**: Save target list for external scanning
 - **Features**: Header-based spoofing, rate limiting, clear error reporting
 
-#### 10. HTTPX Tab
+#### 11. HTTPX Tab
 - **HTTPX Path**: Configure path to httpx binary
 - **Probe Endpoints**: Fast HTTP probing with technology detection
 - **Enable Custom**: Opt in to override default command with your own template
@@ -452,7 +453,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **PKill Tools**: Emergency kill for scanner processes
 - **Export URLs**: Save URLs for external tools
 
-#### 11. Katana Tab
+#### 12. Katana Tab
 - **Katana Path**: Configure path to katana binary
 - **Crawl Endpoints**: Deep web crawling for endpoint discovery
 - **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
@@ -464,7 +465,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Discovered**: Save discovered endpoints
 - **Send to Recon**: Import discovered endpoints to Recon tab
 
-#### 12. FFUF Tab
+#### 13. FFUF Tab
 - **FFUF Path**: Configure path to ffuf binary
 - **Wordlist**: Select wordlist for fuzzing
 - **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
@@ -475,7 +476,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Results**: Save fuzzing results
 - **Send to Intruder**: Export results to Burp Intruder
 
-#### 13. Wayback Tab
+#### 14. Wayback Tab
 - **Date Range**: Configure from/to years for historical search
 - **Limit**: Set maximum results to retrieve
 - **Discover**: Query Wayback Machine for historical endpoints
@@ -490,7 +491,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import discovered endpoints to Recon tab
 - **Export Results**: Save discovered endpoints
 
-#### 14. SQLMap Verify Tab
+#### 15. SQLMap Verify Tab
 - **SQLMap Path**: Configure path to local `sqlmap`
 - **Profile**: `Fast`, `Balanced`, `Deep` command tuning presets
 - **Run Verify**: Replay SQLi-priority targets and collect evidence-backed confirmations
@@ -499,7 +500,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import verified SQLi endpoints back into Recon for follow-up
 - **Export Results**: Save verification output to file
 
-#### 15. Dalfox Verify Tab
+#### 16. Dalfox Verify Tab
 - **Dalfox Path**: Configure path to local `dalfox`
 - **Profile**: `Fast`, `Balanced`, `Deep` command tuning presets
 - **Run Verify**: Replay XSS-priority targets and capture Dalfox confirmation output
@@ -508,7 +509,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import verified XSS candidates to Recon
 - **Export Results**: Save Dalfox findings to file
 
-#### 16. API Assets Tab
+#### 17. API Assets Tab
 - **Domains Input**: Optional manual domains list (comma/newline); auto-derives from Recon when empty
 - **Profile**: `Fast`, `Balanced`, `Deep` stage tuning for `subfinder`/`dnsx`/`httpx`
 - **Pipeline**: Runs `subfinder` → `dnsx` → `httpx` for alive API asset discovery
@@ -517,7 +518,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import discovered assets into Recon
 - **Export Results**: Save discovered URLs
 
-#### 17. OpenAPI Drift Tab
+#### 18. OpenAPI Drift Tab
 - **Spec Source**: Load OpenAPI/Swagger file from local path or URL
 - **Generate OpenAPI**: One-click OpenAPI 3.0.3 generation from captured Recon traffic
 - **Run Drift**: Compare observed traffic vs spec and report endpoint/parameter drift
@@ -526,7 +527,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import spec-missing candidates into Recon for probing
 - **Export Results**: Save drift output report
 
-#### 18. GraphQL Tab
+#### 19. GraphQL Tab
 - **Targets Input**: Optional manual GraphQL targets (auto-detects from Recon if empty)
 - **Show Targets**: Preview candidate GraphQL endpoints before execution
 - **Run Analysis**: Run GraphQL-focused multi-tool analysis workflow
@@ -1221,6 +1222,13 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 - ✅ Cleaned payload categorization by removing SSTI probe markers from XSS payload list (SSTI list remains intact).
 
 ### v1.4.4 - ApiHunter Integration + Stability Hardening
+- ✅ Added dedicated `ApiHunter` tab with Desktop-parity presets, PATH-aware runtime resolution, and parsed NDJSON summary rendering.
+- ✅ Added operator-configurable `Top Findings Min` filter (`Critical` / `High` / `Medium`) with persisted UI state.
+- ✅ Added ApiHunter `Use Custom Targets` workflow with strict validation and canonical URL normalization.
+- ✅ Increased capture defaults: body truncation `5KB` -> `20KB`, Logger max memory `5,000` -> `20,000` rows.
+- ✅ Hardened split-module runtime wiring: duplicate `__all__` exports fail fast at startup.
+- ✅ Tightened `process_traffic` lock window to reduce sample-cap race edges.
+- ✅ Cleaned payload categorization by removing SSTI markers from XSS list.
 
 ### v1.4.3 - Token Lineage + Cross-Interface Parity Drift
 - ✅ Added standalone Passive deep-logic actions:
@@ -1422,13 +1430,22 @@ What is already shipped:
 ### Roadmap
 
 - [ ] WebSocket traffic capture
-- [ ] Real-time AI payload generation (OpenAI/Anthropic API)
+- [ ] Real-time AI payload generation (OpenAI/Anthropic API integration)
 - [x] Success pattern detection (`Proof Mode` auto-PoC packet sets with vulnerable vs safe signals)
 - [x] OpenAPI/Swagger spec generation from captured traffic
+- [x] Vulners CVE enrichment integration
+- [x] Incremental report appending workflow
+- [x] Wayback Machine rate limiting and reliability improvements
+- [x] UI responsiveness optimization for high-volume capture
 - [ ] Collaborative data sharing
-- [ ] Custom wordlist integration
+- [ ] Custom wordlist integration for fuzzing
 - [ ] CVSS scoring for findings
 - [x] Abuse Chain Builder (Graph to Replay)
 - [x] Spec Guardrails from Reality
 - [x] Role Delta Engine
-- [x] One-click `Run All Advanced` (execute all four advanced engines)
+- [x] One-click `Run All Advanced` (execute all advanced deep-logic engines)
+- [x] Token Lineage Analysis (passive session lifecycle drift detection)
+- [x] Cross-Interface Parity & Drift checks (REST/GraphQL/internal auth gaps)
+- [x] Counterfactual Differential Pipeline (scoreless invariant breaks)
+- [x] Golden Ticket detection (over-privileged token patterns)
+- [x] State Transition Matrix (workflow/state drift analysis)
