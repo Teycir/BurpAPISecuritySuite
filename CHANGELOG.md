@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.8] - 2026-04-10
+
+### Added
+- Enhanced Wayback Machine rate limiting and reliability:
+  - Added intelligent retry logic with exponential backoff for rate-limited requests.
+  - Implemented request throttling to respect API rate limits.
+  - Added better error handling for timeout and connection issues.
+  - Improved progress reporting during long-running Wayback queries.
+
+### Fixed
+- Fixed Recon/Logger UI freeze issues during high-volume traffic capture:
+  - Moved table view updates to background worker threads.
+  - Implemented debounced UI refresh to prevent EDT blocking.
+  - Reduced UI update frequency during bulk capture operations.
+- Fixed Auth Replay UI responsiveness during heavy replay runs:
+  - Buffered replay results off-EDT for chunked rendering.
+  - Batched progress output to reduce Swing update pressure.
+
 ## [1.4.7] - 2026-04-10
 
 ### Changed

@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.4.4-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.4.8-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -39,6 +39,22 @@ _Scan the QR code or copy the wallet address above._
 ![Security](https://img.shields.io/badge/security-OWASP%20API%20Top%2010-critical.svg)
 
 Professional-grade Burp Suite extension for comprehensive API reconnaissance, intelligent fuzzing, and AI-powered security testing.
+
+## Why One Extension with Multiple Tabs?
+
+BurpAPISecuritySuite consolidates functionality that would typically require 10+ separate extensions into a single, optimized extension. This architectural decision provides significant performance benefits:
+
+**Memory Efficiency**: Running multiple Burp extensions simultaneously creates substantial memory pressure. Each extension maintains its own state, UI components, and event listeners. A single extension with multiple tabs shares resources efficiently and reduces overall memory footprint.
+
+**Reduced API Overhead**: Burp's extension API processes callbacks from every loaded extension. With 10+ extensions, each HTTP request triggers callbacks across all extensions, creating multiplicative overhead. One extension means one callback chain, dramatically reducing CPU cycles and improving responsiveness.
+
+**Shared Context**: Integrated tabs share captured traffic data, eliminating redundant processing. The Recon tab captures once, and all other tabs (Fuzzer, Auth Replay, Passive Discovery, etc.) operate on the same dataset without re-parsing requests.
+
+**Faster Startup**: Loading one extension is significantly faster than loading 10+ extensions. Burp initializes UI components, registers callbacks, and allocates resources once instead of repeatedly.
+
+**Better Stability**: Fewer extensions mean fewer potential conflicts, version mismatches, and compatibility issues. A single codebase is easier to test, debug, and maintain.
+
+This design philosophy prioritizes performance and user experience while delivering comprehensive API security testing capabilities that would otherwise require a complex multi-extension setup.
 
 ## Table of Contents
 
@@ -1151,8 +1167,43 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ### Recent Updates
 
-### v1.4.4 - ApiHunter Integration + Stability Hardening
-- ✅ Added dedicated `ApiHunter` tab with Desktop-parity presets, PATH-aware runtime resolution, and parsed NDJSON summary rendering.
+### v1.4.8 - Wayback Rate Limiting + UI Responsiveness
+- ✅ Enhanced Wayback Machine integration with intelligent rate limiting:
+  - exponential backoff retry logic for rate-limited requests,
+  - request throttling to respect API limits,
+  - improved timeout and connection error handling,
+  - better progress reporting for long-running queries.
+- ✅ Fixed Recon/Logger UI freeze issues during high-volume capture:
+  - background worker threads for table view updates,
+  - debounced UI refresh to prevent EDT blocking,
+  - reduced update frequency during bulk operations.
+- ✅ Fixed Auth Replay UI responsiveness during heavy runs:
+  - off-EDT result buffering with chunked rendering,
+  - batched progress output to reduce Swing pressure.
+
+### v1.4.7 - Auth Replay + Capture Pipeline Stability
+- ✅ Auth Replay execution now isolates UI updates from hot replay loop:
+  - replay result rows buffered off-EDT and rendered in chunked Swing updates,
+  - progress output appends batched to reduce `invokeLater(...)` pressure.
+- ✅ Recon/Logger capture pipeline applies anti-freeze traffic policy:
+  - internal `Extender` traffic skipped by default (`capture_extender_traffic = false`),
+  - listener and deep capture paths short-circuit extension-generated traffic.
+- ✅ Fixed UI freeze/stall during heavy Auth Replay runs caused by capture/UI churn.
+- ✅ Fixed responsiveness degradation when extension-generated traffic was re-captured.
+
+### v1.4.6 - Vulners Integration + Incremental Reports
+- ✅ Native Vulners enrichment workflow:
+  - dedicated `Vulners` tab with run/stop/export wiring,
+  - software/version fingerprint collection from Recon traffic,
+  - advisory enrichment with ranked findings, CVE context, and source references.
+- ✅ Incremental report appending workflow:
+  - per-tab `Append Report` actions to append into active `FullExport` directory,
+  - report session tracking with sequence counter and timestamps,
+  - active-export guardrails with explicit operator status.
+- ✅ AI prompt/export contract aligned with APIPentesting triage schema.
+- ✅ AI prompts require non-destructive PoCs, evidence-backed claims, and duplicate-resistant novelty.
+
+### v1.4.5 - Auth Replay UX + AI Export Enhancements
 - ✅ Added operator-configurable `Top Findings Min` filter (`Critical` / `High` / `Medium`) with persisted UI state.
 - ✅ Added ApiHunter `Use Custom Targets` workflow:
   - `Custom Targets...` popup supports multiline input with strict URL sanitization,
@@ -1168,6 +1219,8 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
   - duplicate `__all__` export names now fail fast at startup,
   - `process_traffic` lock window tightened to reduce sample-cap race edges.
 - ✅ Cleaned payload categorization by removing SSTI probe markers from XSS payload list (SSTI list remains intact).
+
+### v1.4.4 - ApiHunter Integration + Stability Hardening
 
 ### v1.4.3 - Token Lineage + Cross-Interface Parity Drift
 - ✅ Added standalone Passive deep-logic actions:
