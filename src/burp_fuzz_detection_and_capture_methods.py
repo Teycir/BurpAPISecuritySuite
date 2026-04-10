@@ -27,7 +27,6 @@ from javax.swing import (
     JButton,
     JCheckBox,
     JComboBox,
-    JFileChooser,
     JLabel,
     JList,
     JMenuItem,
@@ -2795,397 +2794,33 @@ def _normalize_graphql_target_url(self, value):
             text = "https://{}".format(text)
     return self._clean_url(text)
 
-def _browse_graphql_schema_file(self, event):
-    """Pick local GraphQL introspection schema JSON file."""
-    chooser = JFileChooser()
-    chooser.setDialogTitle("Select GraphQL Introspection Schema JSON")
-    if chooser.showOpenDialog(self._panel) != JFileChooser.APPROVE_OPTION:
-        return
-    filepath = chooser.getSelectedFile().getAbsolutePath()
-    self.graphql_schema_file_field.setText(self._ascii_safe(filepath))
-    self.graphql_area.append("[+] Selected schema file: {}\n".format(filepath))
+def _parse_graphql_target_values(self, text):
+    """Parse GraphQL targets from comma/newline and fallback whitespace-separated text."""
+    raw = self._ascii_safe(text or "")
+    values = self._parse_comma_newline_values(raw)
+    if len(values) > 1:
+        return values
 
-def _extract_graphql_schema_root(self, payload):
-    """Extract __schema root from introspection-like JSON formats."""
-    if not isinstance(payload, dict):
-        return None
-    if isinstance(payload.get("__schema"), dict):
-        return payload.get("__schema")
-    data = payload.get("data")
-    if isinstance(data, dict) and isinstance(data.get("__schema"), dict):
-        return data.get("__schema")
-    schema = payload.get("schema")
-    if isinstance(schema, dict) and isinstance(schema.get("__schema"), dict):
-        return schema.get("__schema")
-    if isinstance(schema, dict) and isinstance(schema.get("types"), list):
-        return schema
-    if isinstance(payload.get("types"), list):
-        return payload
-    return None
-
-def _graphql_type_ref_name(self, type_ref):
-    """Resolve nested GraphQL type ref to the final named type."""
-    current = type_ref
-    for _ in range(8):
-        if not isinstance(current, dict):
-            return ""
-        name = self._ascii_safe(current.get("name") or "").strip()
-        if name:
-            return name
-        current = current.get("ofType")
-    return ""
-
-def _graphql_type_ref_kind(self, type_ref):
-    """Resolve nested GraphQL type ref to final kind."""
-    current = type_ref
-    for _ in range(8):
-        if not isinstance(current, dict):
-            return ""
-        name = self._ascii_safe(current.get("name") or "").strip()
-        if name:
-            return self._ascii_safe(current.get("kind") or "").strip()
-        current = current.get("ofType")
-    return ""
-
-def _graphql_argument_placeholder(self, type_name):
-    """Return GraphQL-safe placeholder value by argument type."""
-    normalized = self._ascii_safe(type_name or "", lower=True).strip()
-    if normalized in ["int", "long", "short"]:
-        return "1"
-    if normalized in ["float", "double", "decimal"]:
-        return "1.0"
-    if normalized in ["boolean", "bool"]:
-        return "true"
-    if normalized in ["id", "uuid"]:
-        return '"1"'
-    if normalized.endswith("input"):
-        return "{}"
-    return '"test"'
-
-def _graphql_build_field_selection(
-    self, type_name, type_map, depth, visited=None, max_fields=4
-):
-    """Build nested selection set for object-like return types."""
-    if depth <= 0:
-        return ""
-    clean_name = self._ascii_safe(type_name).strip()
-    if not clean_name:
-        return ""
-    visited_set = set(visited or set())
-    if clean_name in visited_set:
-        return "{ __typename }"
-
-    type_obj = type_map.get(clean_name)
-    if not isinstance(type_obj, dict):
-        return ""
-    kind = self._ascii_safe(type_obj.get("kind") or "").upper()
-    if kind not in ["OBJECT", "INTERFACE"]:
-        return ""
-    fields = type_obj.get("fields") or []
-    if not isinstance(fields, list) or not fields:
-        return "{ __typename }"
-
-    visited_set.add(clean_name)
-    selection_items = []
-    for field in fields[:max_fields]:
-        field_name = self._ascii_safe(field.get("name") or "").strip()
-        if not field_name:
-            continue
-        child_name = self._graphql_type_ref_name(field.get("type") or {})
-        child_kind = self._graphql_type_ref_kind(field.get("type") or {}).upper()
-        if child_kind in ["SCALAR", "ENUM"] or child_name in [
-            "String",
-            "Int",
-            "Float",
-            "Boolean",
-            "ID",
-        ]:
-            selection_items.append(field_name)
-            continue
-        nested = self._graphql_build_field_selection(
-            child_name,
-            type_map,
-            depth - 1,
-            visited=visited_set,
-            max_fields=max_fields,
-        )
-        if nested:
-            selection_items.append("{} {}".format(field_name, nested))
-        else:
-            selection_items.append(field_name)
-
-    if not selection_items:
-        return "{ __typename }"
-    return "{ " + " ".join(selection_items) + " }"
-
-def _graphql_generate_operations_from_schema(
-    self, schema_root, depth=2, max_operations=120
-):
-    """Generate query/mutation/subscription templates from schema."""
-    types = schema_root.get("types") or []
-    if not isinstance(types, list):
-        return []
-    type_map = {}
-    for item in types:
-        if not isinstance(item, dict):
-            continue
-        name = self._ascii_safe(item.get("name") or "").strip()
-        if name:
-            type_map[name] = item
-
-    root_specs = [
-        ("query", self._ascii_safe((schema_root.get("queryType") or {}).get("name") or "")),
-        ("mutation", self._ascii_safe((schema_root.get("mutationType") or {}).get("name") or "")),
-        ("subscription", self._ascii_safe((schema_root.get("subscriptionType") or {}).get("name") or "")),
-    ]
-
-    generated = []
-    for operation_type, root_name in root_specs:
-        if not root_name:
-            continue
-        root_obj = type_map.get(root_name)
-        if not isinstance(root_obj, dict):
-            continue
-        fields = root_obj.get("fields") or []
-        if not isinstance(fields, list):
-            continue
-        for field in fields:
-            if len(generated) >= max_operations:
-                return generated
-            field_name = self._ascii_safe(field.get("name") or "").strip()
-            if not field_name:
+    # GraphQL targets are entered in a single-line JTextField; historical/newline
+    # values can be collapsed into whitespace, so recover each token here.
+    if any(ch in raw for ch in [" ", "\t"]):
+        recovered = []
+        seen = set()
+        for token in re.split(r"[\s,]+", raw):
+            value = self._ascii_safe(token).strip()
+            if (not value) or (value in seen):
                 continue
-            args = field.get("args") or []
-            arg_chunks = []
-            if isinstance(args, list):
-                for arg in args[:6]:
-                    arg_name = self._ascii_safe(arg.get("name") or "").strip()
-                    arg_type_name = self._graphql_type_ref_name(arg.get("type") or {})
-                    if not arg_name:
-                        continue
-                    arg_chunks.append(
-                        "{}: {}".format(
-                            arg_name,
-                            self._graphql_argument_placeholder(arg_type_name),
-                        )
-                    )
-            args_block = ""
-            if arg_chunks:
-                args_block = "(" + ", ".join(arg_chunks) + ")"
-
-            return_type = self._graphql_type_ref_name(field.get("type") or {})
-            selection = self._graphql_build_field_selection(
-                return_type, type_map, depth=max(1, int(depth))
-            )
-            if selection:
-                body = "{}{} {}".format(field_name, args_block, selection)
-            else:
-                body = "{}{}".format(field_name, args_block)
-
-            operation_name = "{}_{}".format(operation_type, field_name)
-            query = "{} {} {{ {} }}".format(operation_type, operation_name, body)
-            generated.append(
-                {
-                    "operation_type": operation_type,
-                    "operation_name": operation_name,
-                    "field": field_name,
-                    "query": query,
-                }
-            )
-    return generated
-
-def _graphql_schema_points_of_interest(self, operations):
-    """InQL-like points-of-interest tags from generated operations."""
-    pois = []
-    keyword_sets = {
-        "authz_sensitive": [
-            "admin",
-            "role",
-            "permission",
-            "privilege",
-            "grant",
-        ],
-        "secrets_sensitive": [
-            "password",
-            "token",
-            "secret",
-            "apikey",
-            "api_key",
-        ],
-        "internal_debug": [
-            "debug",
-            "internal",
-            "private",
-            "staff",
-            "config",
-        ],
-        "state_change": [
-            "create",
-            "update",
-            "delete",
-            "set",
-            "approve",
-            "transfer",
-            "reset",
-        ],
-    }
-    for operation in operations:
-        query = self._ascii_safe(operation.get("query") or "", lower=True)
-        operation_type = self._ascii_safe(operation.get("operation_type") or "", lower=True)
-        operation_name = self._ascii_safe(operation.get("operation_name") or "")
-        matches = []
-        for category, markers in keyword_sets.items():
-            if any(marker in query for marker in markers):
-                matches.append(category)
-        if operation_type == "mutation":
-            matches.append("mutation_surface")
-        if matches:
-            pois.append(
-                {
-                    "operation": operation_name,
-                    "operation_type": operation_type,
-                    "categories": sorted(set(matches)),
-                }
-            )
-    return pois
-
-def _graphql_detect_circular_references(self, schema_root):
-    """Detect circular type references from schema type graph."""
-    types = schema_root.get("types") or []
-    if not isinstance(types, list):
-        return []
-    adjacency = {}
-    type_names = set()
-    for item in types:
-        if not isinstance(item, dict):
-            continue
-        type_name = self._ascii_safe(item.get("name") or "").strip()
-        if not type_name:
-            continue
-        type_names.add(type_name)
-        adjacency[type_name] = set()
-        for field in (item.get("fields") or []):
-            ref_name = self._graphql_type_ref_name((field or {}).get("type") or {})
-            if ref_name:
-                adjacency[type_name].add(ref_name)
-        for field in (item.get("inputFields") or []):
-            ref_name = self._graphql_type_ref_name((field or {}).get("type") or {})
-            if ref_name:
-                adjacency[type_name].add(ref_name)
-
-    cycles = set()
-    for start in sorted(type_names):
-        stack = [(start, [start])]
-        visited = set([start])
-        while stack:
-            current, path = stack.pop()
-            for nxt in adjacency.get(current, set()):
-                if nxt == start and len(path) > 1:
-                    cycles.add(" -> ".join(path + [start]))
-                    continue
-                if nxt in path:
-                    continue
-                if len(path) >= 7:
-                    continue
-                if nxt in type_names:
-                    stack.append((nxt, path + [nxt]))
-                    visited.add(nxt)
-    return sorted(list(cycles))
-
-def _analyze_graphql_schema_file(self, event):
-    """Analyze local GraphQL introspection schema and generate operations."""
-    import os
-
-    schema_path = self._ascii_safe(self.graphql_schema_file_field.getText()).strip()
-    if not schema_path:
-        self.graphql_area.setText("[!] Select local schema JSON first (Schema File + Browse)\n")
-        return
-    if not os.path.exists(schema_path):
-        self.graphql_area.setText("[!] Schema file not found: {}\n".format(schema_path))
-        return
-
-    try:
-        reader = open(schema_path, "r")
-        payload = json.load(reader)
-        reader.close()
-    except Exception as e:
-        self.graphql_area.setText("[!] Failed to parse schema JSON: {}\n".format(self._ascii_safe(e)))
-        return
-
-    schema_root = self._extract_graphql_schema_root(payload)
-    if not schema_root:
-        self.graphql_area.setText(
-            "[!] File does not contain GraphQL introspection schema (__schema)\n"
-        )
-        return
-
-    operations = self._graphql_generate_operations_from_schema(schema_root, depth=2, max_operations=140)
-    pois = self._graphql_schema_points_of_interest(operations)
-    cycles = self._graphql_detect_circular_references(schema_root)
-
-    lines = []
-    lines.append("=" * 80)
-    lines.append("GRAPHQL SCHEMA ANALYSIS (INQL-LIKE)")
-    lines.append("=" * 80)
-    lines.append("[*] Source File: {}".format(schema_path))
-    lines.append("[*] Generated Operations: {}".format(len(operations)))
-    lines.append("[*] Points of Interest: {}".format(len(pois)))
-    lines.append("[*] Circular References: {}".format(len(cycles)))
-    lines.append("")
-
-    if operations:
-        lines.append("GENERATED OPERATIONS (sample)")
-        lines.append("-" * 80)
-        for op in operations[:20]:
-            lines.append("[{}] {}".format(
-                self._ascii_safe(op.get("operation_type") or "", lower=True).upper(),
-                self._ascii_safe(op.get("query") or ""),
-            ))
-        if len(operations) > 20:
-            lines.append("[*] ... {} more generated operations".format(len(operations) - 20))
-        lines.append("")
-
-    if pois:
-        lines.append("POINTS OF INTEREST")
-        lines.append("-" * 80)
-        for poi in pois[:30]:
-            lines.append(
-                "{} -> {}".format(
-                    self._ascii_safe(poi.get("operation") or ""),
-                    ", ".join(poi.get("categories") or []),
-                )
-            )
-        if len(pois) > 30:
-            lines.append("[*] ... {} more POI entries".format(len(pois) - 30))
-        lines.append("")
-
-    if cycles:
-        lines.append("CIRCULAR REFERENCES")
-        lines.append("-" * 80)
-        for cycle in cycles[:20]:
-            lines.append(cycle)
-        if len(cycles) > 20:
-            lines.append("[*] ... {} more cycles".format(len(cycles) - 20))
-        lines.append("")
-
-    with self.graphql_lock:
-        self.graphql_generated_operations = list(operations)
-        self.graphql_results = list(lines)
-    self.graphql_area.setText("\n".join(lines) + "\n")
-    self.log_to_ui(
-        "[+] GraphQL schema analysis complete: {} ops, {} POI, {} cycles".format(
-            len(operations), len(pois), len(cycles)
-        )
-    )
+            seen.add(value)
+            recovered.append(value)
+        if len(recovered) > 1:
+            return recovered
+    return values
 
 def _export_graphql_batch_queries(self):
     """Export GraphQL batch query payloads for rate-limit bypass testing."""
     import os
 
-    with self.graphql_lock:
-        generated = list(getattr(self, "graphql_generated_operations", []) or [])
-    if not generated:
-        generated = self._collect_graphql_raider_operations(max_count=60)
+    generated = self._collect_graphql_raider_operations(max_count=60)
 
     batch_payloads = []
     if generated:
@@ -3211,7 +2846,9 @@ def _export_graphql_batch_queries(self):
         deduped.append({"query": query})
 
     if not deduped:
-        self.graphql_area.append("[!] No batch payloads to export. Run Analyze Schema first.\n")
+        self.graphql_area.append(
+            "[!] No batch payloads to export. Enable at least one Raider family first.\n"
+        )
         return
 
     export_dir = self._get_export_dir("GraphQL_Batch")
@@ -3263,15 +2900,6 @@ def _export_graphql_batch_queries(self):
         "[+] GraphQL batch export complete: {} payloads".format(len(deduped))
     )
 
-def _collect_graphql_generated_operations(self, max_count=30):
-    """Return generated GraphQL operations, capped for downstream tool send."""
-    with self.graphql_lock:
-        operations = list(getattr(self, "graphql_generated_operations", []) or [])
-    if not operations:
-        return []
-    limit = self._parse_positive_int(max_count, 30, 1, 200)
-    return operations[:limit]
-
 def _graphql_profile_presets(self):
     """Return built-in GraphQL Raider profile presets."""
     return {
@@ -3284,7 +2912,6 @@ def _graphql_profile_presets(self):
             "field_suggestion": True,
             "directive_overload": False,
             "circular_fragment": False,
-            "include_schema_ops": True,
             "request_mode": "POST JSON",
             "max_ops": 40,
         },
@@ -3297,7 +2924,6 @@ def _graphql_profile_presets(self):
             "field_suggestion": True,
             "directive_overload": False,
             "circular_fragment": False,
-            "include_schema_ops": True,
             "request_mode": "GET Query",
             "max_ops": 20,
         },
@@ -3310,7 +2936,6 @@ def _graphql_profile_presets(self):
             "field_suggestion": True,
             "directive_overload": True,
             "circular_fragment": True,
-            "include_schema_ops": True,
             "request_mode": "POST JSON",
             "max_ops": 120,
         },
@@ -3341,7 +2966,6 @@ def _apply_graphql_profile(self, event=None, profile_name=None, log_output=True)
             ("graphql_raider_suggestion_checkbox", "field_suggestion"),
             ("graphql_raider_directive_checkbox", "directive_overload"),
             ("graphql_raider_fragment_checkbox", "circular_fragment"),
-            ("graphql_raider_include_schema_ops_checkbox", "include_schema_ops"),
         ]
         for attr_name, key in checkbox_map:
             component = getattr(self, attr_name, None)
@@ -3412,10 +3036,6 @@ def _graphql_attack_family_selection(self):
 def _collect_graphql_raider_operations(self, max_count=40):
     """Build GraphQL Raider-like operations from selected attack families."""
     max_ops = self._parse_positive_int(max_count, 40, 1, 300)
-    include_schema_ops = bool(
-        getattr(self, "graphql_raider_include_schema_ops_checkbox", None)
-        and self.graphql_raider_include_schema_ops_checkbox.isSelected()
-    )
     selected = self._graphql_attack_family_selection()
     attacks = self._get_graphql_attacks()
     family_map = [
@@ -3432,27 +3052,6 @@ def _collect_graphql_raider_operations(self, max_count=40):
 
     operations = []
     seen_queries = set()
-    if include_schema_ops:
-        for operation in self._collect_graphql_generated_operations(max_count=max_ops):
-            query = self._ascii_safe((operation or {}).get("query") or "").strip()
-            if (not query) or query in seen_queries:
-                continue
-            seen_queries.add(query)
-            operations.append(
-                {
-                    "operation_type": self._ascii_safe(
-                        (operation or {}).get("operation_type") or "query",
-                        lower=True,
-                    ),
-                    "operation_name": self._ascii_safe(
-                        (operation or {}).get("operation_name") or "schema_op"
-                    ),
-                    "query": query,
-                }
-            )
-            if len(operations) >= max_ops:
-                return operations
-
     for toggle_key, attack_key in family_map:
         if not selected.get(toggle_key, False):
             continue
@@ -3474,37 +3073,6 @@ def _collect_graphql_raider_operations(self, max_count=40):
             if len(operations) >= max_ops:
                 return operations
     return operations
-
-def _generate_graphql_raider_operations(self, event):
-    """Generate GraphQL Raider-like operations into the tab operation pool."""
-    max_ops = self._parse_positive_int(
-        getattr(self, "graphql_raider_max_ops_field", None).getText()
-        if getattr(self, "graphql_raider_max_ops_field", None) is not None
-        else "40",
-        40,
-        1,
-        300,
-    )
-    operations = self._collect_graphql_raider_operations(max_count=max_ops)
-    if not operations:
-        self.graphql_area.append(
-            "[!] GraphQL Raider pack is empty. Select at least one attack family.\n"
-        )
-        return
-    with self.graphql_lock:
-        self.graphql_generated_operations = list(operations)
-
-    family_state = self._graphql_attack_family_selection()
-    enabled_families = [
-        key for key in sorted(family_state.keys()) if family_state.get(key, False)
-    ]
-    self.graphql_area.append(
-        "[+] Generated GraphQL Raider pack: {} operations\n[*] Families: {}\n".format(
-            len(operations),
-            ", ".join(enabled_families) if enabled_families else "none",
-        )
-    )
-    self.log_to_ui("[+] GraphQL Raider pack generated: {} ops".format(len(operations)))
 
 def _parse_graphql_custom_headers(self):
     """Parse custom GraphQL request headers from single-line or multiline text."""
@@ -3540,17 +3108,9 @@ def _parse_graphql_custom_headers(self):
     return parsed
 
 def _collect_graphql_delivery_operations(self, max_count=30):
-    """Resolve operations to send: generated pool first, Raider fallback second."""
+    """Resolve operations to send from Raider family selections."""
     limit = self._parse_positive_int(max_count, 30, 1, 300)
-    operations = self._collect_graphql_generated_operations(max_count=limit)
-    if operations:
-        return operations
-    fallback = self._collect_graphql_raider_operations(max_count=limit)
-    if fallback and hasattr(self, "graphql_area") and self.graphql_area is not None:
-        self.graphql_area.append(
-            "[*] Using GraphQL Raider operations (schema-generated pool is empty)\n"
-        )
-    return fallback
+    return self._collect_graphql_raider_operations(max_count=limit)
 
 def _graphql_build_http_request(self, target_url, operation):
     """Build HTTP request for one GraphQL operation and target URL."""
@@ -3625,7 +3185,7 @@ def _send_graphql_operations_to_repeater(self):
     operations = self._collect_graphql_delivery_operations(max_count=30)
     if not operations:
         self.graphql_area.append(
-            "[!] No GraphQL operations available. Run Analyze Schema or Generate Raider first.\n"
+            "[!] No GraphQL operations available. Enable at least one Raider family first.\n"
         )
         return
 
@@ -3670,7 +3230,7 @@ def _send_graphql_operations_to_intruder(self):
     operations = self._collect_graphql_delivery_operations(max_count=20)
     if not operations:
         self.graphql_area.append(
-            "[!] No GraphQL operations available. Run Analyze Schema or Generate Raider first.\n"
+            "[!] No GraphQL operations available. Enable at least one Raider family first.\n"
         )
         return
 
@@ -3764,7 +3324,7 @@ def _collect_graphql_target_candidates(self, max_candidates=30):
 
     raw_input = self._ascii_safe(self.graphql_targets_field.getText()).strip()
     if raw_input:
-        for raw in self._parse_comma_newline_values(raw_input):
+        for raw in self._parse_graphql_target_values(raw_input):
             url = self._normalize_graphql_target_url(raw)
             if not url:
                 continue
@@ -3799,7 +3359,7 @@ def _autopopulate_graphql_targets_from_history(
     if not hasattr(self, "graphql_targets_field") or self.graphql_targets_field is None:
         return []
 
-    current_values = self._parse_comma_newline_values(
+    current_values = self._parse_graphql_target_values(
         self.graphql_targets_field.getText()
     )
     if current_values and (not overwrite):
@@ -3826,7 +3386,8 @@ def _autopopulate_graphql_targets_from_history(
     )
     selected = selected[:max_targets]
     self.graphql_selected_targets = list(selected)
-    self.graphql_targets_field.setText("\n".join(selected))
+    # JTextField is single-line, so keep separators comma-based for reliable re-parse.
+    self.graphql_targets_field.setText(", ".join(selected))
 
     if append_output and hasattr(self, "graphql_area") and self.graphql_area is not None:
         self.graphql_area.append(
@@ -3882,7 +3443,8 @@ def _show_graphql_targets_popup(self, event):
     )
     selected = list(selected[:max_targets])
     self.graphql_selected_targets = list(selected)
-    self.graphql_targets_field.setText("\n".join(selected))
+    # JTextField is single-line, so keep separators comma-based for reliable re-parse.
+    self.graphql_targets_field.setText(", ".join(selected))
 
     if hasattr(self, "graphql_area") and self.graphql_area is not None:
         self.graphql_area.append(
@@ -3898,7 +3460,7 @@ def _collect_graphql_targets(self, max_targets):
     selected_values = list(getattr(self, "graphql_selected_targets", []) or [])
     raw_input = self._ascii_safe(self.graphql_targets_field.getText()).strip()
     if raw_input:
-        selected_values = self._parse_comma_newline_values(raw_input)
+        selected_values = self._parse_graphql_target_values(raw_input)
         self.graphql_selected_targets = list(selected_values)
     elif not selected_values:
         selected_values = self._autopopulate_graphql_targets_from_history(
@@ -3953,7 +3515,21 @@ def _graphql_base_urls(self, urls):
 
 def _run_graphql_analysis(self, event):
     """Run GraphQL-focused analysis using available external tools."""
-    return heavy_runners._run_graphql_analysis(self, event)
+    try:
+        if hasattr(self, "graphql_area") and self.graphql_area is not None:
+            self.graphql_area.setText("[*] Launching GraphQL analysis...\n")
+        return heavy_runners._run_graphql_analysis(self, event)
+    except Exception as e:
+        err = self._ascii_safe(e)
+        if hasattr(self, "graphql_area") and self.graphql_area is not None:
+            self.graphql_area.append(
+                "[!] GraphQL run launch failed: {}\n".format(err)
+            )
+        self._callbacks.printError(
+            "GraphQL run launch failed: {}".format(err)
+        )
+        self.log_to_ui("[!] GraphQL run launch failed: {}".format(err))
+        return None
 
 def _export_graphql_results(self):
     """Export GraphQL analysis summary lines."""
@@ -4163,23 +3739,12 @@ __all__ = [
     "_write_nuclei_partial_results_jsonl",
     "_resolve_graphql_tool_path",
     "_normalize_graphql_target_url",
-    "_browse_graphql_schema_file",
-    "_extract_graphql_schema_root",
-    "_graphql_type_ref_name",
-    "_graphql_type_ref_kind",
-    "_graphql_argument_placeholder",
-    "_graphql_build_field_selection",
-    "_graphql_generate_operations_from_schema",
-    "_graphql_schema_points_of_interest",
-    "_graphql_detect_circular_references",
-    "_analyze_graphql_schema_file",
+    "_parse_graphql_target_values",
     "_export_graphql_batch_queries",
-    "_collect_graphql_generated_operations",
     "_graphql_profile_presets",
     "_apply_graphql_profile",
     "_graphql_attack_family_selection",
     "_collect_graphql_raider_operations",
-    "_generate_graphql_raider_operations",
     "_parse_graphql_custom_headers",
     "_collect_graphql_delivery_operations",
     "_graphql_build_http_request",

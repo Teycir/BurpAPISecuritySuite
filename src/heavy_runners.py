@@ -40,6 +40,10 @@ def _run_graphql_analysis(self, event):
         discovered_urls = set(targets)
         findings = []
         recon_candidates = []
+        for target_url in targets:
+            clean_target = self._clean_url(target_url)
+            if clean_target:
+                recon_candidates.append({"method": "GET", "url": clean_target})
         tool_available = {}
         available_tools = []
         missing_tools = []
@@ -90,13 +94,6 @@ def _run_graphql_analysis(self, event):
             append_line("GRAPHQL ANALYSIS - TOOL STATUS\n")
             append_line("=" * 80 + "\n")
 
-            subfinder_path = self._resolve_graphql_tool_path(
-                "asset_subfinder_path_field",
-                [
-                    os.path.expanduser("~/go/bin/subfinder"),
-                    "subfinder",
-                ],
-            )
             httpx_path = self._resolve_graphql_tool_path(
                 "httpx_path_field",
                 [
@@ -116,13 +113,6 @@ def _run_graphql_analysis(self, event):
                 [
                     os.path.expanduser("~/go/bin/ffuf"),
                     "ffuf",
-                ],
-            )
-            wayback_path = self._resolve_graphql_tool_path(
-                "",
-                [
-                    os.path.expanduser("~/go/bin/waybackurls"),
-                    "waybackurls",
                 ],
             )
             nuclei_path = self._resolve_graphql_tool_path(
@@ -147,9 +137,6 @@ def _run_graphql_analysis(self, event):
                 ],
             )
 
-            tool_available["Subfinder"] = check_tool(
-                "Subfinder", subfinder_path, ["-d", "-silent"]
-            )
             tool_available["HTTPX"] = check_tool(
                 "HTTPX",
                 httpx_path,
@@ -163,9 +150,6 @@ def _run_graphql_analysis(self, event):
                 "Katana", katana_path, ["-u", "-d"]
             )
             tool_available["FFUF"] = check_tool("FFUF", ffuf_path, ["-u", "-w"])
-            tool_available["Wayback"] = check_tool(
-                "Wayback", wayback_path, ["-dates", "-no-subs"]
-            )
             tool_available["Nuclei"] = check_tool(
                 "Nuclei", nuclei_path, ["-list", "-tags", "-etags", "-jsonl"]
             )
@@ -186,52 +170,94 @@ def _run_graphql_analysis(self, event):
                 )
             )
 
-            # Stage 1: Subfinder domain expansion
-            base_domains = []
-            for base in self._graphql_base_urls(targets):
-                try:
-                    parsed = URL(base)
-                    host = self._ascii_safe(parsed.getHost(), lower=True).strip()
-                    root = self._infer_base_domain(host) or host
-                    if root and root not in base_domains:
-                        base_domains.append(root)
-                except Exception as parse_err:
-                    self._callbacks.printError(
-                        "GraphQL domain parse error: {}".format(str(parse_err))
+            # Stage 0: Passive GraphQL synthesis from captured Recon traffic
+            passive_graphql_hits = []
+            passive_seen_urls = set()
+            target_set = set()
+            for url in targets:
+                clean_target = self._clean_url(url)
+                if clean_target:
+                    target_set.add(clean_target)
+            target_bases = set(self._graphql_base_urls(targets))
+            with self.lock:
+                api_snapshot = list(self.api_data.values())
+            for records in api_snapshot:
+                rows = records if isinstance(records, list) else [records]
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    score = int(self._graphql_target_candidate_score(row) or 0)
+                    candidate_url = self._clean_url(self._build_url(row, True))
+                    if not candidate_url:
+                        continue
+                    low_url = self._ascii_safe(candidate_url, lower=True)
+                    url_has_graphql_marker = any(
+                        marker in low_url
+                        for marker in ["graphql", "graphiql", "playground"]
                     )
-                    continue
-            if tool_available.get("Subfinder") and base_domains:
-                domains_file = os.path.join(temp_dir, "domains.txt")
-                subfinder_file = os.path.join(temp_dir, "subfinder.txt")
-                with open(domains_file, "w") as writer:
-                    for domain in base_domains[:10]:
-                        writer.write(domain + "\n")
-                cmd = [
-                    subfinder_path,
-                    "-dL",
-                    domains_file,
-                    "-silent",
-                    "-o",
-                    subfinder_file,
-                ]
-                append_line("[*] Tool: Subfinder\n")
-                append_line("[*] CMD: {}\n".format(" ".join(cmd)))
-                ok, cancelled, _, err = self._run_command_stage(
-                    "graphqlanalysis", "Subfinder", cmd, self.graphql_area, 150
-                )
-                if cancelled:
-                    append_line("[!] GraphQL analysis cancelled by user\n")
-                    return
-                if not ok:
-                    append_line("[!] Subfinder error: {}\n".format(self._ascii_safe(err)))
-                if os.path.exists(subfinder_file):
-                    with open(subfinder_file, "r") as reader:
-                        for line in reader:
-                            host = self._ascii_safe(line, lower=True).strip().strip(".")
-                            if host and "." in host:
-                                discovered_urls.add("https://{}/graphql".format(host))
+                    if (score <= 0) and (not url_has_graphql_marker):
+                        continue
+                    base_candidates = self._graphql_base_urls([candidate_url])
+                    candidate_base = base_candidates[0] if base_candidates else ""
+                    in_scope = candidate_url in target_set or (
+                        candidate_base and candidate_base in target_bases
+                    )
+                    if (score <= 0) and (not in_scope):
+                        continue
+                    if (
+                        target_bases
+                        and candidate_base
+                        and (candidate_base not in target_bases)
+                        and (candidate_url not in target_set)
+                    ):
+                        continue
 
-            # Stage 2: HTTPX validation
+                    discovered_urls.add(candidate_url)
+                    if candidate_url in passive_seen_urls:
+                        continue
+                    passive_seen_urls.add(candidate_url)
+                    passive_graphql_hits.append(candidate_url)
+
+                    method_text = self._ascii_safe(
+                        row.get("method") or "GET", lower=True
+                    ).strip().upper()
+                    if not method_text:
+                        method_text = "GET"
+                    status_value = self._ascii_safe(
+                        row.get("response_status") or row.get("status") or ""
+                    ).strip()
+                    auth_values = row.get("auth_detected") or []
+                    auth_tokens = []
+                    if isinstance(auth_values, list):
+                        for auth in auth_values[:3]:
+                            token = self._ascii_safe(auth).strip()
+                            if token:
+                                auth_tokens.append(token)
+                    auth_text = ",".join(auth_tokens) if auth_tokens else "-"
+
+                    recon_candidates.append(
+                        {"method": method_text, "url": candidate_url}
+                    )
+                    findings.append(
+                        "[CAPTURE] {} {} | status={} | score={} | auth={}".format(
+                            method_text,
+                            candidate_url,
+                            status_value or "?",
+                            score,
+                            auth_text,
+                        )
+                    )
+                    if len(passive_graphql_hits) >= 250:
+                        break
+                if len(passive_graphql_hits) >= 250:
+                    break
+            append_line(
+                "[*] Passive capture GraphQL matches: {}\n".format(
+                    len(passive_graphql_hits)
+                )
+            )
+
+            # Stage 1: HTTPX validation
             alive_urls = []
             if tool_available.get("HTTPX"):
                 httpx_targets_file = os.path.join(temp_dir, "httpx_targets.txt")
@@ -255,7 +281,12 @@ def _run_graphql_analysis(self, event):
                 append_line("[*] Tool: HTTPX\n")
                 append_line("[*] CMD: {}\n".format(" ".join(cmd)))
                 ok, cancelled, _, err = self._run_command_stage(
-                    "graphqlanalysis", "HTTPX", cmd, self.graphql_area, 180
+                    "graphqlanalysis",
+                    "HTTPX",
+                    cmd,
+                    self.graphql_area,
+                    180,
+                    heartbeat_seconds=10,
                 )
                 if cancelled:
                     append_line("[!] GraphQL analysis cancelled by user\n")
@@ -286,7 +317,7 @@ def _run_graphql_analysis(self, event):
                                     {"method": "GET", "url": url_value}
                                 )
 
-            # Stage 3: Katana crawl
+            # Stage 2: Katana crawl
             katana_found = []
             if tool_available.get("Katana"):
                 for idx, base in enumerate(self._graphql_base_urls(alive_urls or targets)[:5]):
@@ -310,7 +341,12 @@ def _run_graphql_analysis(self, event):
                     append_line("[*] Tool: Katana\n")
                     append_line("[*] CMD: {}\n".format(" ".join(cmd)))
                     ok, cancelled, _, err = self._run_command_stage(
-                        "graphqlanalysis", "Katana", cmd, self.graphql_area, 120
+                        "graphqlanalysis",
+                        "Katana",
+                        cmd,
+                        self.graphql_area,
+                        120,
+                        heartbeat_seconds=8,
                     )
                     if cancelled:
                         append_line("[!] GraphQL analysis cancelled by user\n")
@@ -341,7 +377,7 @@ def _run_graphql_analysis(self, event):
                                         {"method": "GET", "url": url_value}
                                     )
 
-            # Stage 4: FFUF GraphQL path probing
+            # Stage 3: FFUF GraphQL path probing
             ffuf_found = []
             if tool_available.get("FFUF"):
                 words_file = os.path.join(temp_dir, "graphql_words.txt")
@@ -384,7 +420,12 @@ def _run_graphql_analysis(self, event):
                     append_line("[*] Tool: FFUF\n")
                     append_line("[*] CMD: {}\n".format(" ".join(cmd)))
                     ok, cancelled, _, err = self._run_command_stage(
-                        "graphqlanalysis", "FFUF", cmd, self.graphql_area, 80
+                        "graphqlanalysis",
+                        "FFUF",
+                        cmd,
+                        self.graphql_area,
+                        80,
+                        heartbeat_seconds=8,
                     )
                     if cancelled:
                         append_line("[!] GraphQL analysis cancelled by user\n")
@@ -410,61 +451,7 @@ def _run_graphql_analysis(self, event):
                                 )
                             )
 
-            # Stage 5: Wayback archived GraphQL URLs
-            wayback_found = []
-            if tool_available.get("Wayback"):
-                domains = []
-                for base in self._graphql_base_urls(alive_urls or targets):
-                    try:
-                        host = self._ascii_safe(URL(base).getHost(), lower=True).strip()
-                        domain = self._infer_base_domain(host) or host
-                        if domain and domain not in domains:
-                            domains.append(domain)
-                    except Exception as parse_err:
-                        self._callbacks.printError(
-                            "GraphQL wayback domain parse error: {}".format(
-                                str(parse_err)
-                            )
-                        )
-                        continue
-                for domain in domains[:5]:
-                    safe_domain = self._ascii_safe(domain, lower=True).strip()
-                    if not safe_domain:
-                        continue
-                    cmd = [
-                        wayback_path,
-                        "-dates",
-                        "-no-subs",
-                    ]
-                    append_line("[*] Tool: Wayback\n")
-                    append_line("[*] CMD: {} (stdin: {})\n".format(" ".join(cmd), safe_domain))
-                    ok, cancelled, stdout_data, err = self._run_command_stage(
-                        "graphqlanalysis",
-                        "Wayback",
-                        cmd,
-                        self.graphql_area,
-                        60,
-                        input_text=safe_domain,
-                    )
-                    if cancelled:
-                        append_line("[!] GraphQL analysis cancelled by user\n")
-                        return
-                    if not ok:
-                        append_line("[!] Wayback error: {}\n".format(self._ascii_safe(err)))
-                    line_count = 0
-                    for line in self._ascii_safe(stdout_data).splitlines():
-                        if line_count >= 200:
-                            break
-                        line_count += 1
-                        url_value = self._clean_url(line)
-                        if url_value and "graphql" in self._ascii_safe(
-                            url_value, lower=True
-                        ):
-                            wayback_found.append(url_value)
-                            discovered_urls.add(url_value)
-                            recon_candidates.append({"method": "GET", "url": url_value})
-
-            # Stage 6: Focused Nuclei
+            # Stage 4: Focused Nuclei
             nuclei_lines = []
             if tool_available.get("Nuclei"):
                 nuclei_targets = sorted(
@@ -512,7 +499,12 @@ def _run_graphql_analysis(self, event):
                 append_line("[*] Tool: Nuclei\n")
                 append_line("[*] CMD: {}\n".format(" ".join(cmd)))
                 ok, cancelled, _, err = self._run_command_stage(
-                    "graphqlanalysis", "Nuclei", cmd, self.graphql_area, 240
+                    "graphqlanalysis",
+                    "Nuclei",
+                    cmd,
+                    self.graphql_area,
+                    240,
+                    heartbeat_seconds=12,
                 )
                 if cancelled:
                     append_line("[!] GraphQL analysis cancelled by user\n")
@@ -527,7 +519,7 @@ def _run_graphql_analysis(self, event):
                                 nuclei_lines.append(clean_line)
                                 findings.append("[NUCLEI] {}".format(clean_line))
 
-            # Stage 7: Dalfox/SQLMap on query targets
+            # Stage 5: Dalfox/SQLMap on query targets
             query_targets = [
                 url for url in sorted(discovered_urls) if "?" in self._ascii_safe(url)
             ][:3]
@@ -559,7 +551,12 @@ def _run_graphql_analysis(self, event):
                         append_line("[*] Tool: Dalfox\n")
                         append_line("[*] CMD: {}\n".format(" ".join(cmd)))
                         ok, cancelled, _, err = self._run_command_stage(
-                            "graphqlanalysis", "Dalfox", cmd, self.graphql_area, 120
+                            "graphqlanalysis",
+                            "Dalfox",
+                            cmd,
+                            self.graphql_area,
+                            120,
+                            heartbeat_seconds=10,
                         )
                         if cancelled:
                             append_line("[!] GraphQL analysis cancelled by user\n")
@@ -598,7 +595,12 @@ def _run_graphql_analysis(self, event):
                         append_line("[*] Tool: SQLMap\n")
                         append_line("[*] CMD: {}\n".format(" ".join(cmd)))
                         ok, cancelled, stdout_data, err = self._run_command_stage(
-                            "graphqlanalysis", "SQLMap", cmd, self.graphql_area, 120
+                            "graphqlanalysis",
+                            "SQLMap",
+                            cmd,
+                            self.graphql_area,
+                            120,
+                            heartbeat_seconds=10,
                         )
                         if cancelled:
                             append_line("[!] GraphQL analysis cancelled by user\n")
@@ -619,19 +621,26 @@ def _run_graphql_analysis(self, event):
                 if not url_value or url_value in candidate_seen:
                     continue
                 candidate_seen.add(url_value)
-                cleaned_candidates.append({"method": "GET", "url": url_value})
+                method_value = self._ascii_safe(
+                    candidate.get("method") or "GET", lower=True
+                ).strip().upper()
+                if not method_value:
+                    method_value = "GET"
+                cleaned_candidates.append({"method": method_value, "url": url_value})
 
             summary_lines = []
             summary_lines.append("\n" + "=" * 80)
             summary_lines.append("GRAPHQL ANALYSIS RESULTS")
             summary_lines.append("=" * 80)
             summary_lines.append("[*] Targets input: {}".format(len(targets)))
+            summary_lines.append(
+                "[*] Captured GraphQL matches: {}".format(len(passive_graphql_hits))
+            )
             summary_lines.append("[*] Tools available: {}".format(len(available_tools)))
             summary_lines.append("[*] Tools missing: {}".format(len(missing_tools)))
             summary_lines.append("[*] HTTPX alive URLs: {}".format(len(alive_urls)))
             summary_lines.append("[*] Katana GraphQL-like URLs: {}".format(len(katana_found)))
             summary_lines.append("[*] FFUF hits: {}".format(len(ffuf_found)))
-            summary_lines.append("[*] Wayback GraphQL URLs: {}".format(len(wayback_found)))
             summary_lines.append("[*] Nuclei findings: {}".format(len(nuclei_lines)))
             summary_lines.append("[*] Total findings lines: {}".format(len(findings)))
             summary_lines.append(

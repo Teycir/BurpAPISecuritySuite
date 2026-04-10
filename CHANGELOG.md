@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.10] - 2026-04-10
+
+### Removed
+- GraphQL `Generate Raider` action button from the GraphQL tab.
+- GraphQL `Analyze Schema` workflow and related schema UI controls:
+  - removed `Schema File` input field,
+  - removed `Browse` button,
+  - removed `Analyze Schema` button.
+- Local schema-analysis/inql-like helper pipeline from GraphQL tooling:
+  - schema file selection and parsing helpers,
+  - schema-derived operation generation helpers,
+  - points-of-interest and circular-reference analysis helpers.
+- GraphQL Raider `Include Schema Ops` toggle and schema-coupled profile handling.
+
+### Changed
+- GraphQL operation delivery and batch export now rely on Raider-family payload generation only (no schema-generated operation pool).
+- GraphQL empty-operation guidance now directs operators to enable Raider families instead of running schema analysis.
+- Feature-contract coverage updated to match the removed GraphQL buttons/workflows and new operator guidance text.
+
 ## [1.4.9] - 2026-04-10
 
 ### Added

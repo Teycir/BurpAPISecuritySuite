@@ -1006,11 +1006,7 @@ def test_autorize_and_inql_features_are_wired():
         "method_allowlist=method_allowlist",
         "detector_cfg=detector_cfg",
         "compare_roles = [role for role in [\"unauth\", \"guest\", \"user\"] if role in role_results]",
-        'self.graphql_schema_file_field = JTextField("", 24)',
-        'lambda e: self._browse_graphql_schema_file(e),',
-        'lambda e: self._generate_graphql_raider_operations(e),',
         'lambda e: self._apply_graphql_profile(e),',
-        'lambda e: self._analyze_graphql_schema_file(e),',
         'lambda e: self._export_graphql_batch_queries(),',
         'lambda e: self._send_graphql_operations_to_repeater(),',
         'lambda e: self._send_graphql_operations_to_intruder(),',
@@ -1019,18 +1015,15 @@ def test_autorize_and_inql_features_are_wired():
         'self.graphql_raider_alias_checkbox = JCheckBox("Aliases", True)',
         'self.graphql_raider_depth_checkbox = JCheckBox("Depth", False)',
         'self.graphql_raider_mutation_checkbox = JCheckBox("Mutations", False)',
-        'self.graphql_raider_include_schema_ops_checkbox = JCheckBox("Include Schema Ops", True)',
         'self.graphql_profile_combo = JComboBox(',
         '"Safe Recon", "Aggressive Raider"',
         'self.graphql_request_mode_combo = JComboBox(["POST JSON", "GET Query"])',
         'self.graphql_headers_field = JTextField("", 28)',
         "self.graphql_profile_combo.addActionListener(",
-        "def _collect_graphql_generated_operations(",
         "def _graphql_profile_presets(",
         "def _apply_graphql_profile(",
         "def _graphql_attack_family_selection(",
         "def _collect_graphql_raider_operations(",
-        "def _generate_graphql_raider_operations(",
         "def _parse_graphql_custom_headers(",
         "def _collect_graphql_delivery_operations(",
         "def _graphql_build_http_request(",
@@ -1039,18 +1032,10 @@ def test_autorize_and_inql_features_are_wired():
         'if request_mode == "get query":',
         '"[+] Sent {} generated operations to Repeater using target {}\\n"',
         '"[+] Sent {} generated operations to Intruder using target {}\\n"',
-        '"[!] No GraphQL operations available. Run Analyze Schema or Generate Raider first.\\n"',
-        "self.graphql_generated_operations = []",
+        '"[!] No GraphQL operations available. Enable at least one Raider family first.\\n"',
         'self.graphql_active_profile = "Balanced"',
         'self._apply_graphql_profile(profile_name="Balanced", log_output=False)',
-        "def _browse_graphql_schema_file(",
-        "def _extract_graphql_schema_root(",
-        "def _graphql_generate_operations_from_schema(",
-        "def _graphql_schema_points_of_interest(",
-        "def _graphql_detect_circular_references(",
-        "def _analyze_graphql_schema_file(",
         "def _export_graphql_batch_queries(",
-        "GRAPHQL SCHEMA ANALYSIS (INQL-LIKE)",
         "graphql_batch_payload.json",
     ]
     for token in required_tokens:
@@ -1071,6 +1056,101 @@ def test_auth_replay_base_url_scope_filter_wired():
     for token in required_tokens:
         assert token in text, "Missing Auth Replay base-scope token: {}".format(token)
     print("[PASS] test_auth_replay_base_url_scope_filter_wired")
+
+def test_graphql_targets_field_uses_safe_delimiters_and_parser_recovery():
+    text = _source_text()
+    required_tokens = [
+        "def _parse_graphql_target_values(",
+        "for token in re.split(r\"[\\s,]+\", raw):",
+        "self.graphql_targets_field.setText(\", \".join(selected))",
+        "selected_values = self._parse_graphql_target_values(raw_input)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing GraphQL target parsing safety token: {}".format(token)
+    print("[PASS] test_graphql_targets_field_uses_safe_delimiters_and_parser_recovery")
+
+def test_graphql_analysis_includes_passive_capture_fallback():
+    text = _source_text()
+    required_tokens = [
+        "# Stage 0: Passive GraphQL synthesis from captured Recon traffic",
+        'recon_candidates.append({"method": "GET", "url": clean_target})',
+        '"[*] Passive capture GraphQL matches: {}\\n".format(',
+        '"[*] Captured GraphQL matches: {}".format(len(passive_graphql_hits))',
+        'cleaned_candidates.append({"method": method_value, "url": url_value})',
+        '"[CAPTURE] {} {} | status={} | score={} | auth={}".format(',
+        'if (score <= 0) and (not url_has_graphql_marker):',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing GraphQL passive fallback token: {}".format(token)
+    print("[PASS] test_graphql_analysis_includes_passive_capture_fallback")
+
+def test_graphql_analysis_stages_emit_heartbeat_progress():
+    text = _source_text()
+    required_tokens = [
+        'heartbeat_seconds=10,',
+        'heartbeat_seconds=8,',
+        '"[*] {} still running... {}s elapsed\\n".format(t, e)',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing GraphQL heartbeat-progress token: {}".format(token)
+    print("[PASS] test_graphql_analysis_stages_emit_heartbeat_progress")
+
+def test_graphql_runner_excludes_subfinder_and_wayback_stages():
+    runner_text = _repo_file_text("heavy_runners.py")
+    required_tokens = [
+        'tool_available["HTTPX"] = check_tool(',
+        'tool_available["Katana"] = check_tool(',
+        'tool_available["FFUF"] = check_tool(',
+        'tool_available["Nuclei"] = check_tool(',
+        'tool_available["Dalfox"] = check_tool(',
+        'tool_available["SQLMap"] = check_tool(',
+        "# Stage 1: HTTPX validation",
+        "# Stage 2: Katana crawl",
+        "# Stage 3: FFUF GraphQL path probing",
+        "# Stage 4: Focused Nuclei",
+    ]
+    for token in required_tokens:
+        assert token in runner_text, "Missing GraphQL runner stage token: {}".format(token)
+
+    forbidden_tokens = [
+        'tool_available["Subfinder"] = check_tool(',
+        'tool_available["Wayback"] = check_tool(',
+        "# Stage 1: Subfinder domain expansion",
+        "# Stage 5: Wayback archived GraphQL URLs",
+        "Wayback GraphQL URLs",
+    ]
+    for token in forbidden_tokens:
+        assert token not in runner_text, "Unexpected GraphQL runner token still present: {}".format(token)
+    print("[PASS] test_graphql_runner_excludes_subfinder_and_wayback_stages")
+
+def test_graphql_ui_run_description_matches_trimmed_runner():
+    ui_text = _repo_file_text("burp_core_ui_and_fuzz_methods.py")
+    required = "Runs: HTTPX, Katana, FFUF, Nuclei, Dalfox, SQLMap (+ passive captured GraphQL synthesis)."
+    assert required in ui_text, "Missing updated GraphQL run-description text"
+    print("[PASS] test_graphql_ui_run_description_matches_trimmed_runner")
+
+def test_graphql_run_analysis_launch_errors_are_surfaced():
+    text = _source_text()
+    required_tokens = [
+        'self.graphql_area.setText("[*] Launching GraphQL analysis...\\n")',
+        '"[!] GraphQL run launch failed: {}\\n".format(err)',
+        '"GraphQL run launch failed: {}".format(err)',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing GraphQL launch-error surfacing token: {}".format(token)
+    print("[PASS] test_graphql_run_analysis_launch_errors_are_surfaced")
+
+def test_parse_positive_int_handles_numeric_inputs_safely():
+    text = _source_text()
+    required_tokens = [
+        "def _parse_positive_int(self, text, default_value, min_value, max_value):",
+        "raw_text = self._ascii_safe(text).strip()",
+        "if raw_text:",
+        "value = int(raw_text)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing numeric-safe positive-int parsing token: {}".format(token)
+    print("[PASS] test_parse_positive_int_handles_numeric_inputs_safely")
 
 def test_auth_replay_noise_and_duplicate_header_guards_present():
     text = _source_text()
@@ -1511,10 +1591,7 @@ def test_external_tool_commands_are_cross_platform_safe():
         "cmd = self._build_shell_command(custom_httpx_command)",
         "cmd = self._build_shell_command(custom_katana_command)",
         "cmd = self._build_shell_command(custom_wayback_command)",
-        "wayback_path,",
-        '"-dates",',
-        '"-no-subs",',
-        "input_text=safe_domain,",
+        '"required": ["-dates", "-no-subs"],',
         '"{apihunter_path} --urls {targets_file} --format ndjson --output {results_file}',
         '"{httpx_path} -l {urls_file} -status-code -nc -silent"',
         '"{katana_path} -list {urls_file} -d 1 -jc -silent"',

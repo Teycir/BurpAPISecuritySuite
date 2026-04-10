@@ -4662,8 +4662,12 @@ def _export_list_to_file(self, data_list, export_type, output_area, list_name):
 
 def _parse_positive_int(self, text, default_value, min_value, max_value):
     """Parse bounded positive integer from UI text fields."""
+    raw_text = self._ascii_safe(text).strip()
     try:
-        value = int((text or "").strip())
+        if raw_text:
+            value = int(raw_text)
+        else:
+            value = int(default_value)
     except (TypeError, ValueError):
         value = int(default_value)
     if value < min_value:

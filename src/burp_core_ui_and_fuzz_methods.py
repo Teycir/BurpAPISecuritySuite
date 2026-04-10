@@ -77,7 +77,6 @@ _PERSISTED_CHECKBOX_ATTRS = (
     "graphql_raider_suggestion_checkbox",
     "graphql_raider_directive_checkbox",
     "graphql_raider_fragment_checkbox",
-    "graphql_raider_include_schema_ops_checkbox",
 )
 
 _PERSISTED_TEXT_ATTRS = (
@@ -117,7 +116,6 @@ _PERSISTED_TEXT_ATTRS = (
     "wayback_limit_field",
     "wayback_custom_cmd_field",
     "graphql_targets_field",
-    "graphql_schema_file_field",
     "graphql_max_targets_field",
     "graphql_raider_max_ops_field",
     "graphql_headers_field",
@@ -5431,24 +5429,11 @@ def _create_graphql_tab(self):
         "Optional. Leave empty to auto-pick GraphQL endpoints from Recon history."
     )
     controls_line1.add(self.graphql_targets_field)
-    controls_line1.add(JLabel("Schema File:"))
-    self.graphql_schema_file_field = JTextField("", 24)
-    self.graphql_schema_file_field.setToolTipText(
-        "Optional local introspection JSON file for InQL-like schema analysis."
-    )
-    controls_line1.add(self.graphql_schema_file_field)
     controls_line1.add(JLabel("Max:"))
     self.graphql_max_targets_field = JTextField(
         UI_CORE_DEFAULTS["graphql_max_targets"], 3
     )
     controls_line1.add(self.graphql_max_targets_field)
-    controls_line2.add(
-        self._create_action_button(
-            "Browse",
-            Color(96, 125, 139),
-            lambda e: self._browse_graphql_schema_file(e),
-        )
-    )
     controls_line2.add(
         self._create_action_button(
             "Show Targets",
@@ -5461,20 +5446,6 @@ def _create_graphql_tab(self):
             "Run Analysis",
             Color(138, 43, 226),
             lambda e: self._run_graphql_analysis(e),
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "Generate Raider",
-            Color(111, 66, 193),
-            lambda e: self._generate_graphql_raider_operations(e),
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "Analyze Schema",
-            Color(111, 66, 193),
-            lambda e: self._analyze_graphql_schema_file(e),
         )
     )
     controls_line2.add(
@@ -5563,8 +5534,6 @@ def _create_graphql_tab(self):
     raider_row.add(self.graphql_raider_directive_checkbox)
     self.graphql_raider_fragment_checkbox = JCheckBox("Fragments", False)
     raider_row.add(self.graphql_raider_fragment_checkbox)
-    self.graphql_raider_include_schema_ops_checkbox = JCheckBox("Include Schema Ops", True)
-    raider_row.add(self.graphql_raider_include_schema_ops_checkbox)
     raider_row.add(JLabel("Profile:"))
     self.graphql_profile_combo = JComboBox(
         ["Balanced", "Safe Recon", "Aggressive Raider"]
@@ -5600,7 +5569,7 @@ def _create_graphql_tab(self):
     info_row = JPanel(FlowLayout(FlowLayout.LEFT))
     info_row.add(
         JLabel(
-            "Runs: Subfinder, HTTPX, Katana, FFUF, Wayback, Nuclei, Dalfox, SQLMap (if available)."
+            "Runs: HTTPX, Katana, FFUF, Nuclei, Dalfox, SQLMap (+ passive captured GraphQL synthesis)."
         )
     )
     top_panel.add(controls_line1)
@@ -5613,7 +5582,6 @@ def _create_graphql_tab(self):
     panel.add(scroll, BorderLayout.CENTER)
     self.graphql_results = []
     self.graphql_recon_candidates = []
-    self.graphql_generated_operations = []
     self.graphql_target_candidates = []
     self.graphql_selected_targets = []
     self.graphql_lock = threading.Lock()
