@@ -170,6 +170,8 @@ This design philosophy prioritizes performance and user experience while deliver
 ### ApiHunter Tab
 Integrated gap-fill + deep-search runner calibrated to complement Nuclei/HTTPX/Katana coverage.
 
+**Note**: ApiHunter is a proprietary tool. See https://github.com/Teycir/ApiHunter for details.
+
 ### Nuclei Tab
 ![Nuclei Integration](public/nuclei.png)
 
@@ -223,7 +225,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **WAF Evasion**: Header injection, encoding bypass, method override, path manipulation
 
 ### 🔍 Discovery Tools
-- **ApiHunter Deep Search**: Filtered/deduped endpoint scans with WAF-evasive gap-fill calibration for auth/workflow/API-logic issues
+- **ApiHunter Deep Search**: Filtered/deduped endpoint scans with WAF-evasive gap-fill calibration for auth/workflow/API-logic issues (proprietary tool: https://github.com/Teycir/ApiHunter)
 - **Version Scanner**: Test API version variations (v1, v2, dev, staging, legacy)
 - **Param Miner**: Discover hidden parameters (admin, debug, internal, callback)
 - **SQLMap Verify**: Confirm SQL injection candidates with evidence-driven sqlmap checks
@@ -397,6 +399,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 
 #### 8. ApiHunter Tab
 - **ApiHunter Path**: Configure `apihunter` binary path (default auto-detection searches runtime `PATH`, then shell probes (`bash -lc` and `bash -ic`) via `command -v`, and copies the discovered absolute path; no static fallback candidates)
+- **Note**: ApiHunter is a proprietary tool available at https://github.com/Teycir/ApiHunter
 - **Runtime PATH Resolve**: On `Run ApiHunter`, the suite re-resolves `apihunter` from PATH (process + shell probe) and auto-updates the field to the resolved absolute binary when available
 - **Calibration**: `Quick (Desktop Preset)`, `Balanced (Desktop Preset)` (default), `Deep (Desktop Preset)`
 - **Top Findings Min**: Operator-configurable `Critical` / `High` / `Medium` threshold for summary triage noise control
@@ -958,7 +961,7 @@ The Fuzzer detects GraphQL endpoints automatically and generates attacks for:
 **Q: Do I need to install ApiHunter/Nuclei/HTTPX/Katana/FFUF?**
 
 A: Only if you want to use those specific tabs. The core extension works without them. Install from:
-- ApiHunter: https://github.com/Teycir/ApiHunter (or local clone at `~/Repos/ApiHunter`, then build `target/release/apihunter`)
+- ApiHunter: https://github.com/Teycir/ApiHunter (proprietary tool - requires separate installation or local build at `~/Repos/ApiHunter`, then build `target/release/apihunter`)
 - Nuclei: https://github.com/projectdiscovery/nuclei
 - HTTPX: https://github.com/projectdiscovery/httpx
 - Katana: https://github.com/projectdiscovery/katana
