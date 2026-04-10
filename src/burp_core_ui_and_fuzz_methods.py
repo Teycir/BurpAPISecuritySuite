@@ -6896,48 +6896,82 @@ def _collect_fuzzer_targets(self, strict=True):
                 raw_snapshot[key] = [raw_entries]
 
     filter_cfg = self._build_passive_filter_config(raw_snapshot)
-    filtered = {}
-    sparse_candidates = {}
-    excluded_endpoints = 0
+    def _run_target_filter_pass(active_filter_cfg):
+        filtered_local = {}
+        sparse_candidates_local = {}
+        excluded_endpoints_local = 0
+        for key, entries in raw_snapshot.items():
+            kept_entries = []
+            sparse_entries = []
+            sparse_score = 0
+            entries_list = entries if isinstance(entries, list) else [entries]
+            for entry in entries_list:
+                if not isinstance(entry, dict):
+                    continue
+                if not self._passive_entry_allowed(entry, active_filter_cfg):
+                    continue
+                normalized = self._normalize_endpoint_data(entry)
+                status = int(normalized.get("response_status", 200) or 200)
+                if status == 404:
+                    continue
+                if not self._fuzzer_endpoint_is_api_like(normalized, strict=strict):
+                    candidate_score = self._fuzzer_sparse_candidate_score(
+                        normalized, strict=strict
+                    )
+                    if candidate_score > 0:
+                        sparse_entries.append(entry)
+                        sparse_score = max(sparse_score, candidate_score)
+                    continue
+                kept_entries.append(entry)
 
-    for key, entries in raw_snapshot.items():
-        kept_entries = []
-        sparse_entries = []
-        sparse_score = 0
-        entries_list = entries if isinstance(entries, list) else [entries]
-        for entry in entries_list:
-            if not isinstance(entry, dict):
-                continue
-            if not self._passive_entry_allowed(entry, filter_cfg):
-                continue
-            normalized = self._normalize_endpoint_data(entry)
-            status = int(normalized.get("response_status", 200) or 200)
-            if status == 404:
-                continue
-            if not self._fuzzer_endpoint_is_api_like(normalized, strict=strict):
-                candidate_score = self._fuzzer_sparse_candidate_score(
-                    normalized, strict=strict
-                )
-                if candidate_score > 0:
-                    sparse_entries.append(entry)
-                    sparse_score = max(sparse_score, candidate_score)
-                continue
-            kept_entries.append(entry)
+            if kept_entries:
+                filtered_local[key] = kept_entries
+            else:
+                excluded_endpoints_local += 1
+                if sparse_entries:
+                    sparse_candidates_local[key] = {
+                        "entries": sparse_entries,
+                        "score": sparse_score,
+                    }
+        sparse_added_local = self._augment_fuzzer_targets_sparse(
+            filtered_local, sparse_candidates_local, strict=strict
+        )
+        effective_excluded_local = max(0, excluded_endpoints_local - sparse_added_local)
+        return (
+            filtered_local,
+            sparse_candidates_local,
+            effective_excluded_local,
+            sparse_added_local,
+        )
 
-        if kept_entries:
-            filtered[key] = kept_entries
-        else:
-            excluded_endpoints += 1
-            if sparse_entries:
-                sparse_candidates[key] = {
-                    "entries": sparse_entries,
-                    "score": sparse_score,
-                }
-
-    sparse_added = self._augment_fuzzer_targets_sparse(
-        filtered, sparse_candidates, strict=strict
+    filtered, sparse_candidates, effective_excluded, sparse_added = _run_target_filter_pass(
+        filter_cfg
     )
-    effective_excluded = max(0, excluded_endpoints - sparse_added)
+    host_base_relaxed = False
+    host_base_relax_added = 0
+
+    if (
+        len(filtered) <= 1
+        and len(raw_snapshot) >= 80
+        and (not bool(filter_cfg.get("scope_override_enabled")))
+        and (not bool(filter_cfg.get("force_host")))
+        and bool(filter_cfg.get("allowed_bases", set()))
+    ):
+        relaxed_filter_cfg = dict(filter_cfg)
+        relaxed_filter_cfg["allowed_bases"] = set()
+        (
+            relaxed_filtered,
+            relaxed_sparse_candidates,
+            relaxed_effective_excluded,
+            relaxed_sparse_added,
+        ) = _run_target_filter_pass(relaxed_filter_cfg)
+        if len(relaxed_filtered) > len(filtered):
+            host_base_relaxed = True
+            host_base_relax_added = max(0, len(relaxed_filtered) - len(filtered))
+            filtered = relaxed_filtered
+            sparse_candidates = relaxed_sparse_candidates
+            effective_excluded = relaxed_effective_excluded
+            sparse_added = relaxed_sparse_added
 
     return filtered, {
         "raw_endpoints": len(raw_snapshot),
@@ -6945,6 +6979,8 @@ def _collect_fuzzer_targets(self, strict=True):
         "excluded_endpoints": effective_excluded,
         "sparse_candidate_endpoints": len(sparse_candidates),
         "sparse_fallback_added": sparse_added,
+        "host_base_relaxed": host_base_relaxed,
+        "host_base_relax_added": host_base_relax_added,
     }
 
 def _path_contains_noise_marker(self, path, markers):

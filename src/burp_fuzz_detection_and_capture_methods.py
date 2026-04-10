@@ -84,6 +84,8 @@ def _generate_fuzzing(self, attack_type):
     excluded_count = int(filter_meta.get("excluded_endpoints", 0))
     sparse_pool_count = int(filter_meta.get("sparse_candidate_endpoints", 0))
     sparse_added = int(filter_meta.get("sparse_fallback_added", 0))
+    host_base_relaxed = bool(filter_meta.get("host_base_relaxed", False))
+    host_base_relax_added = int(filter_meta.get("host_base_relax_added", 0))
 
     if not api_endpoints:
         self.fuzzer_area.setText(
@@ -137,6 +139,12 @@ def _generate_fuzzing(self, attack_type):
             summary.append(
                 "[*] Sparse fallback: +{} heuristic endpoints from {} candidates".format(
                     sparse_added, sparse_pool_count
+                )
+            )
+        if host_base_relaxed:
+            summary.append(
+                "[*] Host-base relax fallback: +{} endpoints (single-base scope was too narrow)".format(
+                    host_base_relax_added
                 )
             )
         summary.append(

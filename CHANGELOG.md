@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.12] - 2026-04-10
+
+### Added
+- Fuzzer host-base relaxation fallback for narrow single-base scopes:
+  - When filtered targets yield ≤1 endpoint but raw capture has ≥80 endpoints, Fuzzer now attempts a relaxed pass without host-base restrictions.
+  - Relaxed pass only activates when scope override and force-host filters are disabled and allowed_bases was previously constraining results.
+  - Summary output now reports `Host-base relax fallback: +N endpoints (single-base scope was too narrow)` when relaxation adds targets.
+
+### Changed
+- Refactored `_collect_fuzzer_targets` to use an internal `_run_target_filter_pass` helper for cleaner dual-pass logic (strict + relaxed fallback).
+- Fuzzer metadata now includes `host_base_relaxed` (bool) and `host_base_relax_added` (int) for operator visibility into fallback behavior.
+
+### Tests
+- Updated `tests/test_feature_contracts.py` to assert relaxation logic tokens and summary output format.
+
 ## [1.4.11] - 2026-04-10
 
 ### Fixed

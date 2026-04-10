@@ -347,8 +347,12 @@ def test_fuzzer_uses_api_like_scope_noise_filtering():
         "if not self._passive_entry_allowed(entry, filter_cfg):",
         "if not self._fuzzer_endpoint_is_api_like(normalized, strict=strict):",
         "candidate_score = self._fuzzer_sparse_candidate_score(",
-        "sparse_added = self._augment_fuzzer_targets_sparse(",
+        "sparse_added_local = self._augment_fuzzer_targets_sparse(",
         '"sparse_fallback_added": sparse_added,',
+        'len(filtered) <= 1',
+        'relaxed_filter_cfg["allowed_bases"] = set()',
+        '"host_base_relaxed": host_base_relaxed,',
+        '"host_base_relax_added": host_base_relax_added,',
         "if not self._fuzzer_has_api_signal(normalized):",
         "if not self._fuzzer_has_object_target(normalized):",
         "FUZZER_SQLI_PARAM_KEYWORDS",
@@ -357,6 +361,7 @@ def test_fuzzer_uses_api_like_scope_noise_filtering():
         '"[*] Mode: {}".format("Lenient JSON GET" if lenient_mode else "Strict")',
         '"[*] Filtered: {} API endpoints (excluded {} static/noisy endpoints)".format(',
         '"[*] Sparse fallback: +{} heuristic endpoints from {} candidates".format(',
+        '"[*] Host-base relax fallback: +{} endpoints (single-base scope was too narrow)".format(',
     ]
     for token in required_tokens:
         assert token in text, "Missing fuzzer scope/noise filter token: {}".format(token)
