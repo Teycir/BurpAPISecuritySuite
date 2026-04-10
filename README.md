@@ -319,7 +319,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export All**: Export complete API analysis to JSON
 - **Export Host**: Export specific host endpoints
 - **Export AI Bundle**: Export all-tab AI-ready context + LLM request payloads
-- **Import**: Load Suite exports, Excalibur HAR/session sidecars, or `excalibur-burp-bridge/v1` bundles
+- **Import**: Load Suite exports, Excalibur HAR/session sidecars, or `excalibur-burp-bridge/v1` bundles (Excalibur is a proprietary tool: https://github.com/Teycir/Excalibur)
 - **Postman**: Export scoped endpoints to Postman Collection v2.1
 - **Insomnia**: Export scoped endpoints to Insomnia import JSON
 - **Tool Health**: One-click diagnostics for ApiHunter/Nuclei/HTTPX/Katana/FFUF/Wayback/SQLMap/Dalfox/Subfinder/DNSX binary compatibility
@@ -1034,7 +1034,7 @@ A:
 
 A: Yes. `Import` accepts:
 - `api_analysis.json` (BurpAPISecuritySuite export)
-- Excalibur `.har` exports
+- Excalibur `.har` exports (Excalibur is a proprietary tool: https://github.com/Teycir/Excalibur)
 - Excalibur `-replay-studio.json` / `-cookies.json` / `-insights.json` sidecars (auto-discovered from the same session prefix)
 - `excalibur_bridge_bundle.json` (`schema: excalibur-burp-bridge/v1`)
 
@@ -1140,7 +1140,7 @@ Need custom security tools or API testing solutions? I build production-ready ap
 - **[Ghost Chat](https://ghost-chat.pages.dev)** - Secure P2P chat with WebRTC, no server storage, self-destruct timers
 - **[BurpCopyIssues](https://github.com/Teycir/BurpCopyIssues)** - Burp Suite extension for browsing, copying, and exporting scan findings
 - **[BurpWpsScan](https://github.com/Teycir/BurpWpsScan)** - WordPress security scanner for Burp Suite with WPScan API integration
-- **[Excalibur](https://github.com/Teycir/Excalibur)** - API attack-surface discovery and session workflow tooling for practical pentest operations
+- **[Excalibur](https://github.com/Teycir/Excalibur)** - API attack-surface discovery and session workflow tooling for practical pentest operations (proprietary tool)
 - **[APIPentesting](https://github.com/Teycir/APIPentesting)** - Burp-first external scanning and exploit-triage companion workflow for API bug bounty hunting
 - **Custom Security Tools** - Burp extensions, API testing frameworks, automation scripts
 
@@ -1255,7 +1255,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
   - `captured_at`
   - `captured_at_epoch_ms`
 - ✅ Extended `Run Invariants`, `Refresh Invariants`, and Recon status line with `Parity` cache coverage.
-- ✅ Added Excalibur bridge interoperability:
+- ✅ Added Excalibur bridge interoperability (Excalibur is a proprietary tool: https://github.com/Teycir/Excalibur):
   - `Import` now parses Excalibur `.har` plus session sidecars (`-replay-studio.json`, `-cookies.json`, `-insights.json`).
   - `Import` auto-runs deep-logic invariant refresh when Excalibur artifacts are detected.
   - `Export All` / `Export Host` now write `excalibur_bridge_bundle.json` using schema `excalibur-burp-bridge/v1`.
