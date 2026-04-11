@@ -150,9 +150,8 @@ This design philosophy prioritizes performance and user experience while deliver
     - [Author](#author)
     - [License](#license)
   - [Changelog](#changelog)
-  - [Updates \& Roadmap](#updates--roadmap)
+  - [Updates](#updates)
     - [Recent Updates](#recent-updates)
-    - [Roadmap](#roadmap)
 
 ## Screenshots
 
@@ -1178,7 +1177,7 @@ MIT License - Free to use for authorized security testing and research purposes.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
-## Updates & Roadmap
+## Updates
 
 ### Recent Updates
 
@@ -1440,26 +1439,3 @@ What is already shipped:
 - ✅ JWT automatic detection and security analysis
 - ✅ Pagination for large endpoint lists
 - ✅ cURL export for manual testing
-
-### Roadmap
-
-- [ ] WebSocket traffic capture
-- [ ] Real-time AI payload generation (OpenAI/Anthropic API integration)
-- [x] Success pattern detection (`Proof Mode` auto-PoC packet sets with vulnerable vs safe signals)
-- [x] OpenAPI/Swagger spec generation from captured traffic
-- [x] Vulners CVE enrichment integration
-- [x] Incremental report appending workflow
-- [x] Wayback Machine rate limiting and reliability improvements
-- [x] UI responsiveness optimization for high-volume capture
-- [ ] Collaborative data sharing
-- [ ] Custom wordlist integration for fuzzing
-- [ ] CVSS scoring for findings
-- [x] Abuse Chain Builder (Graph to Replay)
-- [x] Spec Guardrails from Reality
-- [x] Role Delta Engine
-- [x] One-click `Run All Advanced` (execute all advanced deep-logic engines)
-- [x] Token Lineage Analysis (passive session lifecycle drift detection)
-- [x] Cross-Interface Parity & Drift checks (REST/GraphQL/internal auth gaps)
-- [x] Counterfactual Differential Pipeline (scoreless invariant breaks)
-- [x] Golden Ticket detection (over-privileged token patterns)
-- [x] State Transition Matrix (workflow/state drift analysis)
