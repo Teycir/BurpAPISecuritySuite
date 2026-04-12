@@ -164,8 +164,10 @@ _PERSISTED_COMBO_ATTRS = (
     "sensitive_data_scope_combo",
     "sensitive_data_source_combo",
     "sensitive_data_mode_combo",
+    "apihunter_auth_mode_combo",
     "apihunter_top_findings_min_combo",
     "vulners_results_per_query_combo",
+    "nuclei_auth_mode_combo",
     "nuclei_profile_combo",
     "graphql_profile_combo",
     "graphql_request_mode_combo",
@@ -4622,6 +4624,19 @@ def _create_nuclei_tab(self):
             ],
         )
     )
+    controls_line1.add(JLabel("Auth Mode:"))
+    self.nuclei_auth_mode_combo = JComboBox(
+        [
+            "Unauth Only",
+            "Auth Only",
+            "Auth + Unauth",
+        ]
+    )
+    self.nuclei_auth_mode_combo.setSelectedItem("Auth + Unauth")
+    self.nuclei_auth_mode_combo.setToolTipText(
+        "Unauth Only: baseline public scan. Auth Only: authenticated context only. Auth + Unauth: run both passes for diff coverage."
+    )
+    controls_line1.add(self.nuclei_auth_mode_combo)
     controls_line1.add(JLabel("Profile:"))
     self.nuclei_profile_combo = JComboBox(self._profile_labels())
     self.nuclei_profile_combo.setSelectedItem("Fast")
@@ -5214,6 +5229,19 @@ def _create_apihunter_tab(self):
     )
     self.apihunter_calibration_combo.setSelectedItem("Balanced (Desktop Preset)")
     controls_line1.add(self.apihunter_calibration_combo)
+    controls_line1.add(JLabel("Auth Mode:"))
+    self.apihunter_auth_mode_combo = JComboBox(
+        [
+            "Unauth Only",
+            "Auth Only",
+            "Auth + Unauth",
+        ]
+    )
+    self.apihunter_auth_mode_combo.setSelectedItem("Auth + Unauth")
+    self.apihunter_auth_mode_combo.setToolTipText(
+        "Unauth Only: baseline public surface. Auth Only: authenticated context only. Auth + Unauth: run both passes for diff coverage."
+    )
+    controls_line1.add(self.apihunter_auth_mode_combo)
     controls_line1.add(JLabel("Top Findings Min:"))
     self.apihunter_top_findings_min_combo = JComboBox(["Critical", "High", "Medium"])
     self.apihunter_top_findings_min_combo.setSelectedItem("Medium")
