@@ -4443,6 +4443,7 @@ def _collect_apihunter_targets(self):
             "truncated": 0,
             "dropped_scope_host": 0,
             "dropped_noise_or_static": 0,
+            "dropped_low_signal": 0,
             "dropped_missing_host": 0,
             "force_host": False,
             "selected_host": "custom_targets",
@@ -4474,7 +4475,12 @@ def _collect_apihunter_targets(self):
     source_mode = "filtered_view_only"
     if filter_eval_error:
         source_mode = "filtered_view_error"
-    entries_snapshot = [self._get_entry(entries) for entries in filtered_source.values()]
+    entries_snapshot = []
+    for entries in filtered_source.values():
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for entry in entries_list:
+            if isinstance(entry, dict):
+                entries_snapshot.append(entry)
 
     scope_override = self._get_target_scope_override()
     selected_host = "all"
@@ -4492,11 +4498,92 @@ def _collect_apihunter_targets(self):
             selected_host = "all"
         force_host = bool(selected_host and selected_host != "all")
 
-    filter_cfg = self._build_passive_filter_config(filtered_source)
+    filter_cfg = dict(self._build_passive_filter_config(filtered_source) or {})
+    # ApiHunter should evaluate all available deduplicated base URLs in scope.
+    # Keep explicit scope/host constraints, but remove single-base auto narrowing.
+    filter_cfg["allowed_bases"] = set()
+
+    def _apihunter_entry_quality_signal(entry):
+        """Require stronger API/auth signal to avoid CDN/static base noise."""
+        method = self._ascii_safe(entry.get("method"), lower=True).strip().upper()
+        path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True).strip()
+        content_type = self._ascii_safe(entry.get("content_type"), lower=True).strip()
+        api_patterns = [
+            self._ascii_safe(x, lower=True)
+            for x in (entry.get("api_patterns", []) or [])
+        ]
+        auth_detected = [
+            self._ascii_safe(x, lower=True).strip()
+            for x in (entry.get("auth_detected", []) or [])
+        ]
+        first_part = ""
+        parts = [p for p in path.strip("/").split("/") if p]
+        if parts:
+            first_part = parts[0]
+
+        has_api_marker = bool(
+            "/api/" in path
+            or "/graphql" in path
+            or "/rest/" in path
+            or "/openapi" in path
+            or "/swagger" in path
+            or "/oauth" in path
+            or "/auth" in path
+            or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+        )
+        has_api_pattern = any(
+            hint in api_patterns for hint in self.PASSIVE_API_PATTERN_HINTS
+        )
+        has_write_method = method in ["POST", "PUT", "PATCH", "DELETE"]
+        has_auth_context = any(x and x != "none" for x in auth_detected)
+        has_structured_content = bool(
+            (
+                "json" in content_type
+                or "xml" in content_type
+                or "protobuf" in content_type
+                or "x-www-form-urlencoded" in content_type
+            )
+            and ("javascript" not in content_type)
+            and ("html" not in content_type)
+        )
+        param_count = 0
+        params = entry.get("parameters", {}) or {}
+        if isinstance(params, dict):
+            for value in params.values():
+                if isinstance(value, dict):
+                    param_count += len(value)
+                elif isinstance(value, list):
+                    param_count += len(value)
+        has_param_signal = param_count >= 2
+
+        is_static_path = bool(
+            path.endswith(self.PASSIVE_STATIC_EXTENSIONS)
+            or (first_part in self.PASSIVE_STATIC_PATH_PARTS)
+            or self._ffuf_is_noise_path_segment(first_part)
+        )
+        is_static_content = bool(
+            "javascript" in content_type
+            or "ecmascript" in content_type
+            or "text/css" in content_type
+            or content_type.startswith("image/")
+            or content_type.startswith("font/")
+            or content_type.startswith("video/")
+            or content_type.startswith("audio/")
+        )
+        if is_static_path or is_static_content:
+            return bool(has_api_marker or has_write_method or has_auth_context)
+
+        if has_api_marker or has_api_pattern or has_write_method or has_auth_context:
+            return True
+        if has_structured_content and has_param_signal:
+            return True
+        return False
+
     targets = {}
     dedup_collisions = 0
     dropped_scope_host = 0
     dropped_noise_or_static = 0
+    dropped_low_signal = 0
     dropped_missing_host = 0
     inspected_entries = 0
 
@@ -4516,6 +4603,9 @@ def _collect_apihunter_targets(self):
 
         if not self._passive_entry_allowed(entry, filter_cfg):
             dropped_noise_or_static += 1
+            continue
+        if not _apihunter_entry_quality_signal(entry):
+            dropped_low_signal += 1
             continue
 
         protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
@@ -4552,6 +4642,7 @@ def _collect_apihunter_targets(self):
         "truncated": truncated,
         "dropped_scope_host": dropped_scope_host,
         "dropped_noise_or_static": dropped_noise_or_static,
+        "dropped_low_signal": dropped_low_signal,
         "dropped_missing_host": dropped_missing_host,
         "force_host": force_host,
         "selected_host": selected_host,
@@ -7159,7 +7250,7 @@ __all__ = [
     "_score_wayback_url",
 ]
 
-def _process_apihunter_ndjson_results(self, results_file, output_area):
+def _process_apihunter_ndjson_results(self, results_file, output_area, run_label=""):
     """Parse ApiHunter NDJSON output and display formatted summary."""
     severity_order = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
     
@@ -7179,6 +7270,7 @@ def _process_apihunter_ndjson_results(self, results_file, output_area):
         min_rank = severity_order.get(top_findings_min_severity.lower(), 3)
         
         findings = []
+        label_text = self._ascii_safe(run_label).strip()
         severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
         scanner_counts = {}
         
@@ -7214,6 +7306,7 @@ def _process_apihunter_ndjson_results(self, results_file, output_area):
                             "evidence": evidence,
                             "remediation": remediation,
                             "timestamp": timestamp,
+                            "run_label": label_text,
                             "rank": severity_order.get(severity, 0)
                         })
                     except (ValueError, TypeError) as parse_err:
@@ -7221,11 +7314,14 @@ def _process_apihunter_ndjson_results(self, results_file, output_area):
                         continue
         except (IOError, OSError) as e:
             output_area.append("[!] Failed to read results file: {}\n".format(str(e)))
-            return
+            return []
         
         total = sum(severity_counts.values())
         
-        summary = ["\n" + "=" * 80, "APIHUNTER SCAN RESULTS", "=" * 80, ""]
+        title = "APIHUNTER SCAN RESULTS"
+        if label_text:
+            title = "{} [{}]".format(title, label_text)
+        summary = ["\n" + "=" * 80, title, "=" * 80, ""]
         summary.append("[*] Total Findings: {}".format(total))
         summary.append("[*] Critical: {}".format(severity_counts["critical"]))
         summary.append("[*] High: {}".format(severity_counts["high"]))
@@ -7278,12 +7374,11 @@ def _process_apihunter_ndjson_results(self, results_file, output_area):
         summary.append("[*] Total findings in scan: {}".format(total))
         
         output_area.append("\n".join(summary) + "\n")
-        
-        with getattr(self, "apihunter_lock", threading.Lock()):
-            self.apihunter_findings = findings
+        return findings
             
     except Exception as e:
         output_area.append("[!] ApiHunter result processing error: {}\n".format(self._ascii_safe(e)))
         self._callbacks.printError("ApiHunter result processing error: {}".format(str(e)))
+        return []
 
 __all__.append("_process_apihunter_ndjson_results")
