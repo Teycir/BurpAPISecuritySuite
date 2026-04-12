@@ -13,6 +13,172 @@ from java.io import FileWriter
 from java.net import URL
 from javax.swing import SwingUtilities
 
+def _discover_auth_associated_targets_shared(self, target_list, error_label):
+    """Split deduplicated base targets into auth-associated vs unauth-associated sets."""
+    target_by_key = {}
+    for target_url in list(target_list or []):
+        key = self._apihunter_target_key(target_url)
+        if key and key not in target_by_key:
+            target_by_key[key] = target_url
+
+    summary = {
+        "auth_targets": [],
+        "unauth_targets": [],
+        "matched_entries": 0,
+        "auth_entries": 0,
+        "header_auth_entries": 0,
+        "signal_only_entries": 0,
+    }
+    if not target_by_key:
+        return summary
+
+    filtered_source = {}
+    try:
+        filtered_source = dict(self._filter_endpoints())
+    except Exception as e:
+        self._callbacks.printError(
+            "{}: {}".format(self._ascii_safe(error_label), str(e))
+        )
+        filtered_source = {}
+
+    def _entry_header_value(entry, header_name):
+        headers = entry.get("headers") if isinstance(entry, dict) else {}
+        if not isinstance(headers, dict):
+            return ""
+        target = self._ascii_safe(header_name or "", lower=True).strip()
+        for raw_name, raw_value in headers.items():
+            safe_name = self._ascii_safe(raw_name or "", lower=True).strip()
+            if safe_name != target:
+                continue
+            return self._ascii_safe(raw_value or "").strip()
+        return ""
+
+    auth_param_name_markers = set(
+        [
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "token",
+            "jwt",
+            "session",
+            "sessionid",
+            "sid",
+            "auth",
+            "authorization",
+            "api_key",
+            "apikey",
+            "api-key",
+        ]
+    )
+    auth_text_markers = [
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "jwt",
+        "bearer ",
+        "api_key",
+        "apikey",
+        "api-key",
+        "sessionid",
+        "session=",
+    ]
+    extra_header_candidates = [
+        "x-api-key",
+        "api-key",
+        "apikey",
+        "x-auth-token",
+        "x-access-token",
+    ]
+
+    def _entry_has_non_header_auth_signal(entry):
+        auth_detected = [
+            self._ascii_safe(x, lower=True).strip()
+            for x in (entry.get("auth_detected", []) or [])
+        ]
+        if any(x and x != "none" for x in auth_detected):
+            return True
+
+        parameters = entry.get("parameters") if isinstance(entry, dict) else {}
+        if isinstance(parameters, dict):
+            for bucket_name in ["url", "body", "cookie", "json"]:
+                bucket = parameters.get(bucket_name) or {}
+                if not isinstance(bucket, dict):
+                    continue
+                for param_name in bucket.keys():
+                    lower_name = self._ascii_safe(param_name, lower=True).strip()
+                    if lower_name in auth_param_name_markers:
+                        return True
+
+        query_text = self._ascii_safe(entry.get("query_string") or "", lower=True)
+        body_text = self._ascii_safe(entry.get("request_body") or "", lower=True)
+        combined = "{}\n{}".format(query_text, body_text)
+        for marker in auth_text_markers:
+            if marker in combined:
+                return True
+        return False
+
+    auth_target_keys = set()
+    for entries in filtered_source.values():
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for entry in entries_list:
+            if not isinstance(entry, dict):
+                continue
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                continue
+            protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
+            port = entry.get("port", -1)
+            if port == -1:
+                port = 443 if protocol == "https" else 80
+            if (protocol == "https" and port == 443) or (
+                protocol == "http" and port == 80
+            ):
+                scoped_url = "{}://{}/".format(protocol, host)
+            else:
+                scoped_url = "{}://{}:{}/".format(protocol, host, port)
+            target_key = self._apihunter_target_key(scoped_url)
+            if target_key not in target_by_key:
+                continue
+            summary["matched_entries"] += 1
+
+            has_header_auth = bool(
+                _entry_header_value(entry, "authorization")
+                or _entry_header_value(entry, "cookie")
+            )
+            if not has_header_auth:
+                for header_name in extra_header_candidates:
+                    if _entry_header_value(entry, header_name):
+                        has_header_auth = True
+                        break
+
+            has_non_header_auth_signal = _entry_has_non_header_auth_signal(entry)
+            has_auth_signal = has_header_auth or has_non_header_auth_signal
+            if not has_auth_signal:
+                continue
+
+            if has_header_auth:
+                summary["header_auth_entries"] += 1
+            elif has_non_header_auth_signal:
+                summary["signal_only_entries"] += 1
+            summary["auth_entries"] += 1
+            auth_target_keys.add(target_key)
+
+    ordered_auth = []
+    ordered_unauth = []
+    seen = set()
+    for target_url in list(target_list or []):
+        key = self._apihunter_target_key(target_url)
+        if (not key) or (key in seen):
+            continue
+        seen.add(key)
+        if key in auth_target_keys:
+            ordered_auth.append(target_url)
+        else:
+            ordered_unauth.append(target_url)
+    summary["auth_targets"] = ordered_auth
+    summary["unauth_targets"] = ordered_unauth
+    return summary
+
 def _run_graphql_analysis(self, event):
     """Run GraphQL-focused analysis using available external tools."""
     import os
@@ -761,6 +927,24 @@ def _run_nuclei(self):
     if use_custom_nuclei and not custom_nuclei_command:
         self._cleanup_temp_dir(temp_dir, "nuclei custom command validation")
         return
+    auth_mode = "Auth + Unauth"
+    try:
+        auth_mode = str(self.nuclei_auth_mode_combo.getSelectedItem())
+    except Exception as e:
+        self._callbacks.printError("Nuclei auth mode read error: {}".format(str(e)))
+
+    if use_custom_nuclei and self._ascii_safe(auth_mode, lower=True).strip() in [
+        "auth + unauth",
+        "auth+unauth",
+    ]:
+        self._cleanup_temp_dir(temp_dir, "nuclei custom command dual-pass validation")
+        self.nuclei_area.setText(
+            "[!] Auth + Unauth mode is not supported when 'Enable Custom' is active\n"
+        )
+        self.nuclei_area.append(
+            "[*] Disable custom mode to run dual-pass, or keep custom mode with Auth Only/Unauth Only.\n"
+        )
+        return
 
     probe_ok, help_text, _ = self._probe_binary_help(nuclei_path)
     supports_jsonl_export = bool(
@@ -780,6 +964,7 @@ def _run_nuclei(self):
     self.nuclei_area.append(
         "[*] Profile: {}\n".format(nuclei_profile_cfg.get("profile", profile_value))
     )
+    self.nuclei_area.append("[*] Auth Mode: {}\n".format(auth_mode))
     self.nuclei_area.append(
         "[*] Discovery targets: {} (scoped first-party hosts/paths)\n".format(
             target_count
@@ -849,6 +1034,204 @@ def _run_nuclei(self):
     self.nuclei_area.append("[*] Evasion: Header-based spoofing (X-Forwarded-For)\n\n")
     self._clear_tool_cancel("nuclei")
 
+    def _pick_best_frequency_value(counter_map):
+        items = list((counter_map or {}).items())
+        if not items:
+            return ""
+        ordered = sorted(
+            items,
+            key=lambda item: (
+                -int(item[1]),
+                -len(self._ascii_safe(item[0])),
+                self._ascii_safe(item[0]),
+            ),
+        )
+        return self._ascii_safe(ordered[0][0]).strip()
+
+    def _entry_header_value(entry, header_name):
+        headers = entry.get("headers") if isinstance(entry, dict) else {}
+        if not isinstance(headers, dict):
+            return ""
+        target = self._ascii_safe(header_name or "", lower=True).strip()
+        for raw_name, raw_value in headers.items():
+            safe_name = self._ascii_safe(raw_name or "", lower=True).strip()
+            if safe_name != target:
+                continue
+            return self._ascii_safe(raw_value or "").strip()
+        return ""
+
+    def _cookie_header_to_pairs(raw_cookie):
+        text = self._ascii_safe(raw_cookie or "").strip()
+        if not text:
+            return []
+        ignored_cookie_attrs = set(
+            [
+                "path",
+                "domain",
+                "expires",
+                "max-age",
+                "secure",
+                "httponly",
+                "samesite",
+                "priority",
+            ]
+        )
+        pairs = []
+        seen = set()
+        for chunk in text.split(";"):
+            part = self._ascii_safe(chunk or "").strip()
+            if (not part) or ("=" not in part):
+                continue
+            name, value = part.split("=", 1)
+            name = self._ascii_safe(name).strip()
+            value = self._ascii_safe(value).strip()
+            lower_name = self._ascii_safe(name, lower=True)
+            if (not name) or (not value) or (lower_name in ignored_cookie_attrs):
+                continue
+            if lower_name in seen:
+                continue
+            seen.add(lower_name)
+            pairs.append("{}={}".format(name, value))
+            if len(pairs) >= 20:
+                break
+        return pairs
+
+    def _discover_auth_associated_targets(target_list):
+        return _discover_auth_associated_targets_shared(
+            self,
+            target_list,
+            "Nuclei auth target discovery snapshot error",
+        )
+
+    def _collect_auth_context_for_targets(target_list):
+        target_keys = set()
+        for target_url in list(target_list or []):
+            key = self._apihunter_target_key(target_url)
+            if key:
+                target_keys.add(key)
+
+        context = {
+            "headers": [],
+            "cookies": [],
+            "matched_entries": 0,
+            "auth_candidates_found": 0,
+        }
+        if not target_keys:
+            return context
+
+        filtered_source = {}
+        try:
+            filtered_source = dict(self._filter_endpoints())
+        except Exception as e:
+            self._callbacks.printError(
+                "Nuclei auth context source snapshot error: {}".format(str(e))
+            )
+            filtered_source = {}
+
+        interesting_auth_headers = [
+            ("x-api-key", "X-API-Key"),
+            ("api-key", "Api-Key"),
+            ("apikey", "ApiKey"),
+            ("x-auth-token", "X-Auth-Token"),
+            ("x-access-token", "X-Access-Token"),
+        ]
+        authorization_counts = {}
+        cookie_counts = {}
+        extra_header_counts = {}
+
+        for entries in filtered_source.values():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            for entry in entries_list:
+                if not isinstance(entry, dict):
+                    continue
+                host = self._ascii_safe(entry.get("host"), lower=True).strip()
+                if not host:
+                    continue
+                protocol = (
+                    self._ascii_safe(entry.get("protocol"), lower=True).strip()
+                    or "https"
+                )
+                port = entry.get("port", -1)
+                if port == -1:
+                    port = 443 if protocol == "https" else 80
+                if (protocol == "https" and port == 443) or (
+                    protocol == "http" and port == 80
+                ):
+                    scoped_url = "{}://{}/".format(protocol, host)
+                else:
+                    scoped_url = "{}://{}:{}/".format(protocol, host, port)
+                target_key = self._apihunter_target_key(scoped_url)
+                if target_key not in target_keys:
+                    continue
+
+                context["matched_entries"] += 1
+                authorization_value = _entry_header_value(entry, "authorization")
+                if authorization_value:
+                    authorization_counts[authorization_value] = (
+                        authorization_counts.get(authorization_value, 0) + 1
+                    )
+                cookie_value = _entry_header_value(entry, "cookie")
+                if cookie_value:
+                    cookie_counts[cookie_value] = (
+                        cookie_counts.get(cookie_value, 0) + 1
+                    )
+                for lower_header_name, display_header_name in interesting_auth_headers:
+                    header_value = _entry_header_value(entry, lower_header_name)
+                    if not header_value:
+                        continue
+                    rendered = "{}: {}".format(display_header_name, header_value)
+                    extra_header_counts[rendered] = (
+                        extra_header_counts.get(rendered, 0) + 1
+                    )
+
+        selected_authorization = _pick_best_frequency_value(authorization_counts)
+        if selected_authorization:
+            context["headers"].append("Authorization: {}".format(selected_authorization))
+            context["auth_candidates_found"] += 1
+
+        for rendered_header, _count in sorted(
+            extra_header_counts.items(), key=lambda item: (-item[1], item[0])
+        ):
+            context["headers"].append(rendered_header)
+            context["auth_candidates_found"] += 1
+            if len(context["headers"]) >= 6:
+                break
+
+        selected_cookie = _pick_best_frequency_value(cookie_counts)
+        cookie_pairs = _cookie_header_to_pairs(selected_cookie)
+        if cookie_pairs:
+            context["cookies"] = cookie_pairs
+            context["auth_candidates_found"] += len(cookie_pairs)
+        return context
+
+    def _append_auth_context_to_nuclei_command(base_cmd, auth_context):
+        cmd_local = list(base_cmd or [])
+        for header_line in list(auth_context.get("headers", []) or []):
+            clean_header = self._ascii_safe(header_line).strip()
+            if clean_header:
+                cmd_local.extend(["-header", clean_header])
+        cookies = list(auth_context.get("cookies", []) or [])
+        if cookies:
+            cmd_local.extend(["-header", "Cookie: {}".format("; ".join(cookies))])
+        return cmd_local
+
+    def _append_auth_context_to_custom_nuclei_command(command_text, auth_context):
+        rendered = self._ascii_safe(command_text or "").strip()
+        for header_line in list(auth_context.get("headers", []) or []):
+            clean_header = self._ascii_safe(header_line).strip()
+            if clean_header:
+                rendered += " -header {}".format(
+                    self._quote_custom_command_value(clean_header)
+                )
+        cookies = list(auth_context.get("cookies", []) or [])
+        if cookies:
+            rendered += " -header {}".format(
+                self._quote_custom_command_value(
+                    "Cookie: {}".format("; ".join(cookies))
+                )
+            )
+        return rendered
+
     def run_scan():
         process = None
         try:
@@ -858,286 +1241,486 @@ def _run_nuclei(self):
             exclude_tags = nuclei_profile_cfg.get(
                 "exclude_tags", "dos,intrusive,headless,cve,fuzz,fuzzing,brute-force"
             )
-            parse_file = json_file
+            normalized_auth_mode = self._ascii_safe(auth_mode, lower=True).strip()
+            if normalized_auth_mode in ["auth only", "authonly"]:
+                run_plans = [("Auth", True)]
+            elif normalized_auth_mode in ["unauth only", "unauthonly"]:
+                run_plans = [("Unauth", False)]
+            else:
+                run_plans = [("Unauth", False), ("Auth", True)]
 
-            if use_custom_nuclei and custom_nuclei_command:
-                cmd = self._build_shell_command(custom_nuclei_command)
-                display_cmd = custom_nuclei_command
+            auth_context = {
+                "headers": [],
+                "cookies": [],
+                "matched_entries": 0,
+                "auth_candidates_found": 0,
+            }
+            auth_targets = []
+            unauth_targets = list(targets)
+            auth_targets_file = os.path.join(temp_dir, "targets_auth.txt")
+            unauth_targets_file = os.path.join(temp_dir, "targets_unauth.txt")
+            auth_targets_file_ready = False
+            unauth_targets_file_ready = False
+            if any(use_auth_pass for _, use_auth_pass in run_plans):
+                auth_discovery = _discover_auth_associated_targets(targets)
+                auth_targets = list(auth_discovery.get("auth_targets", []) or [])
+                unauth_targets = list(auth_discovery.get("unauth_targets", []) or [])
+                matched_entries = int(auth_discovery.get("matched_entries", 0) or 0)
+                auth_entries = int(auth_discovery.get("auth_entries", 0) or 0)
+                header_auth_entries = int(
+                    auth_discovery.get("header_auth_entries", 0) or 0
+                )
+                signal_only_entries = int(
+                    auth_discovery.get("signal_only_entries", 0) or 0
+                )
+                associated_count = len(auth_targets)
+                unauth_count = len(unauth_targets)
                 SwingUtilities.invokeLater(
-                    lambda: self.nuclei_area.append(
-                        "[*] Custom command override enabled\n"
+                    lambda m=matched_entries, a=auth_entries, c=associated_count: self.nuclei_area.append(
+                        "[*] Auth discovery: matched_entries={} auth_entries={} associated_targets={}\n".format(
+                            m, a, c
+                        )
                     )
                 )
-            else:
-                cmd = [
-                    nuclei_path,
-                    "-list",
-                    targets_file,
-                    "-o",
-                    output_file,
-                    "-tags",
-                    include_tags,
-                    "-etags",
-                    exclude_tags,
-                    "-no-color",
-                    "-timeout",
-                    str(
-                        nuclei_profile_cfg.get(
-                            "request_timeout",
-                            self.NUCLEI_REQUEST_TIMEOUT_SECONDS,
+                SwingUtilities.invokeLater(
+                    lambda c=associated_count, u=unauth_count: self.nuclei_area.append(
+                        "[*] Auth split: auth_targets={} unauth_targets={}\n".format(
+                            c, u
                         )
-                    ),
-                    "-retries",
-                    str(nuclei_profile_cfg.get("retries", self.NUCLEI_RETRIES)),
-                    "-rate-limit",
-                    str(
-                        nuclei_profile_cfg.get(
-                            "rate_limit", self.NUCLEI_RATE_LIMIT
+                    )
+                )
+                SwingUtilities.invokeLater(
+                    lambda h=header_auth_entries, s=signal_only_entries: self.nuclei_area.append(
+                        "[*] Auth discovery detail: header_auth_entries={} signal_only_entries={}\n".format(
+                            h, s
                         )
-                    ),
-                    "-c",
-                    str(
-                        nuclei_profile_cfg.get(
-                            "concurrency", self.NUCLEI_CONCURRENCY
+                    )
+                )
+
+                if auth_targets:
+                    auth_lines = ["[*] Auth-associated target URLs:"]
+                    for auth_target_url in auth_targets:
+                        auth_lines.append(
+                            "    {}".format(self._ascii_safe(auth_target_url))
                         )
-                    ),
-                    "-disable-update-check",
-                    "-silent",
-                    "-header",
-                    "X-Forwarded-For: 127.0.0.1",
-                ]
-                if supports_bulk_size:
-                    cmd.extend(
-                        [
-                            "-bs",
-                            str(
-                                nuclei_profile_cfg.get(
-                                    "bulk_size", self.NUCLEI_BULK_SIZE
+                    SwingUtilities.invokeLater(
+                        lambda t="\n".join(auth_lines) + "\n": self.nuclei_area.append(t)
+                    )
+                    auth_context = _collect_auth_context_for_targets(auth_targets)
+                    has_auth_material = bool(
+                        auth_context.get("headers") or auth_context.get("cookies")
+                    )
+                    if has_auth_material:
+                        SwingUtilities.invokeLater(
+                            lambda: self.nuclei_area.append(
+                                "[*] Auth context prepared: headers={} cookies={} matched_entries={}\n".format(
+                                    len(auth_context.get("headers", []) or []),
+                                    len(auth_context.get("cookies", []) or []),
+                                    int(auth_context.get("matched_entries", 0) or 0),
                                 )
-                            ),
-                        ]
-                    )
-                if supports_max_host_error:
-                    cmd.extend(
-                        [
-                            "-mhe",
-                            str(
-                                nuclei_profile_cfg.get(
-                                    "max_host_error",
-                                    self.NUCLEI_MAX_HOST_ERROR,
+                            )
+                        )
+                    else:
+                        SwingUtilities.invokeLater(
+                            lambda c=associated_count: self.nuclei_area.append(
+                                "[*] Auth discovery note: {} auth-associated target(s) detected, but reusable Authorization/Cookie/API-key header context was not found. Auth pass will run with target split only.\n".format(
+                                    c
                                 )
-                            ),
-                        ]
+                            )
+                        )
+
+                if unauth_targets:
+                    unauth_lines = ["[*] Unauth target URLs:"]
+                    for unauth_target_url in unauth_targets:
+                        unauth_lines.append(
+                            "    {}".format(self._ascii_safe(unauth_target_url))
+                        )
+                    SwingUtilities.invokeLater(
+                        lambda t="\n".join(unauth_lines) + "\n": self.nuclei_area.append(t)
                     )
-                if supports_scan_strategy:
-                    cmd.extend(
-                        [
-                            "-ss",
-                            nuclei_profile_cfg.get(
-                                "scan_strategy", self.NUCLEI_SCAN_STRATEGY
-                            ),
-                        ]
-                    )
-                if supports_no_httpx:
-                    cmd.append("-no-httpx")
-                if supports_project_mode:
-                    cmd.extend(["-project", "-project-path", temp_dir])
-                if supports_jsonl_export:
-                    cmd.extend(["-jsonl-export", json_file])
-                else:
-                    cmd.append("-jsonl")
-                    parse_file = output_file
+
+                if not auth_targets:
                     SwingUtilities.invokeLater(
                         lambda: self.nuclei_area.append(
-                            "[*] Compatibility: using -jsonl fallback (upgrade nuclei for -jsonl-export)\n"
+                            "[*] Auth discovery: found none in Recon filtered scope.\n"
                         )
                     )
-                display_cmd = " ".join(cmd)
-            SwingUtilities.invokeLater(
-                lambda: self.nuclei_area.append(
-                    "[*] Command: {}\n\n".format(display_cmd)
+                    if matched_entries > 0 and header_auth_entries == 0:
+                        SwingUtilities.invokeLater(
+                            lambda m=matched_entries: self.nuclei_area.append(
+                                "[*] Auth discovery note: matched {} target-scoped entries, but none had Authorization/Cookie/API-key request headers or auth signals.\n".format(
+                                    m
+                                )
+                            )
+                        )
+                    if normalized_auth_mode in ["auth only", "authonly"]:
+                        SwingUtilities.invokeLater(
+                            lambda: self.nuclei_area.append(
+                                "[!] Auth mode selected but no associated auth data was found.\n"
+                            )
+                        )
+                        return
+                if normalized_auth_mode not in ["auth only", "authonly", "unauth only", "unauthonly"]:
+                    split_plans = []
+                    if unauth_targets:
+                        split_plans.append(("Unauth", False))
+                    else:
+                        SwingUtilities.invokeLater(
+                            lambda: self.nuclei_area.append(
+                                "[*] Unauth pass skipped: no unauth-associated targets found.\n"
+                            )
+                        )
+                    if auth_targets:
+                        split_plans.append(("Auth", True))
+                    else:
+                        SwingUtilities.invokeLater(
+                            lambda: self.nuclei_area.append(
+                                "[*] Auth pass skipped: no auth-associated targets found.\n"
+                            )
+                        )
+                    run_plans = split_plans
+
+            if not run_plans:
+                SwingUtilities.invokeLater(
+                    lambda: self.nuclei_area.append("[!] No Nuclei passes selected\n")
                 )
-            )
-            SwingUtilities.invokeLater(
-                lambda: self.log_to_ui("[*] Nuclei cmd: {}".format(display_cmd))
-            )
-            SwingUtilities.invokeLater(
-                lambda: self.nuclei_area.append(
-                    "[*] Discovery mode: Scanning scoped targets to find NEW endpoints\n\n"
-                )
-            )
+                return
+
+            total_passes = len(run_plans)
+
+            total_findings_all_passes = 0
+            total_elapsed_all_passes = 0
+            total_counts_by_severity = {
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "info": 0,
+            }
 
             import time as time_module
 
-            start_time = time_module.time()
-            timed_out = False
-            capture_path = os.path.join(temp_dir, "nuclei_runtime.log")
-            try:
-                capture_handle = open(capture_path, "wb")
-                try:
-                    process = subprocess.Popen(  # nosec B603
-                        cmd,
-                        stdout=capture_handle,
-                        stderr=subprocess.STDOUT,
-                        shell=False,
+            for pass_index, plan in enumerate(run_plans, 1):
+                pass_label = self._ascii_safe(plan[0]).strip() or "Unauth"
+                use_auth_pass = bool(plan[1])
+                pass_slug = self._ascii_safe(pass_label, lower=True).replace(" ", "")
+                if not pass_slug:
+                    pass_slug = "run{}".format(pass_index)
+
+                output_file = os.path.join(temp_dir, "results.txt")
+                json_file = os.path.join(temp_dir, "results.json")
+                if total_passes > 1:
+                    output_file = os.path.join(
+                        temp_dir, "results_{}.txt".format(pass_slug)
                     )
-                finally:
-                    capture_handle.close()
-                self._set_active_tool_process("nuclei", process)
-            except Exception as e:
-                err_msg = str(e)
-                SwingUtilities.invokeLater(
-                    lambda m=err_msg: self.nuclei_area.append(
-                        "[!] Failed to start nuclei: {}\n".format(m)
+                    json_file = os.path.join(
+                        temp_dir, "results_{}.json".format(pass_slug)
                     )
-                )
-                return
+                parse_file = json_file
+                pass_targets = auth_targets if use_auth_pass else unauth_targets
+                if not pass_targets:
+                    continue
+                pass_target_count = len(pass_targets)
+                pass_targets_file = targets_file
+                if pass_targets != targets:
+                    if use_auth_pass:
+                        if not auth_targets_file_ready:
+                            writer = None
+                            try:
+                                writer = FileWriter(auth_targets_file)
+                                for target_url in pass_targets:
+                                    writer.write(self._ascii_safe(target_url) + "\n")
+                            finally:
+                                if writer:
+                                    writer.close()
+                            auth_targets_file_ready = True
+                        pass_targets_file = auth_targets_file
+                    else:
+                        if not unauth_targets_file_ready:
+                            writer = None
+                            try:
+                                writer = FileWriter(unauth_targets_file)
+                                for target_url in pass_targets:
+                                    writer.write(self._ascii_safe(target_url) + "\n")
+                            finally:
+                                if writer:
+                                    writer.close()
+                            unauth_targets_file_ready = True
+                        pass_targets_file = unauth_targets_file
 
-            adaptive_timeout = max(360, target_count * 30)
-            max_timeout = min(
-                nuclei_profile_cfg.get(
-                    "max_scan_seconds", self.NUCLEI_MAX_SCAN_SECONDS
-                ),
-                adaptive_timeout,
-            )
-
-            SwingUtilities.invokeLater(
-                lambda t=max_timeout, c=target_count: self.nuclei_area.append(
-                    "[*] Scanning (max {}s for {} targets)...\n\n".format(t, c)
-                )
-            )
-
-            # Wait with minimal progress updates
-            start_wait = time_module.time()
-            last_update = start_wait
-            cancelled_by_user = False
-            while process.poll() is None:
-                current = time_module.time()
-                elapsed = int(current - start_wait)
-                if self._is_tool_cancelled("nuclei"):
-                    cancelled_by_user = True
-                    self._terminate_process_cross_platform(process, "Nuclei")
-                    break
-                if elapsed > max_timeout:
-                    timed_out = True
-                    try:
-                        process.kill()
-                        process.wait()
-                    except Exception as e:
-                        self._callbacks.printError("Kill failed: {}".format(str(e)))
+                if use_custom_nuclei and custom_nuclei_command:
+                    command_for_pass = custom_nuclei_command
+                    if pass_targets_file != targets_file:
+                        command_for_pass = command_for_pass.replace(
+                            targets_file, pass_targets_file
+                        )
+                    if use_auth_pass:
+                        command_for_pass = _append_auth_context_to_custom_nuclei_command(
+                            command_for_pass, auth_context
+                        )
+                    cmd = self._build_shell_command(command_for_pass)
+                    display_cmd = command_for_pass
+                    if use_auth_pass:
+                        display_cmd = "{} [auth headers/cookies redacted]".format(display_cmd)
                     SwingUtilities.invokeLater(
-                        lambda t=max_timeout: self.nuclei_area.append(
-                            "\n[!] Timeout after {}s\n".format(
-                                t
+                        lambda p=pass_label: self.nuclei_area.append(
+                            "[*] Pass {}: custom command override enabled\n".format(p)
+                        )
+                    )
+                else:
+                    cmd = [
+                        nuclei_path,
+                        "-list",
+                        pass_targets_file,
+                        "-o",
+                        output_file,
+                        "-tags",
+                        include_tags,
+                        "-etags",
+                        exclude_tags,
+                        "-no-color",
+                        "-timeout",
+                        str(
+                            nuclei_profile_cfg.get(
+                                "request_timeout",
+                                self.NUCLEI_REQUEST_TIMEOUT_SECONDS,
                             )
-                        )
-                    )
-                    break
-                # Update every 30s only
-                if current - last_update > 30:
-                    SwingUtilities.invokeLater(
-                        lambda e=elapsed: self.nuclei_area.append(
-                            "[*] {}s elapsed...\n".format(e)
-                        )
-                    )
-                    last_update = current
-                time_module.sleep(2)
-
-            process.wait()
-            elapsed = int(time_module.time() - start_time)
-            combined_output = ""
-            if os.path.exists(capture_path):
-                try:
-                    with open(capture_path, "rb") as capture_reader:
-                        combined_output = self._decode_process_data(
-                            capture_reader.read(), "Nuclei output"
-                        )
-                except Exception as capture_err:
-                    self._callbacks.printError(
-                        "Nuclei output read error: {}".format(str(capture_err))
-                    )
-
-            if cancelled_by_user:
-                SwingUtilities.invokeLater(
-                    lambda: self.nuclei_area.append(
-                        "\n[!] Nuclei run cancelled by user\n"
-                    )
-                )
-                SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[!] Nuclei cancelled by user")
-                )
-                return
-
-            output_preview = self._ascii_safe(combined_output or "").strip()
-
-            SwingUtilities.invokeLater(
-                lambda: self.log_to_ui(
-                    "[*] Nuclei: {}s, exit code {}".format(
-                        elapsed, process.returncode
-                    )
-                )
-            )
-
-            partial_results_mode = False
-            if process.returncode != 0:
-                partial_parse_file = None
-                try:
-                    if os.path.exists(json_file) and os.path.getsize(json_file) > 0:
-                        partial_parse_file = json_file
-                    elif os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                        partial_parse_file = output_file
-                except Exception as partial_err:
-                    self._callbacks.printError(
-                        "Nuclei partial-results check failed: {}".format(str(partial_err))
-                    )
-
-                can_timeout_recover = bool(
-                    timed_out or process.returncode in [137, 143]
-                )
-                can_parse_partial = bool(
-                    partial_parse_file and can_timeout_recover
-                )
-                if can_parse_partial:
-                    partial_results_mode = True
-                    parse_file = partial_parse_file
-                    partial_notice = [
-                        "",
-                        "[!] Nuclei did not exit cleanly (code: {})".format(
-                            process.returncode
                         ),
-                        "[*] Continuing with partial results from: {}".format(
-                            parse_file
+                        "-retries",
+                        str(nuclei_profile_cfg.get("retries", self.NUCLEI_RETRIES)),
+                        "-rate-limit",
+                        str(
+                            nuclei_profile_cfg.get(
+                                "rate_limit", self.NUCLEI_RATE_LIMIT
+                            )
                         ),
+                        "-c",
+                        str(
+                            nuclei_profile_cfg.get(
+                                "concurrency", self.NUCLEI_CONCURRENCY
+                            )
+                        ),
+                        "-disable-update-check",
+                        "-silent",
+                        "-header",
+                        "X-Forwarded-For: 127.0.0.1",
                     ]
-                    SwingUtilities.invokeLater(
-                        lambda t="\n".join(partial_notice) + "\n": self.nuclei_area.append(t)
-                    )
-                    SwingUtilities.invokeLater(
-                        lambda: self.log_to_ui(
-                            "[*] Nuclei partial-parse mode enabled (exit {})".format(
-                                process.returncode
+                    if supports_bulk_size:
+                        cmd.extend(
+                            [
+                                "-bs",
+                                str(
+                                    nuclei_profile_cfg.get(
+                                        "bulk_size", self.NUCLEI_BULK_SIZE
+                                    )
+                                ),
+                            ]
+                        )
+                    if supports_max_host_error:
+                        cmd.extend(
+                            [
+                                "-mhe",
+                                str(
+                                    nuclei_profile_cfg.get(
+                                        "max_host_error",
+                                        self.NUCLEI_MAX_HOST_ERROR,
+                                    )
+                                ),
+                            ]
+                        )
+                    if supports_scan_strategy:
+                        cmd.extend(
+                            [
+                                "-ss",
+                                nuclei_profile_cfg.get(
+                                    "scan_strategy", self.NUCLEI_SCAN_STRATEGY
+                                ),
+                            ]
+                        )
+                    if supports_no_httpx:
+                        cmd.append("-no-httpx")
+                    if supports_project_mode:
+                        cmd.extend(["-project", "-project-path", temp_dir])
+                    if supports_jsonl_export:
+                        cmd.extend(["-jsonl-export", json_file])
+                    else:
+                        cmd.append("-jsonl")
+                        parse_file = output_file
+                        SwingUtilities.invokeLater(
+                            lambda: self.nuclei_area.append(
+                                "[*] Compatibility: using -jsonl fallback (upgrade nuclei for -jsonl-export)\n"
                             )
                         )
+                    if use_auth_pass:
+                        cmd = _append_auth_context_to_nuclei_command(cmd, auth_context)
+                    display_cmd = " ".join(cmd)
+                    if use_auth_pass:
+                        display_cmd = "{} [auth headers/cookies redacted]".format(
+                            display_cmd
+                        )
+
+                SwingUtilities.invokeLater(
+                    lambda i=pass_index, t=total_passes, p=pass_label: self.nuclei_area.append(
+                        "\n[*] Pass {}/{}: {}\n".format(i, t, p)
                     )
-                elif can_timeout_recover:
-                    synthesized_partial_file = os.path.join(
-                        temp_dir, "partial_results.jsonl"
+                )
+                SwingUtilities.invokeLater(
+                    lambda c=pass_target_count: self.nuclei_area.append(
+                        "[*] Pass Targets: {}\n".format(c)
                     )
-                    recovered_count = self._write_nuclei_partial_results_jsonl(
-                        combined_output, synthesized_partial_file
+                )
+                SwingUtilities.invokeLater(
+                    lambda d=display_cmd: self.nuclei_area.append(
+                        "[*] Command: {}\n\n".format(d)
                     )
-                    if os.path.exists(synthesized_partial_file):
+                )
+                SwingUtilities.invokeLater(
+                    lambda d=display_cmd: self.log_to_ui("[*] Nuclei cmd: {}".format(d))
+                )
+                SwingUtilities.invokeLater(
+                    lambda p=pass_label: self.nuclei_area.append(
+                        "[*] Discovery mode [{}]: Scanning scoped targets to find NEW endpoints\n\n".format(
+                            p
+                        )
+                    )
+                )
+
+                start_time = time_module.time()
+                timed_out = False
+                capture_path = os.path.join(temp_dir, "nuclei_runtime.log")
+                if total_passes > 1:
+                    capture_path = os.path.join(
+                        temp_dir, "nuclei_runtime_{}.log".format(pass_slug)
+                    )
+                try:
+                    capture_handle = open(capture_path, "wb")
+                    try:
+                        process = subprocess.Popen(  # nosec B603
+                            cmd,
+                            stdout=capture_handle,
+                            stderr=subprocess.STDOUT,
+                            shell=False,
+                        )
+                    finally:
+                        capture_handle.close()
+                    self._set_active_tool_process("nuclei", process)
+                except Exception as e:
+                    err_msg = str(e)
+                    SwingUtilities.invokeLater(
+                        lambda m=err_msg: self.nuclei_area.append(
+                            "[!] Failed to start nuclei: {}\n".format(m)
+                        )
+                    )
+                    return
+
+                adaptive_timeout = max(360, pass_target_count * 30)
+                max_timeout = min(
+                    nuclei_profile_cfg.get(
+                        "max_scan_seconds", self.NUCLEI_MAX_SCAN_SECONDS
+                    ),
+                    adaptive_timeout,
+                )
+
+                SwingUtilities.invokeLater(
+                    lambda t=max_timeout, c=pass_target_count: self.nuclei_area.append(
+                        "[*] Scanning (max {}s for {} targets)...\n\n".format(t, c)
+                    )
+                )
+
+                start_wait = time_module.time()
+                last_update = start_wait
+                cancelled_by_user = False
+                while process.poll() is None:
+                    current = time_module.time()
+                    elapsed = int(current - start_wait)
+                    if self._is_tool_cancelled("nuclei"):
+                        cancelled_by_user = True
+                        self._terminate_process_cross_platform(process, "Nuclei")
+                        break
+                    if elapsed > max_timeout:
+                        timed_out = True
+                        try:
+                            process.kill()
+                            process.wait()
+                        except Exception as e:
+                            self._callbacks.printError("Kill failed: {}".format(str(e)))
+                        SwingUtilities.invokeLater(
+                            lambda t=max_timeout, p=pass_label: self.nuclei_area.append(
+                                "\n[!] {} pass timeout after {}s\n".format(p, t)
+                            )
+                        )
+                        break
+                    if current - last_update > 30:
+                        SwingUtilities.invokeLater(
+                            lambda e=elapsed: self.nuclei_area.append(
+                                "[*] {}s elapsed...\n".format(e)
+                            )
+                        )
+                        last_update = current
+                    time_module.sleep(2)
+
+                process.wait()
+                elapsed = int(time_module.time() - start_time)
+                total_elapsed_all_passes += elapsed
+                combined_output = ""
+                if os.path.exists(capture_path):
+                    try:
+                        with open(capture_path, "rb") as capture_reader:
+                            combined_output = self._decode_process_data(
+                                capture_reader.read(), "Nuclei output"
+                            )
+                    except Exception as capture_err:
+                        self._callbacks.printError(
+                            "Nuclei output read error: {}".format(str(capture_err))
+                        )
+
+                if cancelled_by_user:
+                    SwingUtilities.invokeLater(
+                        lambda: self.nuclei_area.append(
+                            "\n[!] Nuclei run cancelled by user\n"
+                        )
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda: self.log_to_ui("[!] Nuclei cancelled by user")
+                    )
+                    return
+
+                output_preview = self._ascii_safe(combined_output or "").strip()
+
+                SwingUtilities.invokeLater(
+                    lambda e=elapsed, code=process.returncode, p=pass_label: self.log_to_ui(
+                        "[*] Nuclei {}: {}s, exit code {}".format(p, e, code)
+                    )
+                )
+
+                partial_results_mode = False
+                if process.returncode != 0:
+                    partial_parse_file = None
+                    try:
+                        if os.path.exists(json_file) and os.path.getsize(json_file) > 0:
+                            partial_parse_file = json_file
+                        elif os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                            partial_parse_file = output_file
+                    except Exception as partial_err:
+                        self._callbacks.printError(
+                            "Nuclei partial-results check failed: {}".format(
+                                str(partial_err)
+                            )
+                        )
+
+                    can_timeout_recover = bool(
+                        timed_out or process.returncode in [137, 143]
+                    )
+                    can_parse_partial = bool(partial_parse_file and can_timeout_recover)
+                    if can_parse_partial:
                         partial_results_mode = True
-                        parse_file = synthesized_partial_file
+                        parse_file = partial_parse_file
                         partial_notice = [
                             "",
                             "[!] Nuclei did not exit cleanly (code: {})".format(
                                 process.returncode
                             ),
-                            "[*] Recovered {} plain-output findings into partial JSONL".format(
-                                recovered_count
-                            ),
-                            "[*] Continuing with synthesized partial results: {}".format(
+                            "[*] Continuing with partial results from: {}".format(
                                 parse_file
                             ),
                         ]
@@ -1146,213 +1729,311 @@ def _run_nuclei(self):
                             + "\n": self.nuclei_area.append(t)
                         )
                         SwingUtilities.invokeLater(
-                            lambda: self.log_to_ui(
-                                "[*] Nuclei synthesized partial mode enabled (exit {})".format(
-                                    process.returncode
+                            lambda code=process.returncode: self.log_to_ui(
+                                "[*] Nuclei partial-parse mode enabled (exit {})".format(
+                                    code
                                 )
                             )
                         )
+                    elif can_timeout_recover:
+                        synthesized_partial_file = os.path.join(
+                            temp_dir, "partial_results_{}.jsonl".format(pass_slug)
+                        )
+                        recovered_count = self._write_nuclei_partial_results_jsonl(
+                            combined_output, synthesized_partial_file
+                        )
+                        if os.path.exists(synthesized_partial_file):
+                            partial_results_mode = True
+                            parse_file = synthesized_partial_file
+                            partial_notice = [
+                                "",
+                                "[!] Nuclei did not exit cleanly (code: {})".format(
+                                    process.returncode
+                                ),
+                                "[*] Recovered {} plain-output findings into partial JSONL".format(
+                                    recovered_count
+                                ),
+                                "[*] Continuing with synthesized partial results: {}".format(
+                                    parse_file
+                                ),
+                            ]
+                            SwingUtilities.invokeLater(
+                                lambda t="\n".join(partial_notice)
+                                + "\n": self.nuclei_area.append(t)
+                            )
+                            SwingUtilities.invokeLater(
+                                lambda code=process.returncode: self.log_to_ui(
+                                    "[*] Nuclei synthesized partial mode enabled (exit {})".format(
+                                        code
+                                    )
+                                )
+                            )
+                        else:
+                            fail_lines = [
+                                "",
+                                "[!] Nuclei command failed",
+                                "[!] Exit code: {}".format(process.returncode),
+                                "[!] Command: {}".format(display_cmd),
+                                "[*] Timeout recovery was attempted but no parseable output was produced.",
+                            ]
+                            fail_text = "\n".join(fail_lines) + "\n"
+                            SwingUtilities.invokeLater(
+                                lambda t=fail_text: self.nuclei_area.append(t)
+                            )
+                            return
                     else:
                         fail_lines = [
                             "",
                             "[!] Nuclei command failed",
                             "[!] Exit code: {}".format(process.returncode),
                             "[!] Command: {}".format(display_cmd),
-                            "[*] Timeout recovery was attempted but no parseable output was produced.",
                         ]
+                        if output_preview:
+                            fail_lines.append("[!] Output:")
+                            fail_lines.append(output_preview[:3000])
+                        if "flag provided but not defined" in combined_output:
+                            fail_lines.append(
+                                "[*] Tip: your Nuclei version does not support one of these flags."
+                            )
+                            fail_lines.append(
+                                "[*] Try removing unsupported flags from Custom Cmd (for example: -random-agent)."
+                            )
+                        if use_custom_nuclei:
+                            fail_lines.append(
+                                "[*] Tip: ensure custom command writes JSON lines to {json_file}"
+                            )
                         fail_text = "\n".join(fail_lines) + "\n"
                         SwingUtilities.invokeLater(
                             lambda t=fail_text: self.nuclei_area.append(t)
                         )
-                        return
-                else:
-                    fail_lines = [
-                        "",
-                        "[!] Nuclei command failed",
-                        "[!] Exit code: {}".format(process.returncode),
-                        "[!] Command: {}".format(display_cmd),
-                    ]
-                    if output_preview:
-                        fail_lines.append("[!] Output:")
-                        fail_lines.append(output_preview[:3000])
-                    if "flag provided but not defined" in combined_output:
-                        fail_lines.append(
-                            "[*] Tip: your Nuclei version does not support one of these flags."
-                        )
-                        fail_lines.append(
-                            "[*] Try removing unsupported flags from Custom Cmd (for example: -random-agent)."
-                        )
-                    if use_custom_nuclei:
-                        fail_lines.append(
-                            "[*] Tip: ensure custom command writes JSON lines to {json_file}"
-                        )
-                    fail_text = "\n".join(fail_lines) + "\n"
-                    SwingUtilities.invokeLater(
-                        lambda t=fail_text: self.nuclei_area.append(t)
-                    )
-                    SwingUtilities.invokeLater(
-                        lambda: self.log_to_ui(
-                            "[!] Nuclei failed with exit code {}".format(
-                                process.returncode
+                        SwingUtilities.invokeLater(
+                            lambda code=process.returncode: self.log_to_ui(
+                                "[!] Nuclei failed with exit code {}".format(code)
                             )
                         )
+                        return
+
+                if not partial_results_mode:
+                    if os.path.exists(json_file):
+                        parse_file = json_file
+                    elif os.path.exists(output_file):
+                        parse_file = output_file
+                        SwingUtilities.invokeLater(
+                            lambda p=output_file: self.nuclei_area.append(
+                                "[*] Using output fallback parser: {}\n".format(p)
+                            )
+                        )
+                    else:
+                        warn_lines = [
+                            "",
+                            "[!] Nuclei completed but expected results file was not created",
+                            "[!] Expected JSON file: {}".format(json_file),
+                            "[!] Fallback output file: {}".format(output_file),
+                            "[!] Command: {}".format(display_cmd),
+                        ]
+                        if output_preview:
+                            warn_lines.append("[!] Output:")
+                            warn_lines.append(output_preview[:3000])
+                        if use_custom_nuclei:
+                            warn_lines.append(
+                                "[*] Tip: include {json_file} in Custom Cmd and make nuclei write json output there"
+                            )
+                        warn_text = "\n".join(warn_lines) + "\n"
+                        SwingUtilities.invokeLater(
+                            lambda t=warn_text: self.nuclei_area.append(t)
+                        )
+                        SwingUtilities.invokeLater(
+                            lambda: self.log_to_ui(
+                                "[!] Nuclei produced no parseable results file"
+                            )
+                        )
+                        return
+
+                findings_by_severity = {
+                    "critical": [],
+                    "high": [],
+                    "medium": [],
+                    "low": [],
+                    "info": [],
+                }
+                vuln_count = 0
+                json_parse_errors = 0
+
+                try:
+                    with open(parse_file, "r") as f:
+                        for line in f:
+                            if line.strip():
+                                try:
+                                    vuln = json.loads(line)
+                                    vuln_count += 1
+                                    severity = (
+                                        vuln.get("info", {})
+                                        .get("severity", "info")
+                                        .lower()
+                                    )
+                                    template = vuln.get("template-id", "unknown")
+                                    matched = vuln.get(
+                                        "matched-at", vuln.get("host", "")
+                                    )
+                                    findings_by_severity.get(
+                                        severity, findings_by_severity["info"]
+                                    ).append("[{}] {}".format(template, matched))
+                                except Exception as json_err:
+                                    json_parse_errors += 1
+                                    self._callbacks.printError(
+                                        "Nuclei JSON parse error: {}".format(
+                                            str(json_err)
+                                        )
+                                    )
+                except Exception as e:
+                    self._callbacks.printError("Error reading JSON: {}".format(str(e)))
+                    read_fail = (
+                        "\n[!] Failed to read Nuclei JSON results from {}: {}\n".format(
+                            parse_file, str(e)
+                        )
+                    )
+                    SwingUtilities.invokeLater(
+                        lambda t=read_fail: self.nuclei_area.append(t)
                     )
                     return
 
-            if not partial_results_mode:
-                if os.path.exists(json_file):
-                    parse_file = json_file
-                elif os.path.exists(output_file):
-                    parse_file = output_file
-                    SwingUtilities.invokeLater(
-                        lambda: self.nuclei_area.append(
-                            "[*] Using output fallback parser: {}\n".format(output_file)
+                uses_recon_target_list = (not use_custom_nuclei) or (
+                    pass_targets_file in display_cmd
+                )
+                target_summary = (
+                    str(pass_target_count)
+                    if uses_recon_target_list
+                    else "Custom command (not using generated target list)"
+                )
+                result_title = "NUCLEI SCAN RESULTS"
+                if total_passes > 1:
+                    result_title = "NUCLEI SCAN RESULTS [{}]".format(pass_label)
+                result = ["\n" + "=" * 80, result_title, "=" * 80, ""]
+                result.append("[*] Scan Time: {}s".format(elapsed))
+                result.append("[*] Auth Pass: {}".format("Yes" if use_auth_pass else "No"))
+                result.append("[*] Targets: {}".format(target_summary))
+                result.append("[*] Total Findings: {}".format(vuln_count))
+                result.append("[*] Parsed results file: {}".format(parse_file))
+                if partial_results_mode:
+                    result.append(
+                        "[*] Run status: partial results (process exited {})".format(
+                            process.returncode
                         )
                     )
-                else:
-                    warn_lines = [
-                        "",
-                        "[!] Nuclei completed but expected results file was not created",
-                        "[!] Expected JSON file: {}".format(json_file),
-                        "[!] Fallback output file: {}".format(output_file),
-                        "[!] Command: {}".format(display_cmd),
-                    ]
-                    if output_preview:
-                        warn_lines.append("[!] Output:")
-                        warn_lines.append(output_preview[:3000])
-                    if use_custom_nuclei:
-                        warn_lines.append(
-                            "[*] Tip: include {json_file} in Custom Cmd and make nuclei write json output there"
-                        )
-                    warn_text = "\n".join(warn_lines) + "\n"
-                    SwingUtilities.invokeLater(
-                        lambda t=warn_text: self.nuclei_area.append(t)
+                if json_parse_errors > 0:
+                    result.append(
+                        "[*] Ignored non-JSON lines: {}".format(json_parse_errors)
                     )
-                    SwingUtilities.invokeLater(
-                        lambda: self.log_to_ui(
-                            "[!] Nuclei produced no parseable results file"
-                        )
-                    )
-                    return
-
-            # Parse JSON results and group by severity
-            findings_by_severity = {'critical': [], 'high': [], 'medium': [], 'low': [], 'info': []}
-            vuln_count = 0
-            json_parse_errors = 0
-
-            try:
-                with open(parse_file, "r") as f:
-                    for line in f:
-                        if line.strip():
-                            try:
-                                vuln = json.loads(line)
-                                vuln_count += 1
-                                severity = vuln.get('info', {}).get('severity', 'info').lower()
-                                template = vuln.get('template-id', 'unknown')
-                                matched = vuln.get('matched-at', vuln.get('host', ''))
-                                findings_by_severity.get(severity, findings_by_severity['info']).append(
-                                    "[{}] {}".format(template, matched)
-                                )
-                            except Exception as json_err:
-                                json_parse_errors += 1
-                                self._callbacks.printError(
-                                    "Nuclei JSON parse error: {}".format(str(json_err))
-                                )
-            except Exception as e:
-                self._callbacks.printError("Error reading JSON: {}".format(str(e)))
-                read_fail = (
-                    "\n[!] Failed to read Nuclei JSON results from {}: {}\n".format(
-                        parse_file, str(e)
-                    )
-                )
-                SwingUtilities.invokeLater(
-                    lambda t=read_fail: self.nuclei_area.append(t)
-                )
-                return
-
-            uses_recon_target_list = (not use_custom_nuclei) or (
-                targets_file in display_cmd
-            )
-            target_summary = (
-                str(target_count)
-                if uses_recon_target_list
-                else "Custom command (not using generated target list)"
-            )
-            result = ["\n" + "=" * 80, "NUCLEI SCAN RESULTS", "=" * 80, ""]
-            result.append("[*] Scan Time: {}s".format(elapsed))
-            result.append("[*] Targets: {}".format(target_summary))
-            result.append("[*] Total Findings: {}".format(vuln_count))
-            result.append("[*] Parsed results file: {}".format(parse_file))
-            if partial_results_mode:
-                result.append(
-                    "[*] Run status: partial results (process exited {})".format(
-                        process.returncode
-                    )
-                )
-            if json_parse_errors > 0:
-                result.append(
-                    "[*] Ignored non-JSON lines: {}".format(json_parse_errors)
-                )
-            result.append("")
-
-            if vuln_count > 0:
-                for severity in ['critical', 'high', 'medium', 'low', 'info']:
-                    findings = findings_by_severity[severity]
-                    if findings:
-                        result.append("=" * 80)
-                        result.append("{} - {} findings".format(severity.upper(), len(findings)))
-                        result.append("=" * 80)
-                        for finding in findings[:10]:
-                            result.append(finding)
-                        if len(findings) > 10:
-                            result.append("... ({} more)".format(len(findings) - 10))
-                        result.append("")
-
-                result.append("=" * 80)
-                result.append("SUMMARY")
-                result.append("=" * 80)
-                for severity in ['critical', 'high', 'medium', 'low', 'info']:
-                    count = len(findings_by_severity[severity])
-                    if count > 0:
-                        pct = int((count / float(vuln_count)) * 100)
-                        result.append("[+] {}: {} ({}%)".format(severity.upper(), count, pct))
-
                 result.append("")
-                result.append("[*] Key Actions:")
-                if findings_by_severity['critical']:
-                    result.append("    - Address {} critical vulnerabilities immediately".format(len(findings_by_severity['critical'])))
-                if findings_by_severity['high']:
-                    result.append("    - Review {} high severity findings".format(len(findings_by_severity['high'])))
-                result.append("    - Full results: {}".format(parse_file))
 
-                SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[+] Found {} vulnerabilities".format(vuln_count))
-                )
-            else:
-                result.append("[+] No vulnerabilities found")
-                if uses_recon_target_list:
-                    result.append(
-                        "[*] All {} targets scanned successfully".format(
-                            target_count
+                total_findings_all_passes += vuln_count
+                for severity in ["critical", "high", "medium", "low", "info"]:
+                    total_counts_by_severity[severity] += len(
+                        findings_by_severity[severity]
+                    )
+
+                if vuln_count > 0:
+                    for severity in ["critical", "high", "medium", "low", "info"]:
+                        findings = findings_by_severity[severity]
+                        if findings:
+                            result.append("=" * 80)
+                            result.append(
+                                "{} - {} findings".format(
+                                    severity.upper(), len(findings)
+                                )
+                            )
+                            result.append("=" * 80)
+                            for finding in findings[:10]:
+                                result.append(finding)
+                            if len(findings) > 10:
+                                result.append(
+                                    "... ({} more)".format(len(findings) - 10)
+                                )
+                            result.append("")
+
+                    result.append("=" * 80)
+                    result.append("SUMMARY")
+                    result.append("=" * 80)
+                    for severity in ["critical", "high", "medium", "low", "info"]:
+                        count = len(findings_by_severity[severity])
+                        if count > 0:
+                            pct = int((count / float(vuln_count)) * 100)
+                            result.append(
+                                "[+] {}: {} ({}%)".format(
+                                    severity.upper(), count, pct
+                                )
+                            )
+
+                    result.append("")
+                    result.append("[*] Key Actions:")
+                    if findings_by_severity["critical"]:
+                        result.append(
+                            "    - Address {} critical vulnerabilities immediately".format(
+                                len(findings_by_severity["critical"])
+                            )
+                        )
+                    if findings_by_severity["high"]:
+                        result.append(
+                            "    - Review {} high severity findings".format(
+                                len(findings_by_severity["high"])
+                            )
+                        )
+                    result.append("    - Full results: {}".format(parse_file))
+
+                    SwingUtilities.invokeLater(
+                        lambda count=vuln_count, p=pass_label: self.log_to_ui(
+                            "[+] {} pass found {} vulnerabilities".format(p, count)
                         )
                     )
                 else:
-                    result.append(
-                        "[*] Custom command completed successfully"
+                    result.append("[+] No vulnerabilities found")
+                    if uses_recon_target_list:
+                        result.append(
+                            "[*] All {} targets scanned successfully".format(
+                                pass_target_count
+                            )
+                        )
+                    else:
+                        result.append("[*] Custom command completed successfully")
+                        result.append(
+                            "[*] Note: target count is defined by your custom command"
+                        )
+                    SwingUtilities.invokeLater(
+                        lambda p=pass_label: self.log_to_ui(
+                            "[+] {} pass found no vulnerabilities".format(p)
+                        )
                     )
-                    result.append(
-                        "[*] Note: target count is defined by your custom command"
-                    )
+
                 SwingUtilities.invokeLater(
-                    lambda: self.log_to_ui("[+] No vulnerabilities")
+                    lambda r="\n".join(result): self.nuclei_area.append(r)
+                )
+                SwingUtilities.invokeLater(
+                    lambda o=output_file: self.log_to_ui("[+] Complete: {}".format(o))
                 )
 
-            SwingUtilities.invokeLater(
-                lambda: self.nuclei_area.append("\n".join(result))
-            )
-            SwingUtilities.invokeLater(
-                lambda: self.log_to_ui("[+] Complete: {}".format(output_file))
-            )
+            if total_passes > 1:
+                summary = [
+                    "\n" + "=" * 80,
+                    "NUCLEI MULTI-PASS SUMMARY",
+                    "=" * 80,
+                    "",
+                    "[*] Passes: {}".format(
+                        ", ".join([self._ascii_safe(x[0]) for x in run_plans])
+                    ),
+                    "[*] Total scan time (all passes): {}s".format(
+                        total_elapsed_all_passes
+                    ),
+                    "[*] Total findings (all passes): {}".format(
+                        total_findings_all_passes
+                    ),
+                ]
+                for severity in ["critical", "high", "medium", "low", "info"]:
+                    count = total_counts_by_severity.get(severity, 0)
+                    if count > 0:
+                        summary.append("[+] {}: {}".format(severity.upper(), count))
+                SwingUtilities.invokeLater(
+                    lambda t="\n".join(summary) + "\n": self.nuclei_area.append(t)
+                )
         except Exception as e:
             err = "[!] Failed: {}\n\nCheck: nuclei -version".format(str(e))
             SwingUtilities.invokeLater(lambda: self.nuclei_area.setText(err))
@@ -3208,14 +3889,17 @@ def _run_apihunter(self, event):
             self.apihunter_area.setText("[!] No targets\n")
         return
 
-    writer = None
-    try:
-        writer = FileWriter(targets_file)
-        for target in targets:
-            writer.write(target + "\n")
-    finally:
-        if writer:
-            writer.close()
+    def _write_targets_file(file_path, target_values):
+        writer = None
+        try:
+            writer = FileWriter(file_path)
+            for target_value in list(target_values or []):
+                writer.write(self._ascii_safe(target_value) + "\n")
+        finally:
+            if writer:
+                writer.close()
+
+    _write_targets_file(targets_file, targets)
 
     # Get calibration preset
     calibration = "Balanced (Desktop Preset)"
@@ -3223,6 +3907,12 @@ def _run_apihunter(self, event):
         calibration = str(self.apihunter_calibration_combo.getSelectedItem())
     except Exception as e:
         self._callbacks.printError("ApiHunter calibration read error: {}".format(str(e)))
+
+    auth_mode = "Auth + Unauth"
+    try:
+        auth_mode = str(self.apihunter_auth_mode_combo.getSelectedItem())
+    except Exception as e:
+        self._callbacks.printError("ApiHunter auth mode read error: {}".format(str(e)))
 
     # Check for custom command override
     use_custom, custom_apihunter_command = self._resolve_custom_command(
@@ -3238,6 +3928,18 @@ def _run_apihunter(self, event):
     )
     if use_custom and not custom_apihunter_command:
         self._cleanup_temp_dir(temp_dir, "apihunter custom command validation")
+        return
+    if use_custom and self._ascii_safe(auth_mode, lower=True).strip() in [
+        "auth + unauth",
+        "auth+unauth",
+    ]:
+        self._cleanup_temp_dir(temp_dir, "apihunter custom command dual-pass validation")
+        self.apihunter_area.setText(
+            "[!] Auth + Unauth mode is not supported when 'Enable Custom' is active\n"
+        )
+        self.apihunter_area.append(
+            "[*] Disable custom mode to run dual-pass, or keep custom mode with Auth Only/Unauth Only.\n"
+        )
         return
 
     target_count = max(1, int(len(targets)))
@@ -3269,6 +3971,7 @@ def _run_apihunter(self, event):
         self.apihunter_area.append("[*] Target Source: Custom Targets popup\n")
     else:
         self.apihunter_area.append("[*] Target Source: Recon filtered scope\n")
+    self.apihunter_area.append("[*] Auth Mode: {}\n".format(auth_mode))
     self.apihunter_area.append("[*] Targets: {}\n".format(len(targets)))
     self.apihunter_area.append("[*] Target URLs:\n")
     for target_url in targets:
@@ -3290,129 +3993,604 @@ def _run_apihunter(self, event):
     self.apihunter_area.append("\n")
     self._clear_tool_cancel("apihunter")
 
+    def _pick_best_frequency_value(counter_map):
+        items = list((counter_map or {}).items())
+        if not items:
+            return ""
+        ordered = sorted(
+            items,
+            key=lambda item: (-int(item[1]), -len(self._ascii_safe(item[0])), self._ascii_safe(item[0])),
+        )
+        return self._ascii_safe(ordered[0][0]).strip()
+
+    def _entry_header_value(entry, header_name):
+        headers = entry.get("headers") if isinstance(entry, dict) else {}
+        if not isinstance(headers, dict):
+            return ""
+        target = self._ascii_safe(header_name or "", lower=True).strip()
+        for raw_name, raw_value in headers.items():
+            safe_name = self._ascii_safe(raw_name or "", lower=True).strip()
+            if safe_name != target:
+                continue
+            return self._ascii_safe(raw_value or "").strip()
+        return ""
+
+    def _cookie_header_to_pairs(raw_cookie):
+        text = self._ascii_safe(raw_cookie or "").strip()
+        if not text:
+            return []
+        ignored_cookie_attrs = set(
+            [
+                "path",
+                "domain",
+                "expires",
+                "max-age",
+                "secure",
+                "httponly",
+                "samesite",
+                "priority",
+            ]
+        )
+        pairs = []
+        seen = set()
+        for chunk in text.split(";"):
+            part = self._ascii_safe(chunk or "").strip()
+            if (not part) or ("=" not in part):
+                continue
+            name, value = part.split("=", 1)
+            name = self._ascii_safe(name).strip()
+            value = self._ascii_safe(value).strip()
+            lower_name = self._ascii_safe(name, lower=True)
+            if (not name) or (not value) or (lower_name in ignored_cookie_attrs):
+                continue
+            if lower_name in seen:
+                continue
+            seen.add(lower_name)
+            pairs.append("{}={}".format(name, value))
+            if len(pairs) >= 20:
+                break
+        return pairs
+
+    def _discover_auth_associated_targets(target_list):
+        return _discover_auth_associated_targets_shared(
+            self,
+            target_list,
+            "ApiHunter auth target discovery snapshot error",
+        )
+
+    def _collect_auth_context_for_targets(target_list):
+        target_keys = set()
+        for target_url in list(target_list or []):
+            key = self._apihunter_target_key(target_url)
+            if key:
+                target_keys.add(key)
+
+        context = {
+            "headers": [],
+            "cookies": [],
+            "matched_entries": 0,
+            "auth_candidates_found": 0,
+        }
+        if not target_keys:
+            return context
+
+        filtered_source = {}
+        try:
+            filtered_source = dict(self._filter_endpoints())
+        except Exception as e:
+            self._callbacks.printError(
+                "ApiHunter auth context source snapshot error: {}".format(str(e))
+            )
+            filtered_source = {}
+
+        authorization_counts = {}
+        cookie_counts = {}
+        extra_header_counts = {}
+        extra_header_candidates = [
+            ("x-api-key", "X-API-Key"),
+            ("api-key", "Api-Key"),
+            ("apikey", "ApiKey"),
+            ("x-auth-token", "X-Auth-Token"),
+            ("x-access-token", "X-Access-Token"),
+        ]
+        for entries in filtered_source.values():
+            entries_list = entries if isinstance(entries, list) else [entries]
+            for entry in entries_list:
+                if not isinstance(entry, dict):
+                    continue
+                host = self._ascii_safe(entry.get("host"), lower=True).strip()
+                if not host:
+                    continue
+                protocol = (
+                    self._ascii_safe(entry.get("protocol"), lower=True).strip()
+                    or "https"
+                )
+                port = entry.get("port", -1)
+                if port == -1:
+                    port = 443 if protocol == "https" else 80
+                if (protocol == "https" and port == 443) or (
+                    protocol == "http" and port == 80
+                ):
+                    scoped_url = "{}://{}/".format(protocol, host)
+                else:
+                    scoped_url = "{}://{}:{}/".format(protocol, host, port)
+                target_key = self._apihunter_target_key(scoped_url)
+                if target_key not in target_keys:
+                    continue
+
+                context["matched_entries"] += 1
+                authorization_value = _entry_header_value(entry, "authorization")
+                if authorization_value:
+                    authorization_counts[authorization_value] = (
+                        authorization_counts.get(authorization_value, 0) + 1
+                    )
+                cookie_value = _entry_header_value(entry, "cookie")
+                if cookie_value:
+                    cookie_counts[cookie_value] = cookie_counts.get(cookie_value, 0) + 1
+                for lower_header_name, display_header_name in extra_header_candidates:
+                    header_value = _entry_header_value(entry, lower_header_name)
+                    if not header_value:
+                        continue
+                    rendered = "{}: {}".format(display_header_name, header_value)
+                    extra_header_counts[rendered] = (
+                        extra_header_counts.get(rendered, 0) + 1
+                    )
+
+        selected_authorization = _pick_best_frequency_value(authorization_counts)
+        if selected_authorization:
+            context["headers"].append(
+                "Authorization: {}".format(selected_authorization)
+            )
+            context["auth_candidates_found"] += 1
+        for header_line, _count in sorted(
+            extra_header_counts.items(), key=lambda item: (-int(item[1]), item[0])
+        )[:3]:
+            context["headers"].append(header_line)
+            context["auth_candidates_found"] += 1
+
+        selected_cookie = _pick_best_frequency_value(cookie_counts)
+        cookie_pairs = _cookie_header_to_pairs(selected_cookie)
+        if cookie_pairs:
+            context["cookies"] = cookie_pairs
+            context["auth_candidates_found"] += len(cookie_pairs)
+        return context
+
+    def _build_default_apihunter_command(output_file_path, targets_file_path=None):
+        selected_targets_file = (
+            self._ascii_safe(targets_file_path).strip()
+            if targets_file_path
+            else targets_file
+        )
+        cmd_local = [
+            apihunter_path,
+            "--urls",
+            selected_targets_file,
+            "--format",
+            "ndjson",
+            "--output",
+            output_file_path,
+            "--no-discovery",
+        ]
+        if "Quick" in calibration:
+            cmd_local.extend(
+                [
+                    "--filter-timeout",
+                    "3",
+                    "--max-endpoints",
+                    "40",
+                    "--concurrency",
+                    "4",
+                    "--timeout-secs",
+                    str(adaptive_timeout_secs),
+                    "--retries",
+                    "1",
+                    "--delay-ms",
+                    "0",
+                ]
+            )
+        elif "Deep" in calibration:
+            cmd_local.extend(
+                [
+                    "--active-checks",
+                    "--response-diff-deep",
+                    "--filter-timeout",
+                    "3",
+                    "--max-endpoints",
+                    "0",
+                    "--concurrency",
+                    "6",
+                    "--timeout-secs",
+                    str(adaptive_timeout_secs),
+                    "--retries",
+                    "2",
+                    "--delay-ms",
+                    "100",
+                    "--waf-evasion",
+                    "--per-host-clients",
+                    "--adaptive-concurrency",
+                ]
+            )
+        else:
+            cmd_local.extend(
+                [
+                    "--filter-timeout",
+                    "3",
+                    "--max-endpoints",
+                    "80",
+                    "--concurrency",
+                    "5",
+                    "--timeout-secs",
+                    str(adaptive_timeout_secs),
+                    "--retries",
+                    "1",
+                    "--delay-ms",
+                    "50",
+                ]
+            )
+        return cmd_local
+
+    def _append_auth_context_to_command(base_cmd, auth_context):
+        cmd_local = list(base_cmd)
+        for header_line in list(auth_context.get("headers", []) or []):
+            clean_header = self._ascii_safe(header_line).strip()
+            if clean_header:
+                cmd_local.extend(["--headers", clean_header])
+        cookies = list(auth_context.get("cookies", []) or [])
+        if cookies:
+            cmd_local.extend(["--cookies", ",".join(cookies)])
+        return cmd_local
+
+    def _append_auth_context_to_custom_command(command_text, auth_context):
+        rendered = self._ascii_safe(command_text or "").strip()
+        if not rendered:
+            return rendered
+        for header_line in list(auth_context.get("headers", []) or []):
+            clean_header = self._ascii_safe(header_line).strip()
+            if clean_header:
+                rendered += " --headers {}".format(
+                    self._quote_custom_command_value(clean_header)
+                )
+        cookies = list(auth_context.get("cookies", []) or [])
+        if cookies:
+            rendered += " --cookies {}".format(
+                self._quote_custom_command_value(",".join(cookies))
+            )
+        return rendered
+
     def run_scan():
         process = None
+        null_sink_handle = None
+        aggregated_findings = []
         try:
-            if use_custom and custom_apihunter_command:
-                cmd = self._build_shell_command(custom_apihunter_command)
-                display_cmd = custom_apihunter_command
+            mode_key = self._ascii_safe(auth_mode, lower=True).strip()
+            run_plan = []
+            if mode_key == "auth only":
+                run_plan = [("Auth", True)]
+            elif mode_key in ["auth + unauth", "auth+unauth"]:
+                run_plan = [("Unauth", False), ("Auth", True)]
+            else:
+                run_plan = [("Unauth", False)]
+
+            auth_context = {
+                "headers": [],
+                "cookies": [],
+                "matched_entries": 0,
+                "auth_candidates_found": 0,
+            }
+            auth_targets = []
+            unauth_targets = list(targets)
+            auth_targets_file = os.path.join(temp_dir, "targets_auth.txt")
+            unauth_targets_file = os.path.join(temp_dir, "targets_unauth.txt")
+            auth_targets_file_ready = False
+            unauth_targets_file_ready = False
+            if any(use_auth for _label, use_auth in run_plan):
+                auth_discovery = _discover_auth_associated_targets(targets)
+                auth_targets = list(auth_discovery.get("auth_targets", []) or [])
+                unauth_targets = list(auth_discovery.get("unauth_targets", []) or [])
+                matched_entries = int(auth_discovery.get("matched_entries", 0) or 0)
+                auth_entries = int(auth_discovery.get("auth_entries", 0) or 0)
+                header_auth_entries = int(
+                    auth_discovery.get("header_auth_entries", 0) or 0
+                )
+                signal_only_entries = int(
+                    auth_discovery.get("signal_only_entries", 0) or 0
+                )
+                associated_count = len(auth_targets)
+                unauth_count = len(unauth_targets)
                 SwingUtilities.invokeLater(
-                    lambda: self.apihunter_area.append(
-                        "[*] Custom command override enabled\n"
+                    lambda m=matched_entries, a=auth_entries, c=associated_count: self.apihunter_area.append(
+                        "[*] Auth discovery: matched_entries={} auth_entries={} associated_targets={}\n".format(
+                            m, a, c
+                        )
                     )
                 )
-            else:
-                # Build command based on calibration preset
-                cmd = [
-                    apihunter_path,
-                    "--urls",
-                    targets_file,
-                    "--format",
-                    "ndjson",
-                    "--output",
-                    results_file,
-                    "--no-discovery",
-                ]
-                
-                if "Quick" in calibration:
-                    cmd.extend([
-                        "--filter-timeout", "3",
-                        "--max-endpoints", "40",
-                        "--concurrency", "4",
-                        "--timeout-secs", str(adaptive_timeout_secs),
-                        "--retries", "1",
-                        "--delay-ms", "0",
-                    ])
-                elif "Deep" in calibration:
-                    cmd.extend([
-                        "--active-checks",
-                        "--response-diff-deep",
-                        "--filter-timeout", "3",
-                        "--max-endpoints", "0",
-                        "--concurrency", "6",
-                        "--timeout-secs", str(adaptive_timeout_secs),
-                        "--retries", "2",
-                        "--delay-ms", "100",
-                        "--waf-evasion",
-                        "--per-host-clients",
-                        "--adaptive-concurrency",
-                    ])
-                else:  # Balanced (default)
-                    cmd.extend([
-                        "--filter-timeout", "3",
-                        "--max-endpoints", "80",
-                        "--concurrency", "5",
-                        "--timeout-secs", str(adaptive_timeout_secs),
-                        "--retries", "1",
-                        "--delay-ms", "50",
-                    ])
-                display_cmd = " ".join(cmd)
-            
-            SwingUtilities.invokeLater(
-                lambda: self.apihunter_area.append("[*] Command: {}\n\n".format(display_cmd))
-            )
+                SwingUtilities.invokeLater(
+                    lambda c=associated_count, u=unauth_count: self.apihunter_area.append(
+                        "[*] Auth split: auth_targets={} unauth_targets={}\n".format(
+                            c, u
+                        )
+                    )
+                )
+                SwingUtilities.invokeLater(
+                    lambda h=header_auth_entries, s=signal_only_entries: self.apihunter_area.append(
+                        "[*] Auth discovery detail: header_auth_entries={} signal_only_entries={}\n".format(
+                            h, s
+                        )
+                    )
+                )
 
-            start_time = time_module.time()
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=False,
-            )
-            self._set_active_tool_process("apihunter", process)
+                if auth_targets:
+                    auth_lines = ["[*] Auth-associated target URLs:"]
+                    for auth_target_url in auth_targets:
+                        auth_lines.append("    {}".format(self._ascii_safe(auth_target_url)))
+                    SwingUtilities.invokeLater(
+                        lambda t="\n".join(auth_lines) + "\n": self.apihunter_area.append(t)
+                    )
+                    auth_context = _collect_auth_context_for_targets(auth_targets)
+                    has_auth_material = bool(
+                        auth_context.get("headers") or auth_context.get("cookies")
+                    )
+                    if has_auth_material:
+                        SwingUtilities.invokeLater(
+                            lambda: self.apihunter_area.append(
+                                "[*] Auth context prepared: headers={} cookies={} matched_entries={}\n".format(
+                                    len(auth_context.get("headers", []) or []),
+                                    len(auth_context.get("cookies", []) or []),
+                                    int(auth_context.get("matched_entries", 0) or 0),
+                                )
+                            )
+                        )
+                    else:
+                        SwingUtilities.invokeLater(
+                            lambda c=associated_count: self.apihunter_area.append(
+                                "[*] Auth discovery note: {} auth-associated target(s) detected, but reusable Authorization/Cookie/API-key header context was not found. Auth pass will run with target split only.\n".format(
+                                    c
+                                )
+                            )
+                        )
 
-            SwingUtilities.invokeLater(
-                lambda: self.apihunter_area.append("[*] Computing...\n")
-            )
+                if unauth_targets:
+                    unauth_lines = ["[*] Unauth target URLs:"]
+                    for unauth_target_url in unauth_targets:
+                        unauth_lines.append(
+                            "    {}".format(self._ascii_safe(unauth_target_url))
+                        )
+                    SwingUtilities.invokeLater(
+                        lambda t="\n".join(unauth_lines) + "\n": self.apihunter_area.append(t)
+                    )
 
-            while process.poll() is None:
+                if not auth_targets:
+                    SwingUtilities.invokeLater(
+                        lambda: self.apihunter_area.append(
+                            "[*] Auth discovery: found none in Recon filtered scope.\n"
+                        )
+                    )
+                    if matched_entries > 0 and header_auth_entries == 0:
+                        SwingUtilities.invokeLater(
+                            lambda m=matched_entries: self.apihunter_area.append(
+                                "[*] Auth discovery note: matched {} target-scoped entries, but none had Authorization/Cookie/API-key request headers or auth signals.\n".format(
+                                    m
+                                )
+                            )
+                        )
+                    if mode_key == "auth only":
+                        SwingUtilities.invokeLater(
+                            lambda: self.apihunter_area.append(
+                                "[!] Auth mode selected but no associated auth data was found.\n"
+                            )
+                        )
+                        return
+                if mode_key in ["auth + unauth", "auth+unauth"]:
+                    split_plan = []
+                    if unauth_targets:
+                        split_plan.append(("Unauth", False))
+                    else:
+                        SwingUtilities.invokeLater(
+                            lambda: self.apihunter_area.append(
+                                "[*] Unauth pass skipped: no unauth-associated targets found.\n"
+                            )
+                        )
+                    if auth_targets:
+                        split_plan.append(("Auth", True))
+                    else:
+                        SwingUtilities.invokeLater(
+                            lambda: self.apihunter_area.append(
+                                "[*] Auth pass skipped: no auth-associated targets found.\n"
+                            )
+                        )
+                    run_plan = split_plan
+            if not run_plan:
+                SwingUtilities.invokeLater(
+                    lambda: self.apihunter_area.append("[!] No ApiHunter passes selected\n")
+                )
+                return
+
+            total_passes = len(run_plan)
+            for pass_index, (pass_label, use_auth_pass) in enumerate(run_plan, 1):
+                null_sink_handle = None
                 if self._is_tool_cancelled("apihunter"):
-                    self._terminate_process_cross_platform(process, "ApiHunter")
                     SwingUtilities.invokeLater(
                         lambda: self.apihunter_area.append("\n[!] Cancelled\n")
                     )
                     return
-                elapsed = int(time_module.time() - start_time)
-                if elapsed > max_timeout:
-                    try:
-                        process.kill()
-                        process.wait()
-                    except Exception as kill_err:
-                        self._callbacks.printError(
-                            "ApiHunter timeout kill error: {}".format(str(kill_err))
+
+                pass_key = self._ascii_safe(pass_label, lower=True).replace(" ", "_")
+                pass_results_file = (
+                    results_file
+                    if total_passes == 1
+                    else os.path.join(temp_dir, "results_{}.ndjson".format(pass_key))
+                )
+                pass_targets = auth_targets if use_auth_pass else unauth_targets
+                if not pass_targets:
+                    continue
+                pass_targets_file = targets_file
+                if pass_targets != targets:
+                    if use_auth_pass:
+                        if not auth_targets_file_ready:
+                            _write_targets_file(auth_targets_file, pass_targets)
+                            auth_targets_file_ready = True
+                        pass_targets_file = auth_targets_file
+                    else:
+                        if not unauth_targets_file_ready:
+                            _write_targets_file(unauth_targets_file, pass_targets)
+                            unauth_targets_file_ready = True
+                        pass_targets_file = unauth_targets_file
+
+                if use_custom and custom_apihunter_command:
+                    command_for_pass = custom_apihunter_command
+                    if pass_targets_file != targets_file:
+                        command_for_pass = command_for_pass.replace(
+                            targets_file, pass_targets_file
                         )
+                    if use_auth_pass:
+                        command_for_pass = _append_auth_context_to_custom_command(
+                            command_for_pass, auth_context
+                        )
+                    cmd = self._build_shell_command(command_for_pass)
+                    display_cmd = (
+                        "{} [--headers/--cookies redacted]".format(command_for_pass)
+                        if use_auth_pass
+                        else command_for_pass
+                    )
                     SwingUtilities.invokeLater(
-                        lambda: self.apihunter_area.append("\n[!] Timeout after {}s\n".format(max_timeout))
+                        lambda p=pass_label: self.apihunter_area.append(
+                            "[*] Pass {}: custom command override enabled\n".format(p)
+                        )
                     )
-                    return
-                time_module.sleep(0.1)
-
-            process.wait()
-            elapsed = int(time_module.time() - start_time)
-
-            SwingUtilities.invokeLater(
-                lambda e=elapsed: self.apihunter_area.append(
-                    "\n[+] Completed in {}s\n".format(e)
-                )
-            )
-
-            if os.path.exists(results_file):
-                # Process results before temp-dir cleanup to avoid missing-file races.
-                SwingUtilities.invokeAndWait(
-                    lambda: self._process_apihunter_ndjson_results(
-                        results_file, self.apihunter_area
+                else:
+                    cmd = _build_default_apihunter_command(
+                        pass_results_file, pass_targets_file
                     )
-                )
-            else:
+                    display_cmd = " ".join(cmd)
+                    if use_auth_pass:
+                        cmd = _append_auth_context_to_command(cmd, auth_context)
+                        display_cmd = "{} [--headers/--cookies redacted]".format(
+                            display_cmd
+                        )
+
                 SwingUtilities.invokeLater(
-                    lambda: self.apihunter_area.append(
-                        "[*] No results file generated (no findings or scanner did not write output file)\n"
+                    lambda p=pass_label, i=pass_index, t=total_passes: self.apihunter_area.append(
+                        "\n[*] Pass {}/{}: {}\n".format(i, t, p)
                     )
                 )
+                SwingUtilities.invokeLater(
+                    lambda c=len(pass_targets): self.apihunter_area.append(
+                        "[*] Pass Targets: {}\n".format(c)
+                    )
+                )
+                SwingUtilities.invokeLater(
+                    lambda d=display_cmd: self.apihunter_area.append(
+                        "[*] Command: {}\n\n".format(d)
+                    )
+                )
+
+                start_time = time_module.time()
+                timed_out = False
+                null_sink = getattr(subprocess, "DEVNULL", None)
+                if null_sink is None:
+                    null_sink_handle = open(os.devnull, "wb")
+                    null_sink = null_sink_handle
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=null_sink,
+                    stderr=null_sink,
+                    shell=False,
+                )
+                self._set_active_tool_process("apihunter", process)
+
+                SwingUtilities.invokeLater(
+                    lambda p=pass_label: self.apihunter_area.append(
+                        "[*] Computing {} pass...\n".format(p)
+                    )
+                )
+
+                while process.poll() is None:
+                    if self._is_tool_cancelled("apihunter"):
+                        self._terminate_process_cross_platform(process, "ApiHunter")
+                        SwingUtilities.invokeLater(
+                            lambda: self.apihunter_area.append("\n[!] Cancelled\n")
+                        )
+                        if null_sink_handle is not None:
+                            try:
+                                null_sink_handle.close()
+                            except Exception:
+                                pass
+                            null_sink_handle = None
+                        return
+                    elapsed = int(time_module.time() - start_time)
+                    if elapsed > max_timeout:
+                        try:
+                            process.kill()
+                            process.wait()
+                        except Exception as kill_err:
+                            self._callbacks.printError(
+                                "ApiHunter timeout kill error: {}".format(str(kill_err))
+                            )
+                        timed_out = True
+                        break
+                    time_module.sleep(0.1)
+
+                elapsed = int(time_module.time() - start_time)
+                if timed_out:
+                    SwingUtilities.invokeLater(
+                        lambda p=pass_label: self.apihunter_area.append(
+                            "\n[!] {} pass timeout after {}s\n".format(p, max_timeout)
+                        )
+                    )
+                else:
+                    process.wait()
+                    SwingUtilities.invokeLater(
+                        lambda p=pass_label, e=elapsed: self.apihunter_area.append(
+                            "\n[+] {} pass completed in {}s\n".format(p, e)
+                        )
+                    )
+
+                if os.path.exists(pass_results_file):
+                    parsed_holder = {"findings": []}
+
+                    def _render_pass_results(path=pass_results_file, label=pass_label):
+                        parsed_holder["findings"] = (
+                            self._process_apihunter_ndjson_results(
+                                path, self.apihunter_area, run_label=label
+                            )
+                            or []
+                        )
+
+                    SwingUtilities.invokeAndWait(_render_pass_results)
+                    aggregated_findings.extend(parsed_holder["findings"])
+                    if timed_out:
+                        SwingUtilities.invokeLater(
+                            lambda p=pass_label, c=len(parsed_holder["findings"]): self.apihunter_area.append(
+                                "[*] {} pass timeout: parsed {} partial finding(s) from NDJSON.\n".format(
+                                    p, c
+                                )
+                            )
+                        )
+                else:
+                    SwingUtilities.invokeLater(
+                        lambda p=pass_label: self.apihunter_area.append(
+                            "[*] {} pass produced no NDJSON results file.\n".format(p)
+                        )
+                    )
+                if null_sink_handle is not None:
+                    try:
+                        null_sink_handle.close()
+                    except Exception as close_err:
+                        self._callbacks.printError(
+                            "ApiHunter devnull close error: {}".format(str(close_err))
+                        )
+                    null_sink_handle = None
         except Exception as e:
             err = "[!] Error: {}\n".format(str(e))
             SwingUtilities.invokeLater(lambda t=err: self.apihunter_area.append(t))
         finally:
+            if null_sink_handle is not None:
+                try:
+                    null_sink_handle.close()
+                except Exception:
+                    pass
+            with getattr(self, "apihunter_lock", threading.Lock()):
+                self.apihunter_findings = list(aggregated_findings)
             self._clear_active_tool_process("apihunter", process)
             self._clear_tool_cancel("apihunter")
             self._cleanup_temp_dir(temp_dir, "apihunter")
