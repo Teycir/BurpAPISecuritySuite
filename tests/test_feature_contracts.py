@@ -1311,7 +1311,12 @@ def test_new_verification_and_discovery_tabs_are_wired():
         "def _run_api_asset_discovery(",
         "def _run_openapi_drift(",
         "def _run_graphql_analysis(",
+        'self.apihunter_auth_mode_combo = JComboBox(',
+        '"Auth + Unauth"',
         'self.apihunter_top_findings_min_combo = JComboBox(["Critical", "High", "Medium"])',
+        '"[*] Auth Mode: {}\\n".format(auth_mode)',
+        '"run_label": label_text,',
+        "title = \"{} [{}]\".format(title, label_text)",
         "[*] Top Findings Min: {} (Burp display filter)",
         "def _send_sqlmap_to_recon(",
         "def _send_dalfox_to_recon(",
@@ -1358,6 +1363,8 @@ def test_tool_profiles_and_health_button_are_wired():
         'self.asset_profile_combo = JComboBox(self._profile_labels())',
         'self.asset_custom_cmd_checkbox = JCheckBox("Enable Custom", False)',
         'self.asset_custom_cmd_field = JTextField("", 35)',
+        'self.nuclei_auth_mode_combo = JComboBox(',
+        'self.nuclei_auth_mode_combo.setSelectedItem("Auth + Unauth")',
         'self.nuclei_profile_combo = JComboBox(self._profile_labels())',
         "def _build_sqlmap_command(",
         "def _build_dalfox_command(",
@@ -1417,6 +1424,68 @@ def test_apihunter_custom_targets_popup_and_enforcement_are_wired():
     for token in required_tokens:
         assert token in text, "Missing ApiHunter custom targets token: {}".format(token)
     print("[PASS] test_apihunter_custom_targets_popup_and_enforcement_are_wired")
+
+def test_apihunter_uses_all_filtered_samples_for_targets_and_auth_context():
+    text = _source_text()
+    required_tokens = [
+        "entries_snapshot = []",
+        "for entries in filtered_source.values():",
+        "entries_list = entries if isinstance(entries, list) else [entries]",
+        "entries_snapshot.append(entry)",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing ApiHunter multi-sample extraction token: {}".format(token)
+    assert (
+        "self._get_entry(entries) for entries in filtered_source.values()" not in text
+    ), "ApiHunter should not collapse filtered scope to one representative sample per endpoint key"
+    print("[PASS] test_apihunter_uses_all_filtered_samples_for_targets_and_auth_context")
+
+def test_apihunter_splits_auth_and_unauth_targets_for_dual_pass_runs():
+    text = _source_text()
+    required_tokens = [
+        'filter_cfg["allowed_bases"] = set()',
+        "def _apihunter_entry_quality_signal(entry):",
+        "if not _apihunter_entry_quality_signal(entry):",
+        '"dropped_low_signal": dropped_low_signal,',
+        "def _discover_auth_associated_targets(",
+        '"unauth_targets": [],',
+        '"header_auth_entries": 0,',
+        '"signal_only_entries": 0,',
+        "def _entry_has_non_header_auth_signal(entry):",
+        '"[*] Auth discovery: matched_entries={} auth_entries={} associated_targets={}\\n".format(',
+        '"[*] Auth split: auth_targets={} unauth_targets={}\\n".format(',
+        '"[*] Auth discovery detail: header_auth_entries={} signal_only_entries={}\\n".format(',
+        "auth_targets = list(auth_discovery.get(\"auth_targets\", []) or [])",
+        "unauth_targets = list(auth_discovery.get(\"unauth_targets\", []) or [])",
+        "pass_targets = auth_targets if use_auth_pass else unauth_targets",
+        "unauth_targets_file = os.path.join(temp_dir, \"targets_unauth.txt\")",
+        "_write_targets_file(unauth_targets_file, pass_targets)",
+        "_build_default_apihunter_command(",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing ApiHunter auth-associated targeting token: {}".format(token)
+    print("[PASS] test_apihunter_splits_auth_and_unauth_targets_for_dual_pass_runs")
+
+def test_shared_auth_target_split_helper_is_used_by_nuclei_and_apihunter():
+    text = _source_text()
+    assert "def _discover_auth_associated_targets_shared(" in text
+    assert text.count("return _discover_auth_associated_targets_shared(") >= 2
+    print("[PASS] test_shared_auth_target_split_helper_is_used_by_nuclei_and_apihunter")
+
+def test_apihunter_timeout_handling_avoids_pipe_deadlock_and_parses_partial_results():
+    text = _source_text()
+    required_tokens = [
+        'null_sink = getattr(subprocess, "DEVNULL", None)',
+        'null_sink_handle = open(os.devnull, "wb")',
+        "stdout=null_sink",
+        "stderr=null_sink",
+        "timed_out = False",
+        "if timed_out:",
+        "pass timeout: parsed {} partial finding(s) from NDJSON.",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing ApiHunter timeout/partial-parse token: {}".format(token)
+    print("[PASS] test_apihunter_timeout_handling_avoids_pipe_deadlock_and_parses_partial_results")
 
 def test_vulners_custom_targets_popup_and_enforcement_are_wired():
     text = _source_text()
@@ -1503,7 +1572,7 @@ def test_nuclei_timeout_uses_partial_parse_and_speed_flags():
         '"scan_strategy", self.NUCLEI_SCAN_STRATEGY',
         'cmd.append("-no-httpx")',
         'cmd.extend(["-project", "-project-path", temp_dir])',
-        "adaptive_timeout = max(360, target_count * 30)",
+        "adaptive_timeout = max(360, pass_target_count * 30)",
         "can_parse_partial = bool(",
         "partial_results_mode = True",
         '"[*] Run status: partial results (process exited {})".format(',
@@ -1511,6 +1580,48 @@ def test_nuclei_timeout_uses_partial_parse_and_speed_flags():
     for token in required_tokens:
         assert token in text, "Missing Nuclei timeout resilience token: {}".format(token)
     print("[PASS] test_nuclei_timeout_uses_partial_parse_and_speed_flags")
+
+
+def test_nuclei_auth_mode_and_dual_pass_wiring_present():
+    text = _source_text()
+    required_tokens = [
+        'self.nuclei_auth_mode_combo = JComboBox(',
+        'self.nuclei_auth_mode_combo.setSelectedItem("Auth + Unauth")',
+        "auth_mode = str(self.nuclei_auth_mode_combo.getSelectedItem())",
+        "run_plans = [(\"Unauth\", False), (\"Auth\", True)]",
+        "def _append_auth_context_to_nuclei_command(",
+        "def _append_auth_context_to_custom_nuclei_command(",
+        "\"NUCLEI MULTI-PASS SUMMARY\"",
+        "\"[*] Auth context prepared: headers={} cookies={} matched_entries={}\\n\".format(",
+        "\"[*] Auth Pass: {}\".format(\"Yes\" if use_auth_pass else \"No\")",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Nuclei auth-mode token: {}".format(token)
+    print("[PASS] test_nuclei_auth_mode_and_dual_pass_wiring_present")
+
+def test_nuclei_splits_auth_and_unauth_targets_for_dual_pass_runs():
+    text = _source_text()
+    required_tokens = [
+        'filter_cfg["allowed_bases"] = set()',
+        "def _nuclei_entry_quality_signal(entry):",
+        "if not _nuclei_entry_quality_signal(entry):",
+        '"dropped_low_signal": dropped_low_signal,',
+        "def _discover_auth_associated_targets(",
+        '"[*] Auth split: auth_targets={} unauth_targets={}\\n".format(',
+        '"[*] Auth discovery detail: header_auth_entries={} signal_only_entries={}\\n".format(',
+        "unauth_targets = list(auth_discovery.get(\"unauth_targets\", []) or [])",
+        "pass_targets = auth_targets if use_auth_pass else unauth_targets",
+        "unauth_targets_file = os.path.join(temp_dir, \"targets_unauth.txt\")",
+        "for target_url in pass_targets:",
+        "writer = FileWriter(unauth_targets_file)",
+        '"[*] Auth discovery: matched_entries={} auth_entries={} associated_targets={}\\n".format(',
+        "auth_targets_file = os.path.join(temp_dir, \"targets_auth.txt\")",
+        "command_for_pass = command_for_pass.replace(",
+        "targets_file, pass_targets_file",
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Nuclei auth-associated targeting token: {}".format(token)
+    print("[PASS] test_nuclei_splits_auth_and_unauth_targets_for_dual_pass_runs")
 
 
 def test_help_probe_uses_file_capture_to_avoid_pipe_deadlock():
@@ -1611,7 +1722,7 @@ def test_external_tool_commands_are_cross_platform_safe():
         "def _build_shell_command(",
         'return ["cmd", "/c", command_text]',
         'return ["/bin/bash", "-lc", command_text]',
-        "cmd = self._build_shell_command(custom_nuclei_command)",
+        "cmd = self._build_shell_command(command_for_pass)",
         "cmd = self._build_shell_command(custom_apihunter_command)",
         "cmd = self._build_shell_command(custom_httpx_command)",
         "cmd = self._build_shell_command(custom_katana_command)",
@@ -2055,6 +2166,7 @@ def test_text_and_combo_field_persistence_is_wired():
         '"recon_max_body_size_combo",',
         '"recon_filter_library_combo",',
         '"apihunter_top_findings_min_combo",',
+        '"nuclei_auth_mode_combo",',
         'scope_lines_text = self._load_text_setting("target_base_scope_lines", scope_lines_default)',
         'self._save_text_setting(',
         '"target_base_scope_lines", "\\n".join(self.target_base_scope_lines)',
