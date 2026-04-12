@@ -412,6 +412,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Note**: ApiHunter is a proprietary tool available at https://github.com/Teycir/ApiHunter
 - **Runtime PATH Resolve**: On `Run ApiHunter`, the suite re-resolves `apihunter` from PATH (process + shell probe) and auto-updates the field to the resolved absolute binary when available
 - **Calibration**: `Quick (Desktop Preset)`, `Balanced (Desktop Preset)` (default), `Deep (Desktop Preset)`
+- **Auth Mode**: `Unauth Only`, `Auth Only`, `Auth + Unauth` (default). In dual-pass mode, deduplicated base URLs are split into `auth-associated` and `unauth-associated` target lists; each pass runs on its own list. Auth association uses both request auth headers and non-header auth signals (`auth_detected`, token/cookie/session markers in request metadata).
 - **Top Findings Min**: Operator-configurable `Critical` / `High` / `Medium` threshold for summary triage noise control
 - **Use Custom Targets**: Checkbox to force ApiHunter input from the `Custom Targets...` popup instead of Recon-filtered scope
 - **Custom Targets Popup**: Multiline editor (`max 20` entries, one per line) with strict sanitization and canonical base URL normalization (`scheme://host[:port]/`), including de-duplication and invalid-line rejection
@@ -424,6 +425,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
   - `Balanced`: `--no-discovery`, `--max-endpoints 80`, `--concurrency 5`, `--timeout-secs 15`, `--retries 1`, `--delay-ms 50`
   - `Deep`: `--active-checks --response-diff-deep --no-discovery`, `--max-endpoints 0`, `--concurrency 6`, `--timeout-secs 20`, `--retries 2`, `--delay-ms 100`, `--waf-evasion`, `--per-host-clients`, `--adaptive-concurrency`
 - **Enable Custom**: Opt in to full command override with placeholders (`{apihunter_path}`, `{targets_file}`, `{results_file}`)
+- **Custom + Auth Note**: In custom mode, `Auth + Unauth` dual-pass is blocked; use `Auth Only` or `Unauth Only`, or disable custom mode for automatic dual-pass execution.
 - **Preset Visibility**: Preset dropdown is always visible and seeded with Desktop-equivalent templates
 - **Stop / PKill Tools**: Cancel active runs safely or emergency-stop external scanner processes
 - **Export Targets**: Save filtered/deduped host-base target list for offline ApiHunter usage
@@ -444,12 +446,14 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 
 #### 10. Nuclei Tab
 - **Nuclei Path**: Configure path to nuclei binary
+- **Auth Mode**: `Unauth Only`, `Auth Only`, `Auth + Unauth` (default). In dual-pass mode, deduplicated base URLs are split into `auth-associated` and `unauth-associated` target lists; each pass runs on its own list. Auth association uses both request auth headers and non-header auth signals (`auth_detected`, token/cookie/session markers in request metadata).
 - **Profile**: `Fast`, `Balanced`, `Deep` API-discovery scan presets
 - **Run Nuclei**: Execute Nuclei scanner with WAF evasion
 - **GraphQL Templates**: 29+ GraphQL-specific templates for detection and exploitation
 - **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
 - **Only Base+Derivatives**: Restrict scans to popup scope and same base-domain derivatives
 - **Enable Custom**: Opt in to override default command with your own template
+- **Custom + Auth Note**: In custom mode, `Auth + Unauth` dual-pass is blocked; use `Auth Only` or `Unauth Only`, or disable custom mode for automatic dual-pass execution.
 - **Preset Cmd + ? Help**: Auto-fill common commands and show usage guidance
 - **Stop**: Cancel active scans safely
 - **PKill Tools**: Emergency kill for `nuclei/httpx/katana/ffuf/waybackurls/gau/sqlmap/dalfox/subfinder/dnsx`
