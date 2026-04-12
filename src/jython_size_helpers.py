@@ -3,6 +3,7 @@
 
 import threading
 import time
+import re
 
 from java.awt import BorderLayout, Color, Dimension, FlowLayout
 from javax.swing import (
@@ -766,175 +767,175 @@ def _auth_replay_build_result_row(
 
 def collect_nuclei_targets(extender):
     self = extender
-    """Collect scoped Nuclei targets without cross-host path cartesian expansion."""
-    static_skip_parts = set(
-        [
-            "js",
-            "css",
-            "static",
-            "dist",
-            "assets",
-            "images",
-            "img",
-            "fonts",
-            "cdn-cgi",
-            "captcha",
-            "recaptcha",
-            "player",
-        ]
-    )
+    """Collect scoped and deduplicated base targets for Nuclei scans."""
+    filtered_source = {}
+    filter_eval_error = ""
+    try:
+        filtered_source = dict(self._filter_endpoints())
+    except Exception as e:
+        filter_eval_error = self._ascii_safe(e)
+        self._callbacks.printError(
+            "Nuclei filtered-view snapshot error: {}".format(str(e))
+        )
+    source_mode = "filtered_view_only"
+    if filter_eval_error:
+        source_mode = "filtered_view_error"
 
-    with self.lock:
-        entries_snapshot = [self._get_entry(entries) for entries in self.api_data.values()]
+    entries_snapshot = []
+    for entries in filtered_source.values():
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for entry in entries_list:
+            if isinstance(entry, dict):
+                entries_snapshot.append(entry)
 
     scope_override = self._get_target_scope_override()
-    host_counts = {}
-    base_scores = {}
-    for entry in entries_snapshot:
-        host = self._ascii_safe(entry.get("host"), lower=True).strip()
-        if not host:
-            continue
-        if scope_override.get("enabled") and not self._host_matches_target_scope(
-            host, scope_override
-        ):
-            continue
-        host_counts[host] = host_counts.get(host, 0) + 1
-        if (not scope_override.get("enabled")) and self._is_wayback_noise_host(host):
-            continue
-
-        base = self._infer_base_domain(host)
-        if not base:
-            continue
-
-        score = 1
-        method = self._ascii_safe(entry.get("method"), lower=True).strip()
-        if method in ["post", "put", "patch", "delete"]:
-            score += 2
-
-        path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True)
-        parts = [p for p in path.strip("/").split("/") if p]
-        if parts:
-            first_part = parts[0]
-            if first_part.startswith("api") or first_part in [
-                "v1",
-                "v2",
-                "v3",
-                "v4",
-                "graphql",
-                "rest",
-                "svc",
-                "internal",
-                "auth",
-                "oauth",
-            ]:
-                score += 3
-        base_scores[base] = base_scores.get(base, 0) + score
-
+    selected_host = "all"
+    force_host = False
     if scope_override.get("enabled"):
         selected_host = "target-bases"
-        force_host = False
-        allowed_bases = set(scope_override.get("bases", set()))
     else:
-        selected_host = "all"
         try:
             if hasattr(self, "host_filter") and self.host_filter is not None:
                 selected_host = self._ascii_safe(
                     str(self.host_filter.getSelectedItem()), lower=True
                 ).strip()
         except Exception as e:
-            self._callbacks.printError("Nuclei host-filter read error: {}".format(str(e)))
+            self._callbacks.printError(
+                "Nuclei host-filter read error: {}".format(str(e))
+            )
             selected_host = "all"
         force_host = bool(selected_host and selected_host != "all")
 
-        sorted_bases = sorted(base_scores.items(), key=lambda item: (-item[1], item[0]))
-        allowed_bases = set([base for base, _ in sorted_bases[:1]])
-        if not allowed_bases:
-            fallback_bases = {}
-            for host, count in host_counts.items():
-                if self._is_wayback_noise_host(host):
-                    continue
-                base = self._infer_base_domain(host)
-                if not base:
-                    continue
-                fallback_bases[base] = fallback_bases.get(base, 0) + count
-            fallback_sorted = sorted(
-                fallback_bases.items(), key=lambda item: (-item[1], item[0])
-            )
-            allowed_bases = set([base for base, _ in fallback_sorted[:1]])
+    filter_cfg = dict(self._build_passive_filter_config(filtered_source) or {})
+    # Nuclei should evaluate all available deduplicated base URLs in scope.
+    # Keep explicit scope/host constraints, but remove single-base auto narrowing.
+    filter_cfg["allowed_bases"] = set()
 
-    dropped_noise_host = 0
+    def _nuclei_entry_quality_signal(entry):
+        """Require stronger API/auth signal to reduce static/CDN base noise."""
+        method = self._ascii_safe(entry.get("method"), lower=True).strip().upper()
+        path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True).strip()
+        content_type = self._ascii_safe(entry.get("content_type"), lower=True).strip()
+        api_patterns = [
+            self._ascii_safe(x, lower=True)
+            for x in (entry.get("api_patterns", []) or [])
+        ]
+        auth_detected = [
+            self._ascii_safe(x, lower=True).strip()
+            for x in (entry.get("auth_detected", []) or [])
+        ]
+        first_part = ""
+        parts = [p for p in path.strip("/").split("/") if p]
+        if parts:
+            first_part = parts[0]
+
+        has_api_marker = bool(
+            "/api/" in path
+            or "/graphql" in path
+            or "/rest/" in path
+            or "/openapi" in path
+            or "/swagger" in path
+            or "/oauth" in path
+            or "/auth" in path
+            or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+        )
+        has_api_pattern = any(
+            hint in api_patterns for hint in self.PASSIVE_API_PATTERN_HINTS
+        )
+        has_write_method = method in ["POST", "PUT", "PATCH", "DELETE"]
+        has_auth_context = any(x and x != "none" for x in auth_detected)
+        has_structured_content = bool(
+            (
+                "json" in content_type
+                or "xml" in content_type
+                or "protobuf" in content_type
+                or "x-www-form-urlencoded" in content_type
+            )
+            and ("javascript" not in content_type)
+            and ("html" not in content_type)
+        )
+        param_count = 0
+        params = entry.get("parameters", {}) or {}
+        if isinstance(params, dict):
+            for value in params.values():
+                if isinstance(value, dict):
+                    param_count += len(value)
+                elif isinstance(value, list):
+                    param_count += len(value)
+        has_param_signal = param_count >= 2
+
+        is_static_path = bool(
+            path.endswith(self.PASSIVE_STATIC_EXTENSIONS)
+            or (first_part in self.PASSIVE_STATIC_PATH_PARTS)
+            or self._ffuf_is_noise_path_segment(first_part)
+        )
+        is_static_content = bool(
+            "javascript" in content_type
+            or "ecmascript" in content_type
+            or "text/css" in content_type
+            or content_type.startswith("image/")
+            or content_type.startswith("font/")
+            or content_type.startswith("video/")
+            or content_type.startswith("audio/")
+        )
+        if is_static_path or is_static_content:
+            return bool(has_api_marker or has_write_method or has_auth_context)
+
+        if has_api_marker or has_api_pattern or has_write_method or has_auth_context:
+            return True
+        if has_structured_content and has_param_signal:
+            return True
+        return False
+
+    targets = {}
+    dedup_collisions = 0
+    dropped_noise_or_static = 0
     dropped_scope_host = 0
-    dropped_path = 0
+    dropped_low_signal = 0
+    dropped_missing_host = 0
     inspected_entries = 0
-    candidates = set()
     for entry in entries_snapshot:
         inspected_entries += 1
-        protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
         host = self._ascii_safe(entry.get("host"), lower=True).strip()
         if not host:
-            dropped_scope_host += 1
+            dropped_missing_host += 1
             continue
-
         if scope_override.get("enabled"):
             if not self._host_matches_target_scope(host, scope_override):
                 dropped_scope_host += 1
                 continue
-        elif force_host:
-            if host != selected_host:
-                dropped_scope_host += 1
-                continue
-        else:
-            if self._is_wayback_noise_host(host):
-                dropped_noise_host += 1
-                continue
-            host_base = self._infer_base_domain(host)
-            if allowed_bases and host_base not in allowed_bases:
-                dropped_scope_host += 1
-                continue
+        elif force_host and host != selected_host:
+            dropped_scope_host += 1
+            continue
 
+        if not self._passive_entry_allowed(entry, filter_cfg):
+            dropped_noise_or_static += 1
+            continue
+        if not _nuclei_entry_quality_signal(entry):
+            dropped_low_signal += 1
+            continue
+
+        protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
         port = entry.get("port", -1)
         if port == -1:
             port = 443 if protocol == "https" else 80
         if (protocol == "https" and port == 443) or (
             protocol == "http" and port == 80
         ):
-            base = "{}://{}".format(protocol, host)
+            target_url = "{}://{}/".format(protocol, host)
         else:
-            base = "{}://{}:{}".format(protocol, host, port)
+            target_url = "{}://{}:{}/".format(protocol, host, port)
 
-        candidates.add(base)
-
-        raw_path = self._ascii_safe(entry.get("normalized_path") or "/")
-        parts = [self._ascii_safe(part, lower=True).strip() for part in raw_path.strip("/").split("/") if part]
-        if not parts:
+        cleaned = self._clean_url(target_url)
+        if not cleaned:
             continue
-
-        first_part = parts[0]
-        if first_part in static_skip_parts or self._ffuf_is_noise_path_segment(first_part):
-            dropped_path += 1
+        dedup_key = self._apihunter_target_key(cleaned)
+        if dedup_key in targets:
+            dedup_collisions += 1
             continue
+        targets[dedup_key] = cleaned
 
-        candidates.add(base + "/" + first_part)
-
-        if first_part == "api" and len(parts) > 1:
-            second_part = parts[1]
-            if (
-                second_part
-                and second_part not in static_skip_parts
-                and not self._ffuf_is_noise_path_segment(second_part)
-            ):
-                candidates.add(base + "/api/" + second_part)
-
-        if first_part.startswith("v") and len(parts) > 1:
-            second_part = parts[1]
-            if (
-                second_part
-                and second_part not in static_skip_parts
-                and not self._ffuf_is_noise_path_segment(second_part)
-            ):
-                candidates.add(base + "/" + first_part + "/" + second_part)
-
-    ordered = sorted(candidates)
+    ordered = sorted(targets.values())
     raw_candidates = len(ordered)
     truncated = 0
     if raw_candidates > self.NUCLEI_MAX_TARGETS:
@@ -942,15 +943,22 @@ def collect_nuclei_targets(extender):
         ordered = ordered[: self.NUCLEI_MAX_TARGETS]
 
     meta = {
+        "source_mode": source_mode,
+        "source_count": len(entries_snapshot),
+        "source_filter_error": filter_eval_error,
         "inspected_entries": inspected_entries,
         "raw_candidates": raw_candidates,
-        "dropped_noise_host": dropped_noise_host,
+        "dedup_collisions": dedup_collisions,
+        "dropped_noise_host": dropped_noise_or_static,
+        "dropped_noise_or_static": dropped_noise_or_static,
         "dropped_scope_host": dropped_scope_host,
-        "dropped_path": dropped_path,
+        "dropped_path": dropped_low_signal,
+        "dropped_low_signal": dropped_low_signal,
+        "dropped_missing_host": dropped_missing_host,
         "truncated": truncated,
         "force_host": force_host,
         "selected_host": selected_host,
-        "allowed_bases": sorted(list(allowed_bases)),
+        "allowed_bases": [],
         "manual_scope_enabled": bool(scope_override.get("enabled")),
         "manual_scope_line_count": len(scope_override.get("lines", [])),
         "manual_scope_host_count": len(scope_override.get("hosts", set())),
