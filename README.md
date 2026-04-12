@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.4.8-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.4.12-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -1181,67 +1181,32 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ### Recent Updates
 
-### v1.4.8 - Wayback Rate Limiting + UI Responsiveness
-- ✅ Enhanced Wayback Machine integration with intelligent rate limiting:
-  - exponential backoff retry logic for rate-limited requests,
-  - request throttling to respect API limits,
-  - improved timeout and connection error handling,
-  - better progress reporting for long-running queries.
-- ✅ Fixed Recon/Logger UI freeze issues during high-volume capture:
-  - background worker threads for table view updates,
-  - debounced UI refresh to prevent EDT blocking,
-  - reduced update frequency during bulk operations.
-- ✅ Fixed Auth Replay UI responsiveness during heavy runs:
-  - off-EDT result buffering with chunked rendering,
-  - batched progress output to reduce Swing pressure.
+Run `python3 scripts/sync_readme_updates.py` to regenerate this block from `CHANGELOG.md`.
 
-### v1.4.7 - Auth Replay + Capture Pipeline Stability
-- ✅ Auth Replay execution now isolates UI updates from hot replay loop:
-  - replay result rows buffered off-EDT and rendered in chunked Swing updates,
-  - progress output appends batched to reduce `invokeLater(...)` pressure.
-- ✅ Recon/Logger capture pipeline applies anti-freeze traffic policy:
-  - internal `Extender` traffic skipped by default (`capture_extender_traffic = false`),
-  - listener and deep capture paths short-circuit extension-generated traffic.
-- ✅ Fixed UI freeze/stall during heavy Auth Replay runs caused by capture/UI churn.
-- ✅ Fixed responsiveness degradation when extension-generated traffic was re-captured.
+<!-- recent-updates:start -->
 
-### v1.4.6 - Vulners Integration + Incremental Reports
-- ✅ Native Vulners enrichment workflow:
-  - dedicated `Vulners` tab with run/stop/export wiring,
-  - software/version fingerprint collection from Recon traffic,
-  - advisory enrichment with ranked findings, CVE context, and source references.
-- ✅ Incremental report appending workflow:
-  - per-tab `Append Report` actions to append into active `FullExport` directory,
-  - report session tracking with sequence counter and timestamps,
-  - active-export guardrails with explicit operator status.
-- ✅ AI prompt/export contract aligned with APIPentesting triage schema.
-- ✅ AI prompts require non-destructive PoCs, evidence-backed claims, and duplicate-resistant novelty.
+### v1.4.12 - 2026-04-10
+- Added: Fuzzer host-base relaxation fallback for narrow single-base scopes
+- Changed: Refactored `_collect_fuzzer_targets` to use an internal `_run_target_filter_pass` helper for cleaner dual-pass logic (strict + relaxed fallback).
+- Changed: Fuzzer metadata now includes `host_base_relaxed` (bool) and `host_base_relax_added` (int) for operator visibility into fallback behavior.
+- Tests: Updated `tests/test_feature_contracts.py` to assert relaxation logic tokens and summary output format.
 
-### v1.4.5 - Auth Replay UX + AI Export Enhancements
-- ✅ Added operator-configurable `Top Findings Min` filter (`Critical` / `High` / `Medium`) with persisted UI state.
-- ✅ Added ApiHunter `Use Custom Targets` workflow:
-  - `Custom Targets...` popup supports multiline input with strict URL sanitization,
-  - entries are normalized to canonical base URLs and de-duplicated,
-  - hard limit enforced at `20` entries.
-- ✅ Added strict run-time enforcement for custom targets:
-  - when enabled, ApiHunter uses popup targets only,
-  - empty/invalid/overflow target states now surface explicit in-tab errors and prevent launch.
-- ✅ Increased capture defaults for long-session usability:
-  - body truncation default `5KB` -> `20KB`,
-  - Logger max memory default `5,000` -> `20,000` rows.
-- ✅ Hardened split-module runtime wiring and capture safety:
-  - duplicate `__all__` export names now fail fast at startup,
-  - `process_traffic` lock window tightened to reduce sample-cap race edges.
-- ✅ Cleaned payload categorization by removing SSTI probe markers from XSS payload list (SSTI list remains intact).
+### v1.4.11 - 2026-04-10
+- Fixed: Improved Recon -> Logger detail navigation visibility
+- Fixed: Updated feature-contract coverage for the Recon->Logger highlight behavior to prevent regression.
 
-### v1.4.4 - ApiHunter Integration + Stability Hardening
-- ✅ Added dedicated `ApiHunter` tab with Desktop-parity presets, PATH-aware runtime resolution, and parsed NDJSON summary rendering.
-- ✅ Added operator-configurable `Top Findings Min` filter (`Critical` / `High` / `Medium`) with persisted UI state.
-- ✅ Added ApiHunter `Use Custom Targets` workflow with strict validation and canonical URL normalization.
-- ✅ Increased capture defaults: body truncation `5KB` -> `20KB`, Logger max memory `5,000` -> `20,000` rows.
-- ✅ Hardened split-module runtime wiring: duplicate `__all__` exports fail fast at startup.
-- ✅ Tightened `process_traffic` lock window to reduce sample-cap race edges.
-- ✅ Cleaned payload categorization by removing SSTI markers from XSS list.
+### v1.4.10 - 2026-04-10
+- Removed: GraphQL `Generate Raider` action button from the GraphQL tab.
+- Removed: GraphQL `Analyze Schema` workflow and related schema UI controls
+- Removed: Local schema-analysis/inql-like helper pipeline from GraphQL tooling
+- Removed: GraphQL Raider `Include Schema Ops` toggle and schema-coupled profile handling.
+
+### v1.4.9 - 2026-04-10
+- Added: New `Sensitive Data` tab for regex-driven API-sensitive data extraction
+- Added: Sensitive findings export flow
+- Changed: Updated tab documentation/index to include the new `Sensitive Data` workflow in operator quick references.
+
+<!-- recent-updates:end -->
 
 ### v1.4.3 - Token Lineage + Cross-Interface Parity Drift
 - ✅ Added standalone Passive deep-logic actions:
