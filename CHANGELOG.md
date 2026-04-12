@@ -2,6 +2,54 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.13] - 2026-04-12
+
+### Added
+- ApiHunter `Auth Mode` control in the tab UI:
+  - `Unauth Only`
+  - `Auth Only`
+  - `Auth + Unauth` (default dual-pass mode)
+- Nuclei `Auth Mode` control in the tab UI:
+  - `Unauth Only`
+  - `Auth Only`
+  - `Auth + Unauth` (default dual-pass mode)
+- Auth-context derivation for ApiHunter authenticated runs from Recon-filtered traffic:
+  - captures best available request `Authorization` header candidate,
+  - captures top auth-like headers (`X-API-Key`, `Api-Key`, `ApiKey`, `X-Auth-Token`, `X-Access-Token`),
+  - derives cookie pairs from request `Cookie` headers for `--cookies` pass-through.
+- Auth-context derivation for Nuclei authenticated runs from Recon-filtered traffic:
+  - captures best available request `Authorization` header candidate,
+  - captures top auth-like headers (`X-API-Key`, `Api-Key`, `ApiKey`, `X-Auth-Token`, `X-Access-Token`),
+  - derives cookie pairs from request `Cookie` headers and injects them as `Cookie: ...` request headers.
+
+### Changed
+- ApiHunter runner now supports multi-pass execution per run:
+  - dual-pass (unauth + auth) when `Auth + Unauth` is selected,
+  - per-pass command/output/status rendering in tab output,
+  - per-pass findings summary labels (`APIHUNTER SCAN RESULTS [Unauth/Auth]`).
+- Nuclei runner now supports multi-pass execution per run:
+  - dual-pass (unauth + auth) when `Auth + Unauth` is selected,
+  - per-pass command/output/status rendering in tab output,
+  - per-pass findings summary labels (`NUCLEI SCAN RESULTS [Unauth/Auth]`) and aggregate `NUCLEI MULTI-PASS SUMMARY`.
+- ApiHunter findings storage now aggregates across all passes in the same run instead of replacing with only the last pass.
+- Custom-command behavior updated for auth-mode compatibility:
+  - `Auth + Unauth` is blocked while `Enable Custom` is checked (requires preset/default execution for controlled dual-pass).
+  - `Auth Only` in custom mode appends derived auth headers/cookies to the custom command.
+  - Nuclei `Auth + Unauth` is also blocked while `Enable Custom` is checked; `Auth Only` appends derived auth headers/cookies to the custom command.
+- ApiHunter `Auth + Unauth` run planning now splits deduplicated base targets into two lists:
+  - auth-associated targets (based on request auth headers and non-header auth signals from request metadata),
+  - unauth-associated targets (remaining deduplicated base URLs).
+  - each pass now runs only on its corresponding list.
+- ApiHunter auth-discovery console diagnostics now print the auth/unauth split counts and explicit notes when reusable header/cookie auth context is unavailable.
+- Refactored auth-target split extraction into one shared helper engine used by both Nuclei and ApiHunter runners to keep auth/unauth classification behavior consistent.
+- Nuclei `Auth + Unauth` execution now mirrors ApiHunter split behavior:
+  - unauth pass runs only on deduplicated `unauth_targets`,
+  - auth pass runs only on deduplicated `auth_targets`,
+  - console output now includes auth/unauth split counts and header-vs-signal auth detail metrics.
+
+### Tests
+- Updated feature-contract expectations for ApiHunter and Nuclei auth-mode wiring plus labeled result summaries.
+
 ## [1.4.12] - 2026-04-10
 
 ### Added
