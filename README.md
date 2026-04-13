@@ -1190,6 +1190,19 @@ Run `python3 scripts/sync_readme_updates.py` to regenerate this block from `CHAN
 
 <!-- recent-updates:start -->
 
+### v1.4.13 - 2026-04-12
+- Added: ApiHunter `Auth Mode` control in the tab UI (`Unauth Only`, `Auth Only`, `Auth + Unauth` default dual-pass mode)
+- Added: Nuclei `Auth Mode` control in the tab UI (`Unauth Only`, `Auth Only`, `Auth + Unauth` default dual-pass mode)
+- Added: Auth-context derivation for ApiHunter authenticated runs from Recon-filtered traffic (captures best available `Authorization` header, top auth-like headers, derives cookie pairs from request `Cookie` headers)
+- Added: Auth-context derivation for Nuclei authenticated runs from Recon-filtered traffic (captures best available `Authorization` header, top auth-like headers, derives cookie pairs and injects them as `Cookie:` request headers)
+- Changed: ApiHunter runner now supports multi-pass execution per run (dual-pass unauth + auth when `Auth + Unauth` is selected, per-pass command/output/status rendering)
+- Changed: Nuclei runner now supports multi-pass execution per run (dual-pass unauth + auth when `Auth + Unauth` is selected, per-pass command/output/status rendering, aggregate `NUCLEI MULTI-PASS SUMMARY`)
+- Changed: ApiHunter findings storage now aggregates across all passes in the same run instead of replacing with only the last pass
+- Changed: Custom-command behavior updated for auth-mode compatibility (`Auth + Unauth` is blocked while `Enable Custom` is checked; `Auth Only` in custom mode appends derived auth headers/cookies)
+- Changed: ApiHunter `Auth + Unauth` run planning now splits deduplicated base targets into auth-associated and unauth-associated lists; each pass runs only on its corresponding list
+- Changed: Refactored auth-target split extraction into one shared helper engine used by both Nuclei and ApiHunter runners for consistent auth/unauth classification behavior
+- Tests: Updated feature-contract expectations for ApiHunter and Nuclei auth-mode wiring plus labeled result summaries
+
 ### v1.4.12 - 2026-04-10
 - Added: Fuzzer host-base relaxation fallback for narrow single-base scopes
 - Changed: Refactored `_collect_fuzzer_targets` to use an internal `_run_target_filter_pass` helper for cleaner dual-pass logic (strict + relaxed fallback).
