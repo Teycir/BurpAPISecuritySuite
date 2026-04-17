@@ -1190,6 +1190,11 @@ Run `python3 scripts/sync_readme_updates.py` to regenerate this block from `CHAN
 
 <!-- recent-updates:start -->
 
+### v1.4.14 - 2026-04-17
+- Added: Better filter management with improved filter organization and UI controls for better usability
+- Added: Enhanced filter state tracking and persistence
+- Added: Streamlined filter application workflows across modules
+
 ### v1.4.13 - 2026-04-12
 - Added: ApiHunter `Auth Mode` control in the tab UI (`Unauth Only`, `Auth Only`, `Auth + Unauth` default dual-pass mode)
 - Added: Nuclei `Auth Mode` control in the tab UI (`Unauth Only`, `Auth Only`, `Auth + Unauth` default dual-pass mode)
@@ -1205,24 +1210,43 @@ Run `python3 scripts/sync_readme_updates.py` to regenerate this block from `CHAN
 
 ### v1.4.12 - 2026-04-10
 - Added: Fuzzer host-base relaxation fallback for narrow single-base scopes
-- Changed: Refactored `_collect_fuzzer_targets` to use an internal `_run_target_filter_pass` helper for cleaner dual-pass logic (strict + relaxed fallback).
-- Changed: Fuzzer metadata now includes `host_base_relaxed` (bool) and `host_base_relax_added` (int) for operator visibility into fallback behavior.
-- Tests: Updated `tests/test_feature_contracts.py` to assert relaxation logic tokens and summary output format.
+- Changed: Refactored `_collect_fuzzer_targets` to use an internal `_run_target_filter_pass` helper for cleaner dual-pass logic (strict + relaxed fallback)
+- Changed: Fuzzer metadata now includes `host_base_relaxed` (bool) and `host_base_relax_added` (int) for operator visibility into fallback behavior
+- Tests: Updated `tests/test_feature_contracts.py` to assert relaxation logic tokens and summary output format
 
 ### v1.4.11 - 2026-04-10
 - Fixed: Improved Recon -> Logger detail navigation visibility
-- Fixed: Updated feature-contract coverage for the Recon->Logger highlight behavior to prevent regression.
+- Fixed: Updated feature-contract coverage for the Recon->Logger highlight behavior to prevent regression
 
 ### v1.4.10 - 2026-04-10
-- Removed: GraphQL `Generate Raider` action button from the GraphQL tab.
+- Removed: GraphQL `Generate Raider` action button from the GraphQL tab
 - Removed: GraphQL `Analyze Schema` workflow and related schema UI controls
 - Removed: Local schema-analysis/inql-like helper pipeline from GraphQL tooling
-- Removed: GraphQL Raider `Include Schema Ops` toggle and schema-coupled profile handling.
+- Removed: GraphQL Raider `Include Schema Ops` toggle and schema-coupled profile handling
 
 ### v1.4.9 - 2026-04-10
 - Added: New `Sensitive Data` tab for regex-driven API-sensitive data extraction
 - Added: Sensitive findings export flow
-- Changed: Updated tab documentation/index to include the new `Sensitive Data` workflow in operator quick references.
+- Changed: Updated tab documentation/index to include the new `Sensitive Data` workflow in operator quick references
+
+### v1.4.8 - 2026-04-10
+- Added: Enhanced Wayback Machine rate limiting and reliability with intelligent retry logic and exponential backoff
+- Added: Request throttling to respect API rate limits
+- Added: Better error handling for timeout and connection issues
+- Added: Improved progress reporting during long-running Wayback queries
+- Fixed: Recon/Logger UI freeze issues during high-volume traffic capture with background worker threads
+- Fixed: Auth Replay UI responsiveness during heavy replay runs with buffered result rendering
+
+### v1.4.7 - 2026-04-10
+- Changed: Auth Replay execution now isolates UI updates from the hot replay loop with buffered off-EDT rendering
+- Changed: Recon/Logger capture pipeline now applies anti-freeze traffic policy with `capture_extender_traffic = false` runtime default
+- Fixed: UI freeze/stall behavior during heavy Auth Replay runs caused by capture/UI churn
+- Fixed: Responsiveness degradation in Recon and Logger when extension-generated traffic was re-captured during active extension workflows
+
+### v1.4.6 - 2026-04-08
+- Added: Native Vulners enrichment workflow with dedicated `Vulners` tab (positioned between `ApiHunter` and `Nuclei`)
+- Added: Software/version fingerprint collection from filtered Recon traffic plus optional custom-target fingerprint collection
+- Added: Advisory enrichment output with ranked top findings sorted by severity with CVE IDs and references
 
 <!-- recent-updates:end -->
 
