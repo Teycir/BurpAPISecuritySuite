@@ -2353,6 +2353,7 @@ def _build_passive_filter_config(self, snapshot):
     scope_override = self._get_target_scope_override()
     selected_host = "all"
     force_host = False
+    noise_filter_enabled = bool(getattr(self, "recon_noise_filter_enabled", True))
     if not scope_override.get("enabled"):
         try:
             if hasattr(self, "host_filter") and self.host_filter is not None:
@@ -2382,7 +2383,7 @@ def _build_passive_filter_config(self, snapshot):
         ):
             continue
         host_counts[host] = host_counts.get(host, 0) + 1
-        if (not scope_override.get("enabled")) and self._is_wayback_noise_host(host):
+        if (not scope_override.get("enabled")) and noise_filter_enabled and self._is_wayback_noise_host(host):
             continue
         base = self._infer_base_domain(host)
         if not base:
@@ -2428,7 +2429,7 @@ def _build_passive_filter_config(self, snapshot):
         if not allowed_bases:
             fallback_bases = {}
             for host, count in host_counts.items():
-                if self._is_wayback_noise_host(host):
+                if noise_filter_enabled and self._is_wayback_noise_host(host):
                     continue
                 base = self._infer_base_domain(host)
                 if not base:
@@ -2439,12 +2440,14 @@ def _build_passive_filter_config(self, snapshot):
             )
             allowed_bases = set([base for base, _ in fallback_sorted[:1]])
 
+    noise_filter_enabled = bool(getattr(self, "recon_noise_filter_enabled", True))
     return {
         "scope_override_enabled": bool(scope_override.get("enabled")),
         "scope_override": scope_override,
         "force_host": force_host,
         "selected_host": selected_host,
         "allowed_bases": allowed_bases,
+        "noise_filter_enabled": noise_filter_enabled,
     }
 
 def _passive_entry_is_api_like(self, entry):
@@ -2539,6 +2542,7 @@ def _passive_entry_allowed(self, entry, filter_cfg):
 
     scope_override_enabled = bool(filter_cfg.get("scope_override_enabled"))
     scope_override = filter_cfg.get("scope_override", {})
+    noise_filter_enabled = bool(filter_cfg.get("noise_filter_enabled", True))
     if scope_override_enabled:
         if not self._host_matches_target_scope(host, scope_override):
             return False
@@ -2546,7 +2550,7 @@ def _passive_entry_allowed(self, entry, filter_cfg):
         if host != filter_cfg.get("selected_host"):
             return False
     else:
-        if self._is_wayback_noise_host(host):
+        if noise_filter_enabled and self._is_wayback_noise_host(host):
             return False
         allowed_bases = set(filter_cfg.get("allowed_bases", set()))
         if allowed_bases:
