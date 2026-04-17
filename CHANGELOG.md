@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.14] - 2026-04-17
+
+### Added
+- Better filter management:
+  - Improved filter organization and UI controls for better usability,
+  - Enhanced filter state tracking and persistence,
+  - Streamlined filter application workflows across modules.
+
 ## [1.4.13] - 2026-04-12
 
 ### Added
