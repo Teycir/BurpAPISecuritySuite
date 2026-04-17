@@ -6931,7 +6931,15 @@ def _ffuf_is_noise_host(self, host):
     text = self._ascii_safe(host, lower=True).strip()
     if not text:
         return True
-    return any(pattern in text for pattern in self.FFUF_NOISE_HOST_PATTERNS)
+    # Check for exact domain match or proper subdomain boundary
+    for pattern in self.FFUF_NOISE_HOST_PATTERNS:
+        # Exact match
+        if text == pattern:
+            return True
+        # Subdomain match: pattern must be preceded by a dot
+        if text.endswith('.' + pattern):
+            return True
+    return False
 
 def _is_wayback_noise_host(self, host):
     """Wayback-specific host noise filter (adtech/tracker heavy domains)."""
@@ -6940,8 +6948,14 @@ def _is_wayback_noise_host(self, host):
         return True
     if self._ffuf_is_noise_host(text):
         return True
-    if any(pattern in text for pattern in self.WAYBACK_NOISE_HOST_PATTERNS):
-        return True
+    # Check for exact domain match or proper subdomain boundary
+    for pattern in self.WAYBACK_NOISE_HOST_PATTERNS:
+        # Exact match
+        if text == pattern:
+            return True
+        # Subdomain match: pattern must be preceded by a dot
+        if text.endswith('.' + pattern):
+            return True
     labels = [label for label in text.split(".") if label]
     if not labels:
         return True

@@ -1131,16 +1131,16 @@ def _build_recon_top_panel(self):
     controls_row.add(per_page_help_btn)
     controls_row.setAlignmentX(0.0)
 
-    filter_row = JPanel(FlowLayout(FlowLayout.LEFT))
-    filter_row.add(JLabel("String Filter:"))
+    filter_row1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    filter_row1.add(JLabel("String Filter:"))
     self.search_field = JTextField(15)
     self.search_field.getDocument().addDocumentListener(SearchListener(self))
-    filter_row.add(self.search_field)
-    filter_row.add(JLabel("Regex Filter:"))
+    filter_row1.add(self.search_field)
+    filter_row1.add(JLabel("Regex Filter:"))
     self.recon_regex_field = JTextField(12)
     self.recon_regex_field.getDocument().addDocumentListener(SearchListener(self))
-    filter_row.add(self.recon_regex_field)
-    filter_row.add(JLabel("Saved:"))
+    filter_row1.add(self.recon_regex_field)
+    filter_row1.add(JLabel("Saved:"))
     self.recon_filter_library_combo = JComboBox(["(No Saved Filters)"])
     self.recon_filter_library_combo.setToolTipText(
         "Pick a saved Recon filter profile to apply."
@@ -1152,54 +1152,57 @@ def _build_recon_top_panel(self):
             else self._apply_recon_filter()
         )
     )
-    filter_row.add(self.recon_filter_library_combo)
+    filter_row1.add(self.recon_filter_library_combo)
     recon_save_regex_btn = self._create_action_button(
         "Save Filter",
         Color(111, 66, 193),
         lambda e: self._save_recon_filter(),
         tooltip="Save current Recon filter (string + regex).",
     )
-    filter_row.add(recon_save_regex_btn)
+    filter_row1.add(recon_save_regex_btn)
     recon_clear_saved_btn = self._create_action_button(
         "Clear Saved",
         Color(220, 53, 69),
         lambda e: self._remove_recon_filter(),
         tooltip="Remove selected saved Recon filter from memory and persisted settings.",
     )
-    filter_row.add(recon_clear_saved_btn)
+    filter_row1.add(recon_clear_saved_btn)
     recon_clear_filter_btn = self._create_action_button(
         "Clear Filter",
         Color(108, 117, 125),
         lambda e: self._clear_recon_filters(),
         tooltip="Clear active Recon string/regex filters.",
     )
-    filter_row.add(recon_clear_filter_btn)
-    filter_row.add(JLabel("Host:"))
+    filter_row1.add(recon_clear_filter_btn)
+    filter_row1.setAlignmentX(0.0)
+
+    filter_row2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    filter_row2.add(JLabel("Host:"))
     self.host_filter = JComboBox(["All"])
     self.host_filter.addActionListener(lambda e: self._on_filter_change())
-    filter_row.add(self.host_filter)
-    filter_row.add(JLabel("Method:"))
+    filter_row2.add(self.host_filter)
+    filter_row2.add(JLabel("Method:"))
     self.method_filter = JComboBox(
         ["All", "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
     )
     self.method_filter.addActionListener(lambda e: self._on_filter_change())
-    filter_row.add(self.method_filter)
-    filter_row.add(JLabel("Severity:"))
+    filter_row2.add(self.method_filter)
+    filter_row2.add(JLabel("Severity:"))
     self.severity_filter = JComboBox(["All", "Critical", "High", "Medium", "Info"])
     self.severity_filter.addActionListener(lambda e: self._on_filter_change())
-    filter_row.add(self.severity_filter)
-    filter_row.add(JLabel("Group:"))
+    filter_row2.add(self.severity_filter)
+    filter_row2.add(JLabel("Group:"))
     self.group_by = JComboBox(["None", "Host", "Method", "Auth", "Encryption"])
     self.group_by.addActionListener(lambda e: self._on_group_change())
-    filter_row.add(self.group_by)
-    filter_row.add(JLabel("Tag:"))
+    filter_row2.add(self.group_by)
+    filter_row2.add(JLabel("Tag:"))
     self.tag_filter = JComboBox(["All"])
     self.tag_filter.addActionListener(lambda e: self._on_filter_change())
-    filter_row.add(self.tag_filter)
-    filter_row.add(JLabel("Tool:"))
+    filter_row2.add(self.tag_filter)
+    filter_row2.add(JLabel("Tool:"))
     self.tool_filter = JComboBox(["All"])
     self.tool_filter.addActionListener(lambda e: self._on_filter_change())
-    filter_row.add(self.tool_filter)
+    filter_row2.add(self.tool_filter)
     self.recon_noise_filter_checkbox = JCheckBox(
         "Filter Noise", bool(getattr(self, "recon_noise_filter_enabled", True))
     )
@@ -1207,16 +1210,17 @@ def _build_recon_top_panel(self):
         "Hide ad-tech/static/tracker noise and keep API-focused Recon rows."
     )
     self.recon_noise_filter_checkbox.addActionListener(lambda e: self._on_filter_change())
-    filter_row.add(self.recon_noise_filter_checkbox)
+    filter_row2.add(self.recon_noise_filter_checkbox)
     self.recon_regex_scope_combo = JComboBox(["Any", "Request", "Response", "Req+Resp"])
     self.recon_regex_scope_combo.setSelectedItem("Any")
     self.recon_regex_scope_combo.addActionListener(lambda e: self._on_filter_change())
-    filter_row.add(self.recon_regex_scope_combo)
-    filter_row.setAlignmentX(0.0)
+    filter_row2.add(self.recon_regex_scope_combo)
+    filter_row2.setAlignmentX(0.0)
 
     top_panel.add(stats_panel)
     top_panel.add(controls_row)
-    top_panel.add(filter_row)
+    top_panel.add(filter_row1)
+    top_panel.add(filter_row2)
     return top_panel
 
 def _apply_recon_capture_settings(self):
