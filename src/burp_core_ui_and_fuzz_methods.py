@@ -67,7 +67,6 @@ _PERSISTED_CHECKBOX_ATTRS = (
     "katana_custom_cmd_checkbox",
     "wayback_custom_cmd_checkbox",
     "apihunter_use_custom_targets_checkbox",
-    "vulners_use_custom_targets_checkbox",
     "auth_replay_check_unauth_checkbox",
     "graphql_raider_introspection_checkbox",
     "graphql_raider_batching_checkbox",
@@ -101,8 +100,6 @@ _PERSISTED_TEXT_ATTRS = (
     "openapi_spec_field",
     "passive_max_field",
     "sensitive_data_max_field",
-    "vulners_api_key_field",
-    "vulners_max_signatures_field",
     "nuclei_path_field",
     "nuclei_custom_cmd_field",
     "httpx_path_field",
@@ -166,7 +163,6 @@ _PERSISTED_COMBO_ATTRS = (
     "sensitive_data_mode_combo",
     "apihunter_auth_mode_combo",
     "apihunter_top_findings_min_combo",
-    "vulners_results_per_query_combo",
     "nuclei_auth_mode_combo",
     "nuclei_profile_combo",
     "graphql_profile_combo",
@@ -663,13 +659,11 @@ def _initialize_runtime_state(self):
     self.target_base_scope_bases = set()
     self.target_base_scope_only_enabled = False
     self.apihunter_custom_targets_lines = []
-    self.vulners_custom_targets_lines = []
     self.target_scope_checkboxes = []
     self._syncing_target_scope_checkboxes = False
     self._tool_process_lock = threading.Lock()
     self._active_tool_processes = {}
     self._tool_cancel_flags = {
-        "vulners": threading.Event(),
         "nuclei": threading.Event(),
         "httpx": threading.Event(),
         "katana": threading.Event(),
@@ -961,28 +955,6 @@ def _restore_persisted_ui_state(self):
         self._callbacks.printError(
             "ApiHunter custom targets restore ignored invalid/overflow lines (invalid={}, overflow={})".format(
                 invalid_count, too_many_count
-            )
-        )
-
-    vulners_targets_default = "\n".join(
-        getattr(self, "vulners_custom_targets_lines", []) or []
-    )
-    vulners_targets_text = self._load_text_setting(
-        "vulners_custom_targets_lines", vulners_targets_default
-    )
-    parsed_vulners_targets = self._parse_apihunter_custom_targets_text(
-        vulners_targets_text,
-        max_entries=UI_CORE_LIMITS["apihunter_custom_targets_max_entries"],
-    )
-    self.vulners_custom_targets_lines = list(
-        parsed_vulners_targets.get("targets", [])
-    )
-    vulners_invalid_count = int(parsed_vulners_targets.get("invalid_count", 0) or 0)
-    vulners_too_many_count = int(parsed_vulners_targets.get("too_many_count", 0) or 0)
-    if vulners_invalid_count > 0 or vulners_too_many_count > 0:
-        self._callbacks.printError(
-            "Vulners custom targets restore ignored invalid/overflow lines (invalid={}, overflow={})".format(
-                vulners_invalid_count, vulners_too_many_count
             )
         )
 
@@ -1524,7 +1496,6 @@ def _create_tabs(self, recon_panel):
     passive_discovery_panel = self._create_passive_discovery_tab()
     sensitive_data_panel = self._create_sensitive_data_tab()
     apihunter_panel = self._create_apihunter_tab()
-    vulners_panel = self._create_vulners_tab()
     nuclei_panel = self._create_nuclei_tab()
     httpx_panel = self._create_httpx_tab()
     katana_panel = self._create_katana_tab()
@@ -1542,7 +1513,6 @@ def _create_tabs(self, recon_panel):
     self.tabbed_pane.addTab("Passive Discovery", passive_discovery_panel)
     self.tabbed_pane.addTab("Sensitive Data", sensitive_data_panel)
     self.tabbed_pane.addTab("ApiHunter", apihunter_panel)
-    self.tabbed_pane.addTab("Vulners", vulners_panel)
     self.tabbed_pane.addTab("Nuclei", nuclei_panel)
     self.tabbed_pane.addTab("HTTPX", httpx_panel)
     self.tabbed_pane.addTab("Katana", katana_panel)
@@ -2811,7 +2781,6 @@ def _resolve_append_report_output_area(self, source_label):
         "ffuf": "ffuf_area",
         "wayback": "wayback_area",
         "apihunter": "apihunter_area",
-        "vulners": "vulners_area",
         "graphql analysis": "graphql_area",
         "auth replay": "auth_replay_area",
         "sensitive data": "sensitive_data_area",
@@ -5385,99 +5354,6 @@ def _create_apihunter_tab(self):
     self.apihunter_lock = threading.Lock()
     return panel
 
-def _create_vulners_tab(self):
-    """Create Vulners enrichment tab from captured traffic fingerprints."""
-    panel = JPanel(BorderLayout())
-    top_panel = JPanel()
-    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
-
-    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
-    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
-
-    controls_line1.add(JLabel("Vulners API Key:"))
-    self.vulners_api_key_field = JTextField("", 48)
-    controls_line1.add(self.vulners_api_key_field)
-    controls_line1.add(JLabel("Max Signatures:"))
-    self.vulners_max_signatures_field = JTextField("20", 4)
-    controls_line1.add(self.vulners_max_signatures_field)
-    controls_line1.add(JLabel("Results/Query:"))
-    self.vulners_results_per_query_combo = JComboBox(["10", "20", "30", "50"])
-    self.vulners_results_per_query_combo.setSelectedItem("20")
-    controls_line1.add(self.vulners_results_per_query_combo)
-    self.vulners_use_custom_targets_checkbox = JCheckBox("Use Custom Targets", False)
-    self.vulners_use_custom_targets_checkbox.setToolTipText(
-        "Use only Custom Targets popup URLs (max 20 base URLs)."
-    )
-    controls_line1.add(self.vulners_use_custom_targets_checkbox)
-    controls_line1.add(
-        self._create_action_button(
-            "Custom Targets...",
-            Color(96, 125, 139),
-            lambda e: self._open_vulners_custom_targets_popup(),
-        )
-    )
-
-    controls_line2.add(
-        self._create_action_button(
-            "Run Vulners",
-            Color(138, 43, 226),
-            lambda e: self._run_vulners(e),
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "Stop", Color(255, 140, 0), lambda e: self._stop_vulners(e)
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "Export Results",
-            Color(70, 130, 180),
-            lambda e: self._export_vulners_results(),
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "Clear", Color(220, 53, 69), lambda e: self.vulners_area.setText("")
-        )
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "Copy",
-            Color(108, 117, 125),
-            lambda e: self._copy_to_clipboard(self.vulners_area.getText()),
-        )
-    )
-    controls_line2.add(
-        self._create_append_report_button("Vulners", lambda: self.vulners_area.getText())
-    )
-    controls_line2.add(
-        self._create_action_button(
-            "To AI",
-            Color(33, 150, 243),
-            lambda e: self._export_text_output_to_ai(
-                "Vulners", self.vulners_area.getText()
-            ),
-        )
-    )
-
-    help_row = JPanel(FlowLayout(FlowLayout.LEFT))
-    help_row.add(
-        JLabel(
-            "Uses filtered captured traffic to fingerprint software/version signals and query Vulners for known issues."
-        )
-    )
-    top_panel.add(controls_line1)
-    top_panel.add(controls_line2)
-    top_panel.add(help_row)
-    panel.add(top_panel, BorderLayout.NORTH)
-
-    self.vulners_area, scroll = self._create_text_area_panel()
-    panel.add(scroll, BorderLayout.CENTER)
-    self.vulners_findings = []
-    self.vulners_lock = threading.Lock()
-    return panel
-
 def _create_graphql_tab(self):
     """Create GraphQL analysis tab orchestrating external tool checks."""
     panel = JPanel(BorderLayout())
@@ -7491,7 +7367,6 @@ __all__ = [
     "_create_auth_replay_tab",
     "_create_passive_discovery_tab",
     "_create_sensitive_data_tab",
-    "_create_vulners_tab",
     "_create_nuclei_tab",
     "_create_httpx_tab",
     "_create_katana_tab",

@@ -31,7 +31,7 @@ _Scan the QR code or copy the wallet address above._
 ![Python](https://img.shields.io/badge/jython-2.7-blue.svg)
 ![Burp Suite](https://img.shields.io/badge/Burp%20Suite-Pro%20%7C%20Community-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Version](https://img.shields.io/badge/version-1.4.13-brightgreen.svg)
+![Version](https://img.shields.io/badge/version-1.4.15-brightgreen.svg)
 ![Attack Types](https://img.shields.io/badge/attack%20types-15-red.svg)
 ![Payloads](https://img.shields.io/badge/payloads-108%2B-purple.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -98,8 +98,7 @@ This design philosophy prioritizes performance and user experience while deliver
       - [7. Passive Discovery Tab](#7-passive-discovery-tab)
       - [Sensitive Data Tab](#sensitive-data-tab)
       - [8. ApiHunter Tab](#8-apihunter-tab)
-      - [9. Vulners Tab](#9-vulners-tab)
-      - [10. Nuclei Tab](#10-nuclei-tab)
+      - [9. Nuclei Tab](#9-nuclei-tab)
       - [11. HTTPX Tab](#11-httpx-tab)
       - [12. Katana Tab](#12-katana-tab)
       - [13. FFUF Tab](#13-ffuf-tab)
@@ -434,18 +433,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Top Findings Signal Mode**: Shows findings returned by ApiHunter command output (sorted by severity with evidence/remediation context)
 - **Top Findings Display Filtering**: Selected minimum severity is applied to Burp Top Findings rendering (`Critical` / `High` / `Medium`), while scanner output statistics remain complete.
 
-#### 9. Vulners Tab
-- **Vulners Path**: Configure path to vulners binary (optional, uses API by default)
-- **Fingerprint Collection**: Automatic software/version detection from Recon traffic
-- **Custom Targets**: Optional manual fingerprint input for specific software/versions
-- **Run Enrichment**: Query Vulners database for CVE advisories and security context
-- **Ranked Findings**: Top findings sorted by severity with CVE IDs and references
-- **Advisory Context**: Detailed vulnerability descriptions, CVSS scores, and remediation guidance
-- **Stop / PKill Tools**: Cancel active enrichment or emergency-stop processes
-- **Export Results**: Save Vulners findings to file
-- **Append Report**: Append findings to active export session
-
-#### 10. Nuclei Tab
+#### 9. Nuclei Tab
 - **Nuclei Path**: Configure path to nuclei binary
 - **Auth Mode**: `Unauth Only`, `Auth Only`, `Auth + Unauth` (default). In dual-pass mode, deduplicated base URLs are split into `auth-associated` and `unauth-associated` target lists; each pass runs on its own list. Auth association uses both request auth headers and non-header auth signals (`auth_detected`, token/cookie/session markers in request metadata). Auth-context derivation captures best available `Authorization` header, top auth-like headers (`X-API-Key`, `Api-Key`, `ApiKey`, `X-Auth-Token`, `X-Access-Token`), and derives cookie pairs from request `Cookie` headers.
 - **Profile**: `Fast`, `Balanced`, `Deep` API-discovery scan presets
@@ -462,7 +450,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Targets**: Save target list for external scanning
 - **Features**: Header-based spoofing, rate limiting, clear error reporting
 
-#### 11. HTTPX Tab
+#### 10. HTTPX Tab
 - **HTTPX Path**: Configure path to httpx binary
 - **Probe Endpoints**: Fast HTTP probing with technology detection
 - **Enable Custom**: Opt in to override default command with your own template
@@ -471,7 +459,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **PKill Tools**: Emergency kill for scanner processes
 - **Export URLs**: Save URLs for external tools
 
-#### 12. Katana Tab
+#### 11. Katana Tab
 - **Katana Path**: Configure path to katana binary
 - **Crawl Endpoints**: Deep web crawling for endpoint discovery
 - **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
@@ -483,7 +471,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Discovered**: Save discovered endpoints
 - **Send to Recon**: Import discovered endpoints to Recon tab
 
-#### 13. FFUF Tab
+#### 12. FFUF Tab
 - **FFUF Path**: Configure path to ffuf binary
 - **Wordlist**: Select wordlist for fuzzing
 - **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
@@ -494,7 +482,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Results**: Save fuzzing results
 - **Send to Intruder**: Export results to Burp Intruder
 
-#### 14. Wayback Tab
+#### 13. Wayback Tab
 - **Date Range**: Configure from/to years for historical search
 - **Limit**: Set maximum results to retrieve
 - **Discover**: Query Wayback Machine for historical endpoints
@@ -509,7 +497,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import discovered endpoints to Recon tab
 - **Export Results**: Save discovered endpoints
 
-#### 15. SQLMap Verify Tab
+#### 14. SQLMap Verify Tab
 - **SQLMap Path**: Configure path to local `sqlmap`
 - **Profile**: `Fast`, `Balanced`, `Deep` command tuning presets
 - **Run Verify**: Replay SQLi-priority targets and collect evidence-backed confirmations
@@ -518,7 +506,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import verified SQLi endpoints back into Recon for follow-up
 - **Export Results**: Save verification output to file
 
-#### 16. Dalfox Verify Tab
+#### 15. Dalfox Verify Tab
 - **Dalfox Path**: Configure path to local `dalfox`
 - **Profile**: `Fast`, `Balanced`, `Deep` command tuning presets
 - **Run Verify**: Replay XSS-priority targets and capture Dalfox confirmation output
@@ -527,7 +515,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import verified XSS candidates to Recon
 - **Export Results**: Save Dalfox findings to file
 
-#### 17. API Assets Tab
+#### 16. API Assets Tab
 - **Domains Input**: Optional manual domains list (comma/newline); auto-derives from Recon when empty
 - **Profile**: `Fast`, `Balanced`, `Deep` stage tuning for `subfinder`/`dnsx`/`httpx`
 - **Pipeline**: Runs `subfinder` → `dnsx` → `httpx` for alive API asset discovery
@@ -536,7 +524,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import discovered assets into Recon
 - **Export Results**: Save discovered URLs
 
-#### 18. OpenAPI Drift Tab
+#### 17. OpenAPI Drift Tab
 - **Spec Source**: Load OpenAPI/Swagger file from local path or URL
 - **Generate OpenAPI**: One-click OpenAPI 3.0.3 generation from captured Recon traffic
 - **Run Drift**: Compare observed traffic vs spec and report endpoint/parameter drift
@@ -545,7 +533,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import spec-missing candidates into Recon for probing
 - **Export Results**: Save drift output report
 
-#### 19. GraphQL Tab
+#### 18. GraphQL Tab
 - **Targets Input**: Optional manual GraphQL targets (auto-detects from Recon if empty)
 - **Show Targets**: Preview candidate GraphQL endpoints before execution
 - **Run Analysis**: Run GraphQL-focused multi-tool analysis workflow
@@ -1189,6 +1177,14 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history.
 Run `python3 scripts/sync_readme_updates.py` to regenerate this block from `CHANGELOG.md`.
 
 <!-- recent-updates:start -->
+
+### v1.4.15 - 2026-04-17
+- Removed: Vulners tab and all associated functionality due to Cloudflare bot protection blocking API access
+- Removed: Vulners API integration (403 Forbidden errors cannot be bypassed)
+- Removed: Vulners fingerprint collection and CVE advisory features
+- Removed: All Vulners-related UI components, methods, and exports
+- Changed: Tab numbering updated after Vulners removal (Nuclei is now tab 9 instead of 10)
+- Changed: Documentation updated to reflect removal of Vulners functionality
 
 ### v1.4.14 - 2026-04-17
 - Added: Better filter management with improved filter organization and UI controls for better usability

@@ -1,3 +1,16 @@
+## [1.4.15] - 2026-04-17
+
+### Removed
+- Vulners tab and all associated functionality:
+  - Removed Vulners enrichment workflow due to Cloudflare bot protection blocking API access
+  - Removed Vulners API integration (403 Forbidden errors cannot be bypassed)
+  - Removed Vulners fingerprint collection and CVE advisory features
+  - Removed all Vulners-related UI components, methods, and exports
+  - Cleaned up Vulners references from tool specifications and emergency kill lists
+
+### Changed
+- Tab numbering updated after Vulners removal (Nuclei is now tab 9 instead of 10)
+- Documentation updated to reflect removal of Vulners functionality
 # Changelog
 
 All notable changes to this project are documented in this file.

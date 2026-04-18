@@ -5754,109 +5754,6 @@ def _get_apihunter_custom_targets_override(self):
         "error": error,
     }
 
-def _open_vulners_custom_targets_popup(self):
-    """Open popup editor for Vulners custom target base URLs."""
-    current_text = "\n".join(getattr(self, "vulners_custom_targets_lines", []) or [])
-    editor = JTextArea(current_text, 12, 60)
-    editor.setLineWrap(False)
-    editor.setWrapStyleWord(False)
-
-    content = JPanel(BorderLayout(0, 6))
-    content.add(
-        JLabel(
-            "Enter one URL/host per line (max 20). Input is sanitized and normalized to base URLs."
-        ),
-        BorderLayout.NORTH,
-    )
-    content.add(JScrollPane(editor), BorderLayout.CENTER)
-
-    decision = JOptionPane.showConfirmDialog(
-        self._panel,
-        content,
-        "Vulners Custom Targets",
-        JOptionPane.OK_CANCEL_OPTION,
-        JOptionPane.PLAIN_MESSAGE,
-    )
-    if decision != JOptionPane.OK_OPTION:
-        return
-
-    parsed = self._parse_apihunter_custom_targets_text(editor.getText(), max_entries=20)
-    too_many_count = int(parsed.get("too_many_count", 0) or 0)
-    invalid_lines = list(parsed.get("invalid_lines", []) or [])
-    if too_many_count > 0:
-        JOptionPane.showMessageDialog(
-            self._panel,
-            "Vulners custom targets accepts up to 20 entries. Remove {} extra line(s).".format(
-                too_many_count
-            ),
-            "Vulners Custom Targets",
-            JOptionPane.ERROR_MESSAGE,
-        )
-        return
-    if invalid_lines:
-        preview = []
-        for item in invalid_lines[:5]:
-            preview.append(
-                "Line {}: {} ({})".format(
-                    int(item.get("line", 0) or 0),
-                    self._ascii_safe(item.get("value") or "")[:80],
-                    self._ascii_safe(item.get("error") or "invalid URL"),
-                )
-            )
-        if len(invalid_lines) > 5:
-            preview.append("... and {} more invalid line(s)".format(len(invalid_lines) - 5))
-        JOptionPane.showMessageDialog(
-            self._panel,
-            "Invalid URL entries detected:\n\n{}".format("\n".join(preview)),
-            "Vulners Custom Targets",
-            JOptionPane.ERROR_MESSAGE,
-        )
-        return
-
-    self.vulners_custom_targets_lines = list(parsed.get("targets", []) or [])
-    self._save_text_setting(
-        "vulners_custom_targets_lines",
-        "\n".join(self.vulners_custom_targets_lines),
-    )
-
-    count = len(self.vulners_custom_targets_lines)
-    if count == 0:
-        self.log_to_ui("[*] Vulners custom targets cleared")
-    else:
-        self.log_to_ui(
-            "[+] Vulners custom targets updated: {} base URL(s)".format(count)
-        )
-
-def _get_vulners_custom_targets_override(self):
-    """Return current Vulners custom-target toggle state and sanitized targets."""
-    enabled = False
-    checkbox = getattr(self, "vulners_use_custom_targets_checkbox", None)
-    if checkbox is not None:
-        enabled = bool(checkbox.isSelected())
-
-    lines = list(getattr(self, "vulners_custom_targets_lines", []) or [])
-    parsed = self._parse_apihunter_custom_targets_text("\n".join(lines), max_entries=20)
-    targets = list(parsed.get("targets", []) or [])
-    invalid_count = int(parsed.get("invalid_count", 0) or 0)
-    too_many_count = int(parsed.get("too_many_count", 0) or 0)
-
-    error = ""
-    if enabled:
-        if invalid_count > 0:
-            error = "Vulners custom targets contains invalid URL lines. Open 'Custom Targets...' and fix them."
-        elif too_many_count > 0:
-            error = "Vulners custom targets supports up to 20 entries."
-        elif len(targets) == 0:
-            error = "Vulners custom targets is enabled but no valid URLs are configured."
-
-    return {
-        "enabled": enabled,
-        "targets": targets,
-        "invalid_count": invalid_count,
-        "too_many_count": too_many_count,
-        "error": error,
-    }
-
 def _parse_target_base_scope_text(self, text):
     """Parse multiline target scope input into host/base-domain sets."""
     lines = []
@@ -10855,7 +10752,6 @@ def _pkill_external_tools(self, output_area=None):
     import subprocess
 
     tool_specs = [
-        ("vulners", "Vulners"),
         ("apihunter", "ApiHunter"),
         ("nuclei", "Nuclei"),
         ("httpx", "HTTPX"),
@@ -10957,7 +10853,7 @@ def _pkill_external_tools(self, output_area=None):
     if output_area is not None:
         output_area.append(summary)
     self.log_to_ui(
-        "[!] Emergency kill executed for vulners/apihunter/nuclei/httpx/katana/ffuf/wayback/sqlmap/dalfox/subfinder/graphql"
+        "[!] Emergency kill executed for apihunter/nuclei/httpx/katana/ffuf/wayback/sqlmap/dalfox/subfinder/graphql"
     )
 
 def _stop_apihunter(self, event):
@@ -11116,8 +11012,6 @@ __all__ = [
     "_parse_apihunter_custom_targets_text",
     "_open_apihunter_custom_targets_popup",
     "_get_apihunter_custom_targets_override",
-    "_open_vulners_custom_targets_popup",
-    "_get_vulners_custom_targets_override",
     "_parse_target_base_scope_text",
     "_extract_scope_host",
     "_get_target_scope_override",
