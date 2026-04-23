@@ -1,3 +1,45 @@
+## [1.4.16] - 2026-04-23
+
+### Added
+- New `Kiterunner` tab beside `FFUF`:
+  - configurable `kr` binary path plus local `.kite` file or Assetnote alias input,
+  - shared `Fast` / `Balanced` / `Deep` profile control with `Balanced` selected by default plus tooltip guidance for the coverage/runtime tradeoffs,
+  - `Use Custom Targets` checkbox plus `Custom Targets...` popup for popup-defined base URLs (same sanitized canonical base-URL model as ApiHunter),
+  - FFUF-parity actions: `Run`, `Stop`, `Target Bases...`, `PKill Tools`, `Export Results`, `Send to Intruder`, `Clear`, `Copy`, `Append Report`, and `To AI`.
+
+### Changed
+- Added scoped Kiterunner target collection from Recon-filtered first-party traffic using host-base URLs instead of path fuzz targets.
+- Kiterunner target collection now truly consumes the current Recon filtered view when custom targets are off, matching the tab’s `Recon filtered scope` messaging and letting the default-on Recon `Filter Noise` selection compress the downstream target set.
+- Kiterunner profile tuning is now runtime-bounded instead of open-ended:
+  - Fast keeps only the top-ranked hosts, caps Assetnote routes, and stops after 10 minutes,
+  - Balanced broadens to more ranked hosts and a larger route budget but still stops after 15 minutes,
+  - Deep now spends that same 15-minute ceiling on fewer hosts with the largest route budget and full-scan posture.
+- Kiterunner profile selection now opens on `Balanced` by default so the first run starts from the broader ranked-host posture instead of the narrower Fast cap.
+- Kiterunner runner now favors bounded host-level discovery with WAF-friendlier pacing:
+  - lower host concurrency,
+  - per-host delay,
+  - forwarded-IP spoof headers,
+  - redirect quarantine controls,
+  - `--kitebuilder-full-scan` on non-fast profiles.
+  - Assetnote alias route budgets now normalize to the local `kr`-compatible `alias:N` syntax, including semicolon-capped operator input.
+  - default `Accept` header is now `Accept: application/json` to stay compatible with the local `kr` header parser.
+  - Deep profile is modestly faster now (`6` parallel hosts and `140ms` delay instead of `5` and `180ms`) while keeping the same single-connection-per-host/full-scan posture.
+  - Kiterunner startup summary now mirrors ApiHunter more closely by printing the selected mode, target source, and full target URL list before the run starts.
+  - Kiterunner console progress now keeps advancing during quiet scans by draining stdout in a background reader, emitting quieter 10-second progress heartbeats in the tab, keeping live output scrolled into view, sanitizing carriage-return/control-character output before rendering, printing discoveries as explicit live discovery lines during the run, and surfacing parsed `processed/total` target progress alongside discovery counts when Kiterunner exposes that signal.
+- Shared noise filtering is stricter against adtech/cookie-sync traffic:
+  - added recent noisy vendor host patterns seen in real captures (`moloco`, `kargo`, `admob`, `snapchat`, `tiktokw`, `mediasquare`, `presage`),
+  - API-looking GET/HEAD/OPTIONS routes with tracker/cookie-sync path markers now remain filtered even when the host itself is not yet classified as noisy.
+  - downstream tool collectors now route through one generic denoiser helper instead of mixing separate FFUF/Wayback host-noise checks.
+- Recon `Filter Noise` no longer restores a stale persisted unchecked state; it now starts selected on launch so downstream scanners inherit the denoised default view.
+- Shared tool plumbing now includes Kiterunner:
+  - persisted UI state,
+  - tool health diagnostics,
+  - active-process stop/kill tracking,
+  - AI/report snapshot exports.
+
+### Tests
+- Added feature-contract coverage for Kiterunner tab wiring, collector usage, and emergency-kill/health integration.
+
 ## [1.4.15] - 2026-04-17
 
 ### Removed

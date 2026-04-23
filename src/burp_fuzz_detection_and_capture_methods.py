@@ -1270,6 +1270,13 @@ def _collect_all_tabs_ai_context(self, data_snapshot, attacks_snapshot):
             ),
             "output_tail": self._snapshot_text_area("ffuf_area"),
         },
+        "kiterunner": {
+            "result_count": len(getattr(self, "kiterunner_results", []) or []),
+            "result_samples": self._snapshot_list_attr(
+                "kiterunner_results", limit=300, lock_attr="kiterunner_lock"
+            ),
+            "output_tail": self._snapshot_text_area("kiterunner_area"),
+        },
         "wayback": {
             "snapshot_count": len(getattr(self, "wayback_discovered", []) or []),
             "snapshot_samples": self._snapshot_list_attr(

@@ -2983,6 +2983,863 @@ def _run_ffuf(self, event):
     thread.daemon = True
     thread.start()
 
+def _run_kiterunner(self, event):
+    """Run Kiterunner API route scan on scoped first-party hosts."""
+    import os
+    import subprocess
+    import tempfile
+    import threading
+    import time as time_module
+
+    kiterunner_path = self.kiterunner_path_field.getText().strip()
+    wordlist_value = self.kiterunner_wordlist_field.getText().strip()
+    profile_value = self._selected_profile_value(self.kiterunner_profile_combo)
+    profile_cfg = self._kiterunner_profile_settings(profile_value)
+    custom_override = self._get_kiterunner_custom_targets_override()
+
+    if not kiterunner_path:
+        self.kiterunner_area.setText("[!] Configure Kiterunner path first\n")
+        return
+    if not self._validate_binary_signature(
+        "Kiterunner",
+        kiterunner_path,
+        self.kiterunner_area,
+        required_tokens=["scan", "brute", "wordlist"],
+        forbidden_tokens=[],
+        fix_hint="Set Kiterunner Path to your local kr binary (for example: $HOME/.local/bin/kr).",
+    ):
+        return
+    if (not self.api_data) and (not custom_override.get("enabled")):
+        self.kiterunner_area.setText(
+            "[!] No endpoints in Recon tab. Capture or import first\n"
+        )
+        return
+
+    targets, target_meta = self._collect_kiterunner_targets()
+    if not targets:
+        error_text = self._ascii_safe(
+            target_meta.get("error") or target_meta.get("source_filter_error") or ""
+        ).strip()
+        if error_text:
+            self.kiterunner_area.setText("[!] {}\n".format(error_text))
+        else:
+            self.kiterunner_area.setText(
+                "[!] No Kiterunner targets after filtering. Capture more first-party API traffic or adjust host filter.\n"
+            )
+        return
+    profile_target_host_cap = int(profile_cfg.get("target_host_cap", 0) or 0)
+    profile_target_host_cap_skipped = 0
+    if profile_target_host_cap > 0 and len(targets) > profile_target_host_cap:
+        profile_target_host_cap_skipped = len(targets) - profile_target_host_cap
+        targets = list(targets[:profile_target_host_cap])
+
+    alias_value = ""
+    wordlist_args = []
+    wordlist_mode = ""
+    raw_wordlist = self._ascii_safe(wordlist_value).strip()
+    assetnote_entry_cap = int(profile_cfg.get("assetnote_entry_cap", 0) or 0)
+    assetnote_cap_applied = False
+    assetnote_cap_syntax_normalized = False
+
+    def _kiterunner_alias_has_explicit_cap(alias_text):
+        return bool(
+            re.search(r"(?:;|:)\d+$", self._ascii_safe(alias_text).strip())
+        )
+
+    def _normalize_kiterunner_assetnote_alias(alias_text, fallback_cap=0):
+        normalized_alias = self._ascii_safe(alias_text).strip()
+        if not normalized_alias:
+            return {
+                "value": "",
+                "cap_applied": False,
+                "syntax_normalized": False,
+            }
+        cap_match = re.search(r"^(.*?)(?:;|:)(\d+)$", normalized_alias)
+        if cap_match:
+            alias_name = self._ascii_safe(cap_match.group(1)).strip()
+            alias_cap = self._ascii_safe(cap_match.group(2)).strip()
+            if alias_name and alias_cap:
+                return {
+                    "value": "{}:{}".format(alias_name, alias_cap),
+                    "cap_applied": False,
+                    "syntax_normalized": ";" in normalized_alias,
+                }
+        if fallback_cap > 0:
+            return {
+                "value": "{}:{}".format(normalized_alias, fallback_cap),
+                "cap_applied": True,
+                "syntax_normalized": False,
+            }
+        return {
+            "value": normalized_alias,
+            "cap_applied": False,
+            "syntax_normalized": False,
+        }
+
+    if raw_wordlist and os.path.exists(raw_wordlist):
+        wordlist_args = ["-w", raw_wordlist]
+        wordlist_mode = "file"
+    else:
+        lower_wordlist = self._ascii_safe(raw_wordlist, lower=True)
+        if lower_wordlist.startswith("assetnote:"):
+            alias_value = raw_wordlist.split(":", 1)[1].strip()
+        elif raw_wordlist and (os.sep not in raw_wordlist) and ("\\" not in raw_wordlist):
+            alias_value = raw_wordlist
+        if alias_value:
+            alias_meta = _normalize_kiterunner_assetnote_alias(
+                alias_value,
+                fallback_cap=0
+                if _kiterunner_alias_has_explicit_cap(alias_value)
+                else assetnote_entry_cap,
+            )
+            effective_alias_value = alias_meta.get("value") or ""
+            assetnote_cap_applied = bool(alias_meta.get("cap_applied"))
+            assetnote_cap_syntax_normalized = bool(
+                alias_meta.get("syntax_normalized")
+            )
+            wordlist_args = ["-A", effective_alias_value]
+            wordlist_mode = "assetnote"
+    if not wordlist_args:
+        self.kiterunner_area.setText(
+            "[!] Kiterunner wordlist not found or alias invalid: {}\n".format(
+                raw_wordlist
+            )
+        )
+        self.kiterunner_area.append(
+            "[*] Use a local .kite file path or an Assetnote alias such as apiroutes-260227\n"
+        )
+        return
+
+    temp_dir = tempfile.mkdtemp(prefix="burp_kiterunner_")
+    targets_file = os.path.join(temp_dir, "targets.txt")
+    writer = None
+    try:
+        writer = FileWriter(targets_file)
+        for target in targets:
+            writer.write(target + "\n")
+    finally:
+        if writer:
+            writer.close()
+
+    self.kiterunner_area.setText("[*] Running Kiterunner...\n")
+    source_mode = self._ascii_safe(target_meta.get("source_mode") or "", lower=True)
+    self.kiterunner_area.append(
+        "[*] Mode: {}\n".format(
+            profile_cfg.get("profile", profile_value).title()
+        )
+    )
+    if source_mode == "custom_targets":
+        self.kiterunner_area.append("[*] Target Source: Custom Targets popup\n")
+    elif target_meta.get("manual_scope_enabled"):
+        self.kiterunner_area.append("[*] Target Source: Target Bases popup\n")
+    elif target_meta.get("force_host"):
+        self.kiterunner_area.append("[*] Target Source: Recon filtered scope (host filter)\n")
+    else:
+        self.kiterunner_area.append("[*] Target Source: Recon filtered scope\n")
+    if source_mode == "custom_targets":
+        self.kiterunner_area.append(
+            "[*] Targets: {} base URLs\n".format(len(targets))
+        )
+    else:
+        self.kiterunner_area.append(
+            "[*] Targets: {} hosts ({} raw candidates)\n".format(
+                len(targets), target_meta.get("raw_candidates", len(targets))
+            )
+        )
+    self.kiterunner_area.append("[*] Target URLs:\n")
+    for target_url in targets:
+        self.kiterunner_area.append(
+            "    {}\n".format(self._ascii_safe(target_url))
+        )
+    if source_mode == "custom_targets":
+        self.kiterunner_area.append(
+            "[*] Custom targets: {} popup-defined base URLs\n".format(
+                target_meta.get("custom_targets_count", len(targets))
+            )
+        )
+    elif target_meta.get("manual_scope_enabled"):
+        self.kiterunner_area.append(
+            "[*] Target base scope: {} lines | hosts={} | bases={}\n".format(
+                target_meta.get("manual_scope_line_count", 0),
+                target_meta.get("manual_scope_host_count", 0),
+                target_meta.get("manual_scope_base_count", 0),
+            )
+        )
+        preview = target_meta.get("manual_scope_preview", [])
+        if preview:
+            self.kiterunner_area.append(
+                "[*] Scope preview: {}\n".format(", ".join(preview))
+            )
+    elif target_meta.get("force_host"):
+        self.kiterunner_area.append(
+            "[*] Host scope: {}\n".format(target_meta.get("selected_host", "unknown"))
+        )
+    else:
+        allowed_bases = target_meta.get("allowed_bases", [])
+        if allowed_bases:
+            self.kiterunner_area.append(
+                "[*] First-party base scope: {}\n".format(", ".join(allowed_bases))
+            )
+    if source_mode != "custom_targets":
+        self.kiterunner_area.append(
+            "[*] Filtered out: noise-host={} scope-host={} low-signal={}\n".format(
+                target_meta.get("dropped_noise_host", 0),
+                target_meta.get("dropped_scope_host", 0),
+                target_meta.get("dropped_low_signal", 0),
+            )
+        )
+        if target_meta.get("signal_relaxed"):
+            self.kiterunner_area.append(
+                "[*] Low-signal fallback: +{} hosts (kept scoped first-party bases after strict API-only pass returned none)\n".format(
+                    target_meta.get("signal_relax_added", 0)
+                )
+            )
+    filter_error_text = self._ascii_safe(
+        target_meta.get("source_filter_error") or ""
+    ).strip()
+    if filter_error_text:
+        self.kiterunner_area.append(
+            "[!] Recon filtered scope snapshot error: {}\n".format(filter_error_text)
+        )
+    if target_meta.get("truncated", 0) > 0:
+        self.kiterunner_area.append(
+            "[*] Target cap applied: {} skipped (max {})\n".format(
+                target_meta.get("truncated", 0), self.KITERUNNER_MAX_TARGETS
+            )
+        )
+    if profile_target_host_cap_skipped > 0:
+        self.kiterunner_area.append(
+            "[*] Profile host cap: {} skipped (top {} ranked hosts kept for {} mode)\n".format(
+                profile_target_host_cap_skipped,
+                profile_target_host_cap,
+                profile_cfg.get("profile", profile_value).title(),
+            )
+        )
+    self.kiterunner_area.append(
+        "[*] Wordlist: {} ({})\n".format(
+            raw_wordlist, "Assetnote alias" if wordlist_mode == "assetnote" else "local file"
+        )
+    )
+    if assetnote_cap_applied:
+        self.kiterunner_area.append(
+            "[*] Route budget: Assetnote alias capped to first {} entries for {} mode\n".format(
+                assetnote_entry_cap,
+                profile_cfg.get("profile", profile_value).title(),
+            )
+        )
+    if assetnote_cap_syntax_normalized:
+        self.kiterunner_area.append(
+            "[*] Wordlist cap syntax normalized to alias:N for local kr compatibility\n"
+        )
+    max_elapsed_seconds = int(profile_cfg.get("max_elapsed_seconds", 0) or 0)
+    if max_elapsed_seconds > 0:
+        self.kiterunner_area.append(
+            "[*] Time boundary: {}s max elapsed for {} mode\n".format(
+                max_elapsed_seconds,
+                profile_cfg.get("profile", profile_value).title(),
+            )
+        )
+    self.kiterunner_area.append(
+        "[*] Tuning: Hosts={} | Per-host={} | Preflight={} | Timeout={} | Delay={}\n".format(
+            profile_cfg.get("max_parallel_hosts"),
+            profile_cfg.get("max_connection_per_host"),
+            profile_cfg.get("preflight_depth"),
+            profile_cfg.get("timeout"),
+            profile_cfg.get("delay"),
+        )
+    )
+    self.kiterunner_area.append(
+        "[*] WAF evasion: forwarded-IP headers + lower concurrency + redirect quarantine controls\n\n"
+    )
+    self.log_to_ui(
+        "[*] Kiterunner: Starting scan on {} hosts ({})".format(
+            len(targets), profile_cfg.get("profile", profile_value)
+        )
+    )
+    self._clear_tool_cancel("kiterunner")
+
+    def run_scan():
+        process = None
+        try:
+            cmd = [
+                kiterunner_path,
+                "scan",
+                targets_file,
+            ]
+            cmd.extend(wordlist_args)
+            cmd.extend(
+                [
+                    "-o",
+                    "text",
+                    "--progress",
+                    "-q",
+                    "-v",
+                    "error",
+                    "-j",
+                    str(profile_cfg.get("max_parallel_hosts", 8)),
+                    "-x",
+                    str(profile_cfg.get("max_connection_per_host", 2)),
+                    "-d",
+                    str(profile_cfg.get("preflight_depth", 1)),
+                    "-t",
+                    str(profile_cfg.get("timeout", "6s")),
+                    "--delay",
+                    str(profile_cfg.get("delay", "90ms")),
+                    "--quarantine-threshold",
+                    str(profile_cfg.get("quarantine_threshold", 10)),
+                    "--max-redirects",
+                    "1",
+                    "--fail-status-codes",
+                    "400,404,429,500,501,502,503,504",
+                    "--user-agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                    "-H",
+                    "X-Forwarded-For: 127.0.0.1",
+                    "-H",
+                    "X-Originating-IP: 127.0.0.1",
+                    "-H",
+                    "X-Forwarded-Host: localhost",
+                    "-H",
+                    "Accept: application/json",
+                ]
+            )
+            if profile_cfg.get("full_scan"):
+                cmd.append("--kitebuilder-full-scan")
+
+            display_cmd = " ".join(cmd)
+            SwingUtilities.invokeLater(
+                lambda: self.kiterunner_area.append(
+                    "[*] Command: {}\n\n".format(display_cmd)
+                )
+            )
+
+            start_time = time_module.time()
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                shell=False,
+            )
+            self._set_active_tool_process("kiterunner", process)
+
+            results = []
+            error_lines = []
+            last_update = start_time
+            cancelled_by_user = False
+            timed_out_by_boundary = False
+            output_lock = threading.Lock()
+            pending_kiterunner_output_lines = []
+            heartbeat_interval_seconds = 10.0
+            ui_poll_interval_seconds = 0.35
+            total_target_count = len(targets)
+            progress_state = {
+                "processed_targets": None,
+                "progress_is_estimate": False,
+                "progress_signal_seen": False,
+                "discovery_target_keys": set(),
+            }
+
+            def stream_reader(pipe, output_list, lock=output_lock):
+                buffered_text = ""
+                try:
+                    while True:
+                        chunk = pipe.read(1)
+                        if not chunk:
+                            break
+                        chunk_text = self._decode_process_data(
+                            chunk, "Kiterunner stdout raw line"
+                        )
+                        if not chunk_text:
+                            continue
+                        buffered_text += chunk_text
+                        emitted_segments = []
+                        segment_start = 0
+                        index = 0
+                        while index < len(buffered_text):
+                            if buffered_text[index] in ["\r", "\n"]:
+                                emitted_segments.append(
+                                    buffered_text[segment_start : index + 1]
+                                )
+                                segment_start = index + 1
+                            index += 1
+                        if emitted_segments:
+                            buffered_text = buffered_text[segment_start:]
+                            with lock:
+                                output_list.extend(emitted_segments)
+                    if buffered_text:
+                        with lock:
+                            output_list.append(buffered_text)
+                except Exception as read_err:
+                    self._callbacks.printError(
+                        "Kiterunner stdout reader error: {}".format(str(read_err))
+                    )
+                finally:
+                    try:
+                        pipe.close()
+                    except Exception as close_err:
+                        self._callbacks.printError(
+                            "Kiterunner stdout close error: {}".format(
+                                str(close_err)
+                            )
+                        )
+
+            def _sanitize_kiterunner_output_lines(raw_text):
+                cleaned_text = self.ANSI_ESCAPE_PATTERN.sub(
+                    "", self._ascii_safe(raw_text)
+                )
+                cleaned_text = cleaned_text.replace("\x08", "")
+                normalized_lines = []
+                for logical_line in cleaned_text.split("\n"):
+                    if "\r" in logical_line:
+                        carriage_segments = [
+                            segment
+                            for segment in logical_line.split("\r")
+                            if segment
+                        ]
+                        if carriage_segments:
+                            logical_line = carriage_segments[-1]
+                        else:
+                            logical_line = logical_line.replace("\r", "")
+                    logical_line = re.sub(
+                        r"[\x00-\x07\x0b\x0c\x0e-\x1f\x7f]",
+                        "",
+                        logical_line,
+                    ).strip()
+                    if logical_line:
+                        normalized_lines.append(logical_line)
+                return normalized_lines
+
+            def _extract_kiterunner_progress_update(raw_text):
+                cleaned_text = self.ANSI_ESCAPE_PATTERN.sub(
+                    "", self._ascii_safe(raw_text)
+                )
+                cleaned_text = cleaned_text.replace("\x08", "")
+                best_exact_count = None
+                best_estimated_count = None
+                for segment in cleaned_text.split("\r"):
+                    segment_text = self._ascii_safe(segment).strip()
+                    if not segment_text:
+                        continue
+                    matches = re.findall(r"(?<!\d)(\d+)\s*/\s*(\d+)(?!\d)", segment_text)
+                    for match in matches:
+                        try:
+                            current_count = int(match[0])
+                            total_count = int(match[1])
+                        except (TypeError, ValueError):
+                            continue
+                        if current_count < 0 or current_count > total_count:
+                            continue
+                        if total_count == total_target_count:
+                            if (best_exact_count is None) or (
+                                current_count > best_exact_count
+                            ):
+                                best_exact_count = current_count
+                            continue
+                        if (
+                            total_target_count > 0
+                            and total_count > total_target_count
+                            and current_count > 0
+                        ):
+                            estimated_count = int(
+                                (current_count * total_target_count + total_count - 1)
+                                / total_count
+                            )
+                            if estimated_count < 1:
+                                estimated_count = 1
+                            if estimated_count > total_target_count:
+                                estimated_count = total_target_count
+                            if (best_estimated_count is None) or (
+                                estimated_count > best_estimated_count
+                            ):
+                                best_estimated_count = estimated_count
+                if best_exact_count is not None:
+                    return {
+                        "processed_targets": best_exact_count,
+                        "is_estimate": False,
+                    }
+                if best_estimated_count is not None:
+                    return {
+                        "processed_targets": best_estimated_count,
+                        "is_estimate": True,
+                    }
+                return {
+                    "processed_targets": None,
+                    "is_estimate": False,
+                }
+
+            def _kiterunner_progress_line_candidate(clean_line):
+                if not clean_line:
+                    return False
+                return bool(
+                    re.search(r"(?<!\d)\d+\s*/\s*\d+(?!\d)", clean_line)
+                )
+
+            def _kiterunner_discovery_target_key(parsed_result):
+                url_text = self._ascii_safe(parsed_result.get("url") or "").strip()
+                if not url_text:
+                    return ""
+                try:
+                    parsed_url = URL(url_text)
+                except Exception:
+                    return ""
+                host = self._ascii_safe(parsed_url.getHost(), lower=True).strip()
+                if not host:
+                    return ""
+                protocol = self._ascii_safe(
+                    parsed_url.getProtocol() or "https", lower=True
+                ).strip() or "https"
+                port = parsed_url.getPort()
+                if port == -1:
+                    port = 443 if protocol == "https" else 80
+                if (protocol == "https" and port == 443) or (
+                    protocol == "http" and port == 80
+                ):
+                    base_url = "{}://{}/".format(protocol, host)
+                else:
+                    base_url = "{}://{}:{}/".format(protocol, host, port)
+                return self._ascii_safe(base_url).strip()
+
+            def _render_kiterunner_discovery_line(parsed_result):
+                method_text = (
+                    self._ascii_safe(parsed_result.get("method") or "GET").strip()
+                    or "GET"
+                )
+                status_text = (
+                    self._ascii_safe(parsed_result.get("status") or "").strip()
+                    or "?"
+                )
+                url_text = self._ascii_safe(parsed_result.get("url") or "").strip()
+                return "[+] Discovery: [{}] [{}] {}\n".format(
+                    method_text, status_text, url_text
+                )
+
+            def _render_kiterunner_progress_line(
+                processed_count,
+                discoveries_count,
+                elapsed_seconds,
+                is_estimate=False,
+            ):
+                if processed_count is None:
+                    return "[*] Progress: target-position unavailable | discoveries={} | elapsed={}s\n".format(
+                        int(discoveries_count),
+                        int(elapsed_seconds),
+                    )
+                safe_processed = max(
+                    0, min(int(processed_count), int(total_target_count))
+                )
+                progress_prefix = "~" if is_estimate else ""
+                return "[*] Progress: {}{}/{} targets processed | discoveries={} | elapsed={}s\n".format(
+                    progress_prefix,
+                    safe_processed,
+                    total_target_count,
+                    int(discoveries_count),
+                    int(elapsed_seconds),
+                )
+
+            def _flush_pending_kiterunner_lines():
+                processed_changed = False
+                drained = []
+                with output_lock:
+                    if pending_kiterunner_output_lines:
+                        drained = list(pending_kiterunner_output_lines)
+                        del pending_kiterunner_output_lines[:]
+                if not drained:
+                    return 0
+
+                ui_lines = []
+                for raw_line in drained:
+                    progress_update = _extract_kiterunner_progress_update(raw_line)
+                    inferred_processed_count = progress_update.get("processed_targets")
+                    inferred_is_estimate = bool(progress_update.get("is_estimate"))
+                    if inferred_processed_count is not None:
+                        current_processed = progress_state["processed_targets"]
+                        if (
+                            current_processed is None
+                            or inferred_processed_count > current_processed
+                            or (
+                                progress_state["progress_is_estimate"]
+                                and (not inferred_is_estimate)
+                            )
+                        ):
+                            progress_state["processed_targets"] = inferred_processed_count
+                            progress_state["progress_is_estimate"] = inferred_is_estimate
+                            progress_state["progress_signal_seen"] = True
+                            processed_changed = True
+                    for clean_line in _sanitize_kiterunner_output_lines(raw_line):
+                        parsed_result = self._parse_kiterunner_result_line(clean_line)
+                        if parsed_result:
+                            results.append(clean_line)
+                            discovery_target_key = _kiterunner_discovery_target_key(
+                                parsed_result
+                            )
+                            if discovery_target_key:
+                                discovery_target_keys = progress_state[
+                                    "discovery_target_keys"
+                                ]
+                                previous_count = len(discovery_target_keys)
+                                discovery_target_keys.add(discovery_target_key)
+                                if len(discovery_target_keys) > previous_count:
+                                    if (
+                                        progress_state["processed_targets"] is None
+                                        or len(discovery_target_keys)
+                                        > progress_state["processed_targets"]
+                                    ):
+                                        progress_state["processed_targets"] = len(
+                                            discovery_target_keys
+                                        )
+                                        if not progress_state["progress_signal_seen"]:
+                                            progress_state["progress_is_estimate"] = True
+                                        processed_changed = True
+                            ui_lines.append(
+                                _render_kiterunner_discovery_line(parsed_result)
+                            )
+                            continue
+
+                        lower_line = clean_line.lower()
+                        if "fatal" in lower_line or "error" in lower_line:
+                            error_lines.append(clean_line)
+                            if clean_line.startswith("[!]"):
+                                ui_lines.append(clean_line + "\n")
+                            else:
+                                ui_lines.append("[!] " + clean_line + "\n")
+                            continue
+
+                        if _kiterunner_progress_line_candidate(clean_line):
+                            continue
+                        ui_lines.append(clean_line + "\n")
+
+                if processed_changed:
+                    elapsed = int(time_module.time() - start_time)
+                    ui_lines.append(
+                        _render_kiterunner_progress_line(
+                            progress_state["processed_targets"],
+                            len(results),
+                            elapsed,
+                            progress_state["progress_is_estimate"],
+                        )
+                    )
+
+                if ui_lines:
+                    rendered_output = "".join(ui_lines)
+                    SwingUtilities.invokeLater(
+                        lambda t=rendered_output: (
+                            self.kiterunner_area.append(t),
+                            self.kiterunner_area.setCaretPosition(
+                                self.kiterunner_area.getDocument().getLength()
+                            ),
+                        )
+                    )
+                return len(ui_lines)
+
+            stdout_thread = threading.Thread(
+                target=stream_reader,
+                args=(process.stdout, pending_kiterunner_output_lines),
+            )
+            stdout_thread.daemon = True
+            stdout_thread.start()
+
+            while process.poll() is None:
+                if self._is_tool_cancelled("kiterunner"):
+                    cancelled_by_user = True
+                    self._terminate_process_cross_platform(process, "Kiterunner")
+                    break
+                _flush_pending_kiterunner_lines()
+                current_time = time_module.time()
+                if max_elapsed_seconds > 0 and (
+                    current_time - start_time
+                ) >= max_elapsed_seconds:
+                    timed_out_by_boundary = True
+                    self._terminate_process_cross_platform(process, "Kiterunner")
+                    break
+                if current_time - last_update >= heartbeat_interval_seconds:
+                    elapsed = int(current_time - start_time)
+                    discoveries = len(results)
+                    SwingUtilities.invokeLater(
+                        lambda e=elapsed, d=discoveries, p=progress_state["processed_targets"], est=progress_state["progress_is_estimate"]: (
+                            self.kiterunner_area.append(
+                                _render_kiterunner_progress_line(p, d, e, est)
+                            ),
+                            self.kiterunner_area.setCaretPosition(
+                                self.kiterunner_area.getDocument().getLength()
+                            ),
+                        )
+                    )
+                    last_update = current_time
+                time_module.sleep(ui_poll_interval_seconds)
+
+            process.wait()
+            stdout_thread.join(timeout=2)
+            _flush_pending_kiterunner_lines()
+            elapsed = int(time_module.time() - start_time)
+
+            with self.kiterunner_lock:
+                self.kiterunner_results = list(results)
+
+            if cancelled_by_user:
+                SwingUtilities.invokeLater(
+                    lambda: self.kiterunner_area.append(
+                        "\n[!] Kiterunner run cancelled by user\n"
+                    )
+                )
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui("[!] Kiterunner cancelled by user")
+                )
+                return
+
+            if timed_out_by_boundary and not results:
+                boundary_text = (
+                    "\n[!] Kiterunner {} time boundary reached after {}s; no discoveries were collected before the run was stopped\n".format(
+                        profile_cfg.get("profile", profile_value).title(),
+                        max_elapsed_seconds,
+                    )
+                )
+                SwingUtilities.invokeLater(
+                    lambda t=boundary_text: self.kiterunner_area.append(t)
+                )
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui(
+                        "[!] Kiterunner {} time boundary reached after {}s".format(
+                            profile_cfg.get("profile", profile_value).title(),
+                            max_elapsed_seconds,
+                        )
+                    )
+                )
+                return
+
+            if process.returncode != 0 and (not results) and (not timed_out_by_boundary):
+                fail_lines = [
+                    "",
+                    "[!] Kiterunner command failed",
+                    "[!] Exit code: {}".format(process.returncode),
+                    "[!] Command: {}".format(display_cmd),
+                ]
+
+                # Check for wordlist-related errors
+                wordlist_error_detected = False
+                remote_wordlist_error_detected = False
+                for err_line in error_lines:
+                    err_lower = self._ascii_safe(err_line, lower=True)
+                    if "failed to get remote wordlists" in err_lower or "failed to get url" in err_lower:
+                        remote_wordlist_error_detected = True
+                        wordlist_error_detected = True
+                        continue
+                    if "invalid names" in err_lower or "failed to get wordlists" in err_lower:
+                        wordlist_error_detected = True
+                        continue
+
+                if wordlist_error_detected:
+                    fail_lines.append("")
+                    fail_lines.append("[!] WORDLIST ERROR DETECTED")
+                    if remote_wordlist_error_detected:
+                        fail_lines.append("[*] The local kr binary could not fetch Assetnote wordlists for '{}'.".format(raw_wordlist))
+                        fail_lines.append("")
+                        fail_lines.append("[*] To fix this issue:")
+                        fail_lines.append("    1. Confirm this host can resolve/reach wordlists.assetnote.io")
+                        fail_lines.append("    2. Retry with a local .kite file if remote wordlists are blocked")
+                        fail_lines.append("    3. Or use a cached alias / alias:N value supported by your local kr build")
+                    else:
+                        fail_lines.append("[*] The wordlist alias '{}' is not available in your kiterunner installation.".format(raw_wordlist))
+                        fail_lines.append("")
+                        fail_lines.append("[*] To fix this issue:")
+                        fail_lines.append("    1. Check available wordlists: kr wordlist list")
+                        fail_lines.append("    2. Update the Wordlist/Alias field with a valid alias (e.g., apiroutes-260227)")
+                        fail_lines.append("    3. Or use a local .kite file path instead of an alias")
+                        fail_lines.append("")
+                        fail_lines.append("[*] Common valid aliases:")
+                        fail_lines.append("    - apiroutes-260227 (February 2026 API routes)")
+                        fail_lines.append("    - aspx-260227 (ASP/ASPX routes)")
+                        fail_lines.append("    - Run 'kr wordlist list' to see all available aliases")
+
+                fail_text = "\n".join(fail_lines) + "\n"
+                SwingUtilities.invokeLater(
+                    lambda t=fail_text: self.kiterunner_area.append(t)
+                )
+                SwingUtilities.invokeLater(
+                    lambda: self.log_to_ui(
+                        "[!] Kiterunner failed with exit code {}".format(
+                            process.returncode
+                        )
+                    )
+                )
+                return
+
+            by_status = {}
+            by_method = {}
+            for result_line in results:
+                parsed = self._parse_kiterunner_result_line(result_line)
+                if not parsed:
+                    continue
+                status = parsed.get("status") or "unknown"
+                method = parsed.get("method") or "GET"
+                by_status.setdefault(status, []).append(result_line)
+                by_method[method] = by_method.get(method, 0) + 1
+
+            summary = "\n" + "=" * 80 + "\n"
+            summary += "KITERUNNER SCAN RESULTS\n"
+            summary += "=" * 80 + "\n"
+            summary += "[*] Scan Time: {}s\n".format(elapsed)
+            summary += "[*] Targets Scanned: {}\n".format(len(targets))
+            summary += "[*] Total Discoveries: {}\n".format(len(results))
+            summary += "[*] Profile: {}\n".format(
+                profile_cfg.get("profile", profile_value).title()
+            )
+            if timed_out_by_boundary:
+                summary += "[*] Boundary: stopped early at {}s with partial results\n".format(
+                    max_elapsed_seconds
+                )
+            summary += "\n"
+
+            if results:
+                for status in sorted(by_status.keys()):
+                    matches = by_status[status]
+                    summary += "=" * 80 + "\n"
+                    summary += "STATUS {} - {} routes\n".format(status, len(matches))
+                    summary += "=" * 80 + "\n"
+                    for match in matches[:10]:
+                        summary += "{}\n".format(match)
+                    if len(matches) > 10:
+                        summary += "... ({} more)\n".format(len(matches) - 10)
+                    summary += "\n"
+
+                summary += "=" * 80 + "\n"
+                summary += "METHOD SUMMARY\n"
+                summary += "=" * 80 + "\n"
+                for method in sorted(by_method.keys()):
+                    summary += "[+] {}: {}\n".format(method, by_method[method])
+                summary += "\n[*] Use 'Export Results' to save all discoveries\n"
+            else:
+                summary += "[*] No API routes discovered\n"
+
+            SwingUtilities.invokeLater(lambda: self.kiterunner_area.append(summary))
+            SwingUtilities.invokeLater(
+                lambda: self.log_to_ui(
+                    "[+] Kiterunner: {}s, {} hosts, {} discoveries".format(
+                        elapsed, len(targets), len(results)
+                    )
+                )
+            )
+            SwingUtilities.invokeLater(
+                lambda: self.kiterunner_area.setCaretPosition(
+                    self.kiterunner_area.getDocument().getLength()
+                )
+            )
+        except Exception as e:
+            err = "[!] Error: {}\n".format(str(e))
+            SwingUtilities.invokeLater(lambda: self.kiterunner_area.append(err))
+            err_msg = str(e)
+            SwingUtilities.invokeLater(
+                lambda m=err_msg: self.log_to_ui("[!] Kiterunner error: {}".format(m))
+            )
+        finally:
+            self._clear_active_tool_process("kiterunner", process)
+            self._clear_tool_cancel("kiterunner")
+            self._cleanup_temp_dir(temp_dir, "kiterunner scan")
+
+    thread = threading.Thread(target=run_scan)
+    thread.daemon = True
+    thread.start()
+
 def _run_wayback(self):
     """Discover historical endpoints using Wayback Machine API"""
     import os

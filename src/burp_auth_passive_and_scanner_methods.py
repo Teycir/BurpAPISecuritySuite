@@ -1222,9 +1222,7 @@ def _auth_replay_endpoint_context(self, endpoint_key, entry=None):
     host = self._ascii_safe((entry or {}).get("host") or "", lower=True).strip()
     noise_host = False
     if host:
-        noise_host = bool(
-            self._ffuf_is_noise_host(host) or self._is_wayback_noise_host(host)
-        )
+        noise_host = bool(self._is_generic_noise_entry(entry))
 
     high_signal = bool((write_method or api_like or sensitive) and (not noise_host))
     return {
@@ -2366,6 +2364,8 @@ def _build_passive_filter_config(self, snapshot):
             if isinstance(entry, dict):
                 entries_snapshot.append(entry)
 
+    noise_filter_enabled = bool(getattr(self, "recon_noise_filter_enabled", True))
+
     host_counts = {}
     base_scores = {}
     for entry in entries_snapshot:
@@ -2376,9 +2376,13 @@ def _build_passive_filter_config(self, snapshot):
             host, scope_override
         ):
             continue
-        host_counts[host] = host_counts.get(host, 0) + 1
-        if (not scope_override.get("enabled")) and noise_filter_enabled and self._is_wayback_noise_host(host):
+        if (
+            (not scope_override.get("enabled"))
+            and noise_filter_enabled
+            and self._is_generic_noise_entry(entry)
+        ):
             continue
+        host_counts[host] = host_counts.get(host, 0) + 1
         base = self._infer_base_domain(host)
         if not base:
             continue
@@ -2423,7 +2427,7 @@ def _build_passive_filter_config(self, snapshot):
         if not allowed_bases:
             fallback_bases = {}
             for host, count in host_counts.items():
-                if noise_filter_enabled and self._is_wayback_noise_host(host):
+                if noise_filter_enabled and self._is_generic_noise_entry({"host": host}):
                     continue
                 base = self._infer_base_domain(host)
                 if not base:
@@ -2433,8 +2437,6 @@ def _build_passive_filter_config(self, snapshot):
                 fallback_bases.items(), key=lambda item: (-item[1], item[0])
             )
             allowed_bases = set([base for base, _ in fallback_sorted[:1]])
-
-    noise_filter_enabled = bool(getattr(self, "recon_noise_filter_enabled", True))
     return {
         "scope_override_enabled": bool(scope_override.get("enabled")),
         "scope_override": scope_override,
@@ -2544,7 +2546,7 @@ def _passive_entry_allowed(self, entry, filter_cfg):
         if host != filter_cfg.get("selected_host"):
             return False
     else:
-        if noise_filter_enabled and self._is_wayback_noise_host(host):
+        if noise_filter_enabled and self._is_generic_noise_entry(entry):
             return False
         allowed_bases = set(filter_cfg.get("allowed_bases", set()))
         if allowed_bases:
@@ -4868,13 +4870,12 @@ def _collect_asset_domain_candidates(self, max_candidates=50):
             host_base = self._infer_base_domain(host)
             if host != selected_host and host_base != selected_base:
                 continue
-        elif self._is_wayback_noise_host(host):
+        elif self._is_generic_noise_entry(entry):
             continue
         base = self._infer_base_domain(host)
         if not base:
             continue
-        weight = 2 if not self._ffuf_is_noise_host(host) else 1
-        candidate_scores[base] = candidate_scores.get(base, 0) + weight
+        candidate_scores[base] = candidate_scores.get(base, 0) + 2
 
     ordered = sorted(
         candidate_scores.items(), key=lambda item: (-int(item[1]), item[0])
@@ -5066,7 +5067,7 @@ def _extract_domains_for_asset_discovery(self, max_domains):
             if host_text != selected_host and host_base != selected_base:
                 dropped_scope += 1
                 continue
-        elif self._is_wayback_noise_host(host_text):
+        elif self._is_generic_noise_entry({"host": host_text}):
             dropped_noise += 1
             continue
         base = self._infer_base_domain(host_text) or host_text
@@ -6100,9 +6101,9 @@ def _collect_katana_seed_urls(self):
             host, scope_override
         ):
             continue
-        host_counts[host] = host_counts.get(host, 0) + 1
-        if (not scope_override.get("enabled")) and self._ffuf_is_noise_host(host):
+        if (not scope_override.get("enabled")) and self._is_generic_noise_entry(entry):
             continue
+        host_counts[host] = host_counts.get(host, 0) + 1
         base = self._infer_base_domain(host)
         if not base:
             continue
@@ -6137,7 +6138,7 @@ def _collect_katana_seed_urls(self):
         if not allowed_bases:
             fallback_bases = {}
             for host, count in host_counts.items():
-                if self._ffuf_is_noise_host(host):
+                if self._is_generic_noise_entry({"host": host}):
                     continue
                 base = self._infer_base_domain(host)
                 if not base:
@@ -6167,7 +6168,7 @@ def _collect_katana_seed_urls(self):
                 dropped_scope_host += 1
                 continue
         else:
-            if self._ffuf_is_noise_host(host):
+            if self._is_generic_noise_entry(entry):
                 dropped_noise_host += 1
                 continue
             host_base = self._infer_base_domain(host)
@@ -6238,7 +6239,7 @@ def _katana_result_in_scope(self, url, target_meta):
             return True
         return self._infer_base_domain(host) in allowed_bases
 
-    if self._ffuf_is_noise_host(host):
+    if self._is_generic_noise_entry({"host": host}):
         return False
     allowed_bases = set(target_meta.get("allowed_bases", []))
     if not allowed_bases:
@@ -6378,6 +6379,97 @@ def _collect_ffuf_targets(self):
 def _run_ffuf(self, event):
     """Run FFUF fuzzer on discovered endpoints"""
     return heavy_runners._run_ffuf(self, event)
+
+def _export_kiterunner_results(self):
+    """Export Kiterunner discovered routes."""
+    with self.kiterunner_lock:
+        data = list(self.kiterunner_results)
+    self._export_list_to_file(
+        data, "Kiterunner_Export", self.kiterunner_area, "results"
+    )
+
+def _parse_kiterunner_result_line(self, result_line):
+    """Extract method/status/url fields from one Kiterunner output line."""
+    text = self._ascii_safe(result_line or "").strip()
+    if not text:
+        return {}
+
+    method = ""
+    method_match = re.match(r"^([A-Z]{3,10})\b", text)
+    if method_match:
+        method = self._ascii_safe(method_match.group(1)).strip().upper()
+
+    status = ""
+    status_match = re.search(r"\b([1-5][0-9]{2})\b", text)
+    if status_match:
+        status = self._ascii_safe(status_match.group(1)).strip()
+
+    url = ""
+    url_match = re.search(r"(https?://\S+)", text)
+    if url_match:
+        url = self._ascii_safe(url_match.group(1)).strip()
+
+    if not url:
+        return {}
+    return {
+        "method": method or "GET",
+        "status": status,
+        "url": url,
+    }
+
+def _send_kiterunner_to_intruder(self):
+    """Send Kiterunner results to Burp Intruder."""
+    with self.kiterunner_lock:
+        results = list(self.kiterunner_results)
+    if not results:
+        self.kiterunner_area.append("\n[!] No results. Run Kiterunner first\n")
+        return
+
+    self.kiterunner_area.append("\n" + "=" * 80 + "\n")
+    self.kiterunner_area.append("[*] Sending to Burp Intruder...\n")
+
+    try:
+        sent = 0
+        for result in results[:20]:
+            parsed_result = self._parse_kiterunner_result_line(result)
+            url = self._ascii_safe(parsed_result.get("url") or "").strip()
+            if not url:
+                continue
+
+            parsed = URL(url)
+            path = parsed.getPath() or "/"
+            query = parsed.getQuery()
+            if query:
+                path += "?" + query
+            method = self._ascii_safe(parsed_result.get("method") or "GET").strip()
+            request = "{} {} HTTP/1.1\r\nHost: {}\r\n\r\n".format(
+                method, path, parsed.getHost()
+            )
+
+            self._callbacks.sendToIntruder(
+                parsed.getHost(),
+                (
+                    parsed.getPort()
+                    if parsed.getPort() != -1
+                    else (443 if parsed.getProtocol() == "https" else 80)
+                ),
+                parsed.getProtocol() == "https",
+                self._helpers.stringToBytes(request),
+            )
+            sent += 1
+
+        self.kiterunner_area.append("[+] Sent {} requests to Intruder\n".format(sent))
+        self.log_to_ui("[+] Sent {} Kiterunner results to Intruder".format(sent))
+    except Exception as e:
+        self.kiterunner_area.append("[!] Error: {}\n".format(str(e)))
+        self.log_to_ui("[!] Kiterunner Intruder error: {}".format(str(e)))
+
+def _collect_kiterunner_targets(self):
+    return jython_size_helpers.collect_kiterunner_targets(self)
+
+def _run_kiterunner(self, event):
+    """Run Kiterunner route scan on discovered endpoints."""
+    return heavy_runners._run_kiterunner(self, event)
 
 def _collect_wayback_queries(self):
     return jython_size_helpers.collect_wayback_queries(self)
@@ -6643,6 +6735,11 @@ __all__ = [
     "_ffuf_is_noise_path_segment",
     "_collect_ffuf_targets",
     "_run_ffuf",
+    "_export_kiterunner_results",
+    "_parse_kiterunner_result_line",
+    "_send_kiterunner_to_intruder",
+    "_collect_kiterunner_targets",
+    "_run_kiterunner",
     "_collect_wayback_queries",
     "_run_wayback",
     "_export_wayback_results",

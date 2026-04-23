@@ -1062,8 +1062,8 @@ def _has_high_signal_tags(self, tags):
             return True
     return False
 
-def _recon_entry_is_noise(self, entry, endpoint_tags=None):
-    """Heuristic noise detector for Recon/Logger filtering."""
+def _is_generic_noise_entry(self, entry, endpoint_tags=None):
+    """Shared denoiser used by Recon and downstream default tool collectors."""
     if not isinstance(entry, dict):
         return False
 
@@ -1077,6 +1077,11 @@ def _recon_entry_is_noise(self, entry, endpoint_tags=None):
         entry.get("path") or entry.get("normalized_path") or "/", lower=True
     ).strip()
     content_type = self._ascii_safe(entry.get("content_type") or "", lower=True).strip()
+    auth_detected = [
+        self._ascii_safe(value, lower=True).strip()
+        for value in (entry.get("auth_detected", []) or [])
+    ]
+    has_auth_context = any(value and value != "none" for value in auth_detected)
 
     first_part = ""
     parts = [p for p in path.strip("/").split("/") if p]
@@ -1138,14 +1143,26 @@ def _recon_entry_is_noise(self, entry, endpoint_tags=None):
         or ("/swagger" in path)
         or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
     )
+    tracking_api_noise = bool(
+        path_noise
+        and api_signal
+        and method in ["GET", "HEAD", "OPTIONS"]
+        and (not has_auth_context)
+    )
 
     if not (host_noise or path_noise or type_noise):
         return False
+    if tracking_api_noise:
+        return True
     if api_signal and (not host_noise):
         return False
     if api_signal and method in ["POST", "PUT", "PATCH", "DELETE"] and (not host_noise):
         return False
     return True
+
+def _recon_entry_is_noise(self, entry, endpoint_tags=None):
+    """Heuristic noise detector for Recon/Logger filtering."""
+    return self._is_generic_noise_entry(entry, endpoint_tags=endpoint_tags)
 
 def _endpoint_is_recon_noise(self, endpoint_key, entries, endpoint_tags_snapshot=None):
     """Return True when all samples for one endpoint are noisy."""
@@ -5754,6 +5771,113 @@ def _get_apihunter_custom_targets_override(self):
         "error": error,
     }
 
+def _parse_kiterunner_custom_targets_text(self, text, max_entries=20):
+    """Parse multiline Kiterunner custom targets into canonical base URLs."""
+    return self._parse_apihunter_custom_targets_text(text, max_entries=max_entries)
+
+def _open_kiterunner_custom_targets_popup(self):
+    """Open popup editor for Kiterunner custom target base URLs."""
+    current_text = "\n".join(getattr(self, "kiterunner_custom_targets_lines", []) or [])
+    editor = JTextArea(current_text, 12, 60)
+    editor.setLineWrap(False)
+    editor.setWrapStyleWord(False)
+
+    content = JPanel(BorderLayout(0, 6))
+    content.add(
+        JLabel(
+            "Enter one URL/host per line (max 20). Input is sanitized and normalized to base URLs."
+        ),
+        BorderLayout.NORTH,
+    )
+    content.add(JScrollPane(editor), BorderLayout.CENTER)
+
+    decision = JOptionPane.showConfirmDialog(
+        self._panel,
+        content,
+        "Kiterunner Custom Targets",
+        JOptionPane.OK_CANCEL_OPTION,
+        JOptionPane.PLAIN_MESSAGE,
+    )
+    if decision != JOptionPane.OK_OPTION:
+        return
+
+    parsed = self._parse_kiterunner_custom_targets_text(editor.getText(), max_entries=20)
+    too_many_count = int(parsed.get("too_many_count", 0) or 0)
+    invalid_lines = list(parsed.get("invalid_lines", []) or [])
+    if too_many_count > 0:
+        JOptionPane.showMessageDialog(
+            self._panel,
+            "Kiterunner custom targets accepts up to 20 entries. Remove {} extra line(s).".format(
+                too_many_count
+            ),
+            "Kiterunner Custom Targets",
+            JOptionPane.ERROR_MESSAGE,
+        )
+        return
+    if invalid_lines:
+        preview = []
+        for item in invalid_lines[:5]:
+            preview.append(
+                "Line {}: {} ({})".format(
+                    int(item.get("line", 0) or 0),
+                    self._ascii_safe(item.get("value") or "")[:80],
+                    self._ascii_safe(item.get("error") or "invalid URL"),
+                )
+            )
+        if len(invalid_lines) > 5:
+            preview.append("... and {} more invalid line(s)".format(len(invalid_lines) - 5))
+        JOptionPane.showMessageDialog(
+            self._panel,
+            "Invalid URL entries detected:\n\n{}".format("\n".join(preview)),
+            "Kiterunner Custom Targets",
+            JOptionPane.ERROR_MESSAGE,
+        )
+        return
+
+    self.kiterunner_custom_targets_lines = list(parsed.get("targets", []) or [])
+    self._save_text_setting(
+        "kiterunner_custom_targets_lines",
+        "\n".join(self.kiterunner_custom_targets_lines),
+    )
+
+    count = len(self.kiterunner_custom_targets_lines)
+    if count == 0:
+        self.log_to_ui("[*] Kiterunner custom targets cleared")
+    else:
+        self.log_to_ui(
+            "[+] Kiterunner custom targets updated: {} base URL(s)".format(count)
+        )
+
+def _get_kiterunner_custom_targets_override(self):
+    """Return current Kiterunner custom-target toggle state and sanitized targets."""
+    enabled = False
+    checkbox = getattr(self, "kiterunner_use_custom_targets_checkbox", None)
+    if checkbox is not None:
+        enabled = bool(checkbox.isSelected())
+
+    lines = list(getattr(self, "kiterunner_custom_targets_lines", []) or [])
+    parsed = self._parse_kiterunner_custom_targets_text("\n".join(lines), max_entries=20)
+    targets = list(parsed.get("targets", []) or [])
+    invalid_count = int(parsed.get("invalid_count", 0) or 0)
+    too_many_count = int(parsed.get("too_many_count", 0) or 0)
+
+    error = ""
+    if enabled:
+        if invalid_count > 0:
+            error = "Kiterunner custom targets contains invalid URL lines. Open 'Custom Targets...' and fix them."
+        elif too_many_count > 0:
+            error = "Kiterunner custom targets supports up to 20 entries."
+        elif len(targets) == 0:
+            error = "Kiterunner custom targets is enabled but no valid URLs are configured."
+
+    return {
+        "enabled": enabled,
+        "targets": targets,
+        "invalid_count": invalid_count,
+        "too_many_count": too_many_count,
+        "error": error,
+    }
+
 def _parse_target_base_scope_text(self, text):
     """Parse multiline target scope input into host/base-domain sets."""
     lines = []
@@ -10346,6 +10470,17 @@ def _tool_health_specs(self):
             "forbidden": [],
         },
         {
+            "name": "Kiterunner",
+            "field": "kiterunner_path_field",
+            "fallback": [
+                os.path.expanduser("~/.local/bin/kr"),
+                os.path.expanduser("~/go/bin/kr"),
+                "kr",
+            ],
+            "required": ["scan", "brute", "wordlist"],
+            "forbidden": [],
+        },
+        {
             "name": "SQLMap",
             "field": "sqlmap_path_field",
             "fallback": [
@@ -10757,6 +10892,7 @@ def _pkill_external_tools(self, output_area=None):
         ("httpx", "HTTPX"),
         ("katana", "Katana"),
         ("ffuf", "FFUF"),
+        ("kiterunner", "Kiterunner"),
         ("wayback", "Wayback"),
         ("sqlmap", "SQLMap"),
         ("dalfox", "Dalfox"),
@@ -10790,6 +10926,7 @@ def _pkill_external_tools(self, output_area=None):
             "httpx.exe",
             "katana.exe",
             "ffuf.exe",
+            "kr.exe",
             "waybackurls.exe",
             "gau.exe",
             "sqlmap.exe",
@@ -10814,6 +10951,8 @@ def _pkill_external_tools(self, output_area=None):
             "httpx",
             "katana",
             "ffuf",
+            "kr scan",
+            "kr brute",
             "waybackurls",
             "gau",
             "sqlmap",
@@ -10853,7 +10992,7 @@ def _pkill_external_tools(self, output_area=None):
     if output_area is not None:
         output_area.append(summary)
     self.log_to_ui(
-        "[!] Emergency kill executed for apihunter/nuclei/httpx/katana/ffuf/wayback/sqlmap/dalfox/subfinder/graphql"
+        "[!] Emergency kill executed for apihunter/nuclei/httpx/katana/ffuf/kiterunner/wayback/sqlmap/dalfox/subfinder/graphql"
     )
 
 def _stop_apihunter(self, event):
@@ -10870,6 +11009,9 @@ def _stop_katana(self, event):
 
 def _stop_ffuf(self, event):
     self._stop_tool_run("ffuf", "FFUF", self.ffuf_area)
+
+def _stop_kiterunner(self, event):
+    self._stop_tool_run("kiterunner", "Kiterunner", self.kiterunner_area)
 
 def _stop_wayback(self, event):
     self._stop_tool_run("wayback", "Wayback", self.wayback_area)
@@ -10907,6 +11049,7 @@ __all__ = [
     "_endpoint_matches_recon_regex",
     "_sync_noise_filter_checkboxes",
     "_has_high_signal_tags",
+    "_is_generic_noise_entry",
     "_recon_entry_is_noise",
     "_endpoint_is_recon_noise",
     "_logger_extract_tag_tokens",
@@ -11012,6 +11155,9 @@ __all__ = [
     "_parse_apihunter_custom_targets_text",
     "_open_apihunter_custom_targets_popup",
     "_get_apihunter_custom_targets_override",
+    "_parse_kiterunner_custom_targets_text",
+    "_open_kiterunner_custom_targets_popup",
+    "_get_kiterunner_custom_targets_override",
     "_parse_target_base_scope_text",
     "_extract_scope_host",
     "_get_target_scope_override",
@@ -11144,6 +11290,7 @@ __all__ = [
     "_stop_httpx",
     "_stop_katana",
     "_stop_ffuf",
+    "_stop_kiterunner",
     "_stop_wayback",
     "_stop_sqlmap",
     "_stop_dalfox",

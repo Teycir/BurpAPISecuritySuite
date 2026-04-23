@@ -99,9 +99,10 @@ This design philosophy prioritizes performance and user experience while deliver
       - [Sensitive Data Tab](#sensitive-data-tab)
       - [8. ApiHunter Tab](#8-apihunter-tab)
       - [9. Nuclei Tab](#9-nuclei-tab)
-      - [11. HTTPX Tab](#11-httpx-tab)
-      - [12. Katana Tab](#12-katana-tab)
-      - [13. FFUF Tab](#13-ffuf-tab)
+      - [10. HTTPX Tab](#10-httpx-tab)
+      - [11. Katana Tab](#11-katana-tab)
+      - [12. FFUF Tab](#12-ffuf-tab)
+      - [13. Kiterunner Tab](#13-kiterunner-tab)
       - [14. Wayback Tab](#14-wayback-tab)
       - [15. SQLMap Verify Tab](#15-sqlmap-verify-tab)
       - [16. Dalfox Verify Tab](#16-dalfox-verify-tab)
@@ -314,6 +315,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Sample Limit**: Configure samples per endpoint (1, 3, 5, 10)
 - **Pagination**: Navigate large endpoint lists (50, 100, 200, 500 per page)
 - **Search & Filters**: Filter by host, method, severity, search term
+- **Filter Noise**: Starts selected on launch to suppress tracker/static/CDN noise and keep downstream tool tabs focused on higher-signal API traffic
 - **Grouping**: Group endpoints by Host, Method, Auth, Encryption
 - **Export All**: Export complete API analysis to JSON
 - **Export Host**: Export specific host endpoints
@@ -445,7 +447,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Custom + Auth Note**: In custom mode, `Auth + Unauth` dual-pass is blocked; use `Auth Only` or `Unauth Only`, or disable custom mode for automatic dual-pass execution.
 - **Preset Cmd + ? Help**: Auto-fill common commands and show usage guidance
 - **Stop**: Cancel active scans safely
-- **PKill Tools**: Emergency kill for `nuclei/httpx/katana/ffuf/waybackurls/gau/sqlmap/dalfox/subfinder/dnsx`
+- **PKill Tools**: Emergency kill for `nuclei/httpx/katana/ffuf/kiterunner/waybackurls/gau/sqlmap/dalfox/subfinder/dnsx`
 - **Cross-Platform Kill**: Uses `taskkill` on Windows and `pkill` (with `killall` fallback) on Linux/macOS
 - **Export Targets**: Save target list for external scanning
 - **Features**: Header-based spoofing, rate limiting, clear error reporting
@@ -482,7 +484,24 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Export Results**: Save fuzzing results
 - **Send to Intruder**: Export results to Burp Intruder
 
-#### 13. Wayback Tab
+#### 13. Kiterunner Tab
+- **Kiterunner Path**: Configure path to local `kr` binary
+- **Wordlist/Alias**: Use a local `.kite` file or an Assetnote alias such as `apiroutes-260227:20000`
+- **Profile**: `Fast`, `Balanced`, `Deep` route-scan tuning, with `Balanced` selected by default for wider first-pass coverage; `Fast` keeps a tighter 10-minute cap for quicker triage and `Deep` spends a 15-minute ceiling on fewer hosts with fuller scans
+- **Use Custom Targets**: Checkbox to force Kiterunner input from the `Custom Targets...` popup instead of Recon-filtered scope
+- **Custom Targets Popup**: Multiline editor (`max 20` entries, one per line) with strict sanitization and canonical base URL normalization (`scheme://host[:port]/`)
+- **Target Bases...**: Open multiline popup to define explicit base URLs/hosts
+- **Only Base+Derivatives**: Restrict scans to popup scope and same base-domain derivatives
+- **Run Kiterunner**: Scoped API route discovery against either popup-defined base URLs or the current Recon filtered view
+- **Startup Summary**: Prints selected mode, target source, and the target URL list before the scan begins
+- **Always Filtered Source**: When custom targets are off, Kiterunner consumes the current Recon filtered view, so the Recon `Filter Noise` control starting selected on launch compresses its default target set
+- **Runtime Boundaries**: Kiterunner scans ranked host/base targets instead of every Recon URL and enforces profile-specific host, route-budget, and elapsed-time caps so runs do not sprawl indefinitely
+- **WAF-Evasion Defaults**: Lower concurrency, request delay, forwarded-IP spoof headers, and redirect quarantine controls
+- **PKill Tools**: Emergency kill for scanner processes
+- **Export Results**: Save route-discovery results
+- **Send to Intruder**: Export discovered method/path hits to Burp Intruder
+
+#### 14. Wayback Tab
 - **Date Range**: Configure from/to years for historical search
 - **Limit**: Set maximum results to retrieve
 - **Discover**: Query Wayback Machine for historical endpoints
@@ -497,7 +516,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import discovered endpoints to Recon tab
 - **Export Results**: Save discovered endpoints
 
-#### 14. SQLMap Verify Tab
+#### 15. SQLMap Verify Tab
 - **SQLMap Path**: Configure path to local `sqlmap`
 - **Profile**: `Fast`, `Balanced`, `Deep` command tuning presets
 - **Run Verify**: Replay SQLi-priority targets and collect evidence-backed confirmations
@@ -506,7 +525,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import verified SQLi endpoints back into Recon for follow-up
 - **Export Results**: Save verification output to file
 
-#### 15. Dalfox Verify Tab
+#### 16. Dalfox Verify Tab
 - **Dalfox Path**: Configure path to local `dalfox`
 - **Profile**: `Fast`, `Balanced`, `Deep` command tuning presets
 - **Run Verify**: Replay XSS-priority targets and capture Dalfox confirmation output
@@ -515,7 +534,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import verified XSS candidates to Recon
 - **Export Results**: Save Dalfox findings to file
 
-#### 16. API Assets Tab
+#### 17. API Assets Tab
 - **Domains Input**: Optional manual domains list (comma/newline); auto-derives from Recon when empty
 - **Profile**: `Fast`, `Balanced`, `Deep` stage tuning for `subfinder`/`dnsx`/`httpx`
 - **Pipeline**: Runs `subfinder` → `dnsx` → `httpx` for alive API asset discovery
@@ -524,7 +543,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import discovered assets into Recon
 - **Export Results**: Save discovered URLs
 
-#### 17. OpenAPI Drift Tab
+#### 18. OpenAPI Drift Tab
 - **Spec Source**: Load OpenAPI/Swagger file from local path or URL
 - **Generate OpenAPI**: One-click OpenAPI 3.0.3 generation from captured Recon traffic
 - **Run Drift**: Compare observed traffic vs spec and report endpoint/parameter drift
@@ -533,7 +552,7 @@ BurpAPISecuritySuite is a complete API security testing toolkit that:
 - **Send to Recon**: Import spec-missing candidates into Recon for probing
 - **Export Results**: Save drift output report
 
-#### 18. GraphQL Tab
+#### 19. GraphQL Tab
 - **Targets Input**: Optional manual GraphQL targets (auto-detects from Recon if empty)
 - **Show Targets**: Preview candidate GraphQL endpoints before execution
 - **Run Analysis**: Run GraphQL-focused multi-tool analysis workflow
@@ -961,7 +980,7 @@ The Fuzzer detects GraphQL endpoints automatically and generates attacks for:
 
 ### External Tools
 
-**Q: Do I need to install ApiHunter/Nuclei/HTTPX/Katana/FFUF?**
+**Q: Do I need to install ApiHunter/Nuclei/HTTPX/Katana/FFUF/Kiterunner?**
 
 A: Only if you want to use those specific tabs. The core extension works without them. Install from:
 - ApiHunter: https://github.com/Teycir/ApiHunter (proprietary tool - requires separate installation or local build at `~/Repos/ApiHunter`, then build `target/release/apihunter`)
@@ -969,6 +988,7 @@ A: Only if you want to use those specific tabs. The core extension works without
 - HTTPX: https://github.com/projectdiscovery/httpx
 - Katana: https://github.com/projectdiscovery/katana
 - FFUF: https://github.com/ffuf/ffuf
+- Kiterunner: https://github.com/assetnote/kiterunner
 
 **Q: Where should I install these tools?**
 
@@ -978,6 +998,7 @@ A: Default paths:
 - `~/go/bin/httpx`
 - `~/go/bin/katana`
 - `~/go/bin/ffuf`
+- `~/.local/bin/kr`
 - On Windows, common defaults are under `C:\\Users\\<you>\\go\\bin\\*.exe`
 
 Or configure custom paths in each tab.

@@ -408,6 +408,13 @@ class BurpExtender(
         "vimeo.com",
         "tiktok.com",
         "tiktokcdn.com",
+        "tiktokw.us",
+        "snapchat.com",
+        "admob.com",
+        "moloco.com",
+        "kargo.com",
+        "mediasquare.fr",
+        "presage.io",
     )
     WAYBACK_NOISE_HOST_PATTERNS = (
         "doubleclick.net",
@@ -489,6 +496,7 @@ class BurpExtender(
     FFUF_REQUEST_TIMEOUT_SECONDS = 8
     FFUF_RATE_LIMIT = 35
     FFUF_TARGET_TIMEOUT_SECONDS = 45
+    KITERUNNER_MAX_TARGETS = 24
     NUCLEI_MAX_TARGETS = 800
     NUCLEI_REQUEST_TIMEOUT_SECONDS = 8
     NUCLEI_RETRIES = 1

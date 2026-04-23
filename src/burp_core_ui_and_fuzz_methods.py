@@ -51,7 +51,6 @@ from javax.swing.table import DefaultTableCellRenderer, DefaultTableModel, Table
 
 _PERSISTED_CHECKBOX_ATTRS = (
     "recon_autopopulate_checkbox",
-    "recon_noise_filter_checkbox",
     "logger_auto_prune_checkbox",
     "logger_logging_off_checkbox",
     "logger_import_on_open_checkbox",
@@ -66,6 +65,7 @@ _PERSISTED_CHECKBOX_ATTRS = (
     "httpx_custom_cmd_checkbox",
     "katana_custom_cmd_checkbox",
     "wayback_custom_cmd_checkbox",
+    "kiterunner_use_custom_targets_checkbox",
     "apihunter_use_custom_targets_checkbox",
     "auth_replay_check_unauth_checkbox",
     "graphql_raider_introspection_checkbox",
@@ -108,6 +108,8 @@ _PERSISTED_TEXT_ATTRS = (
     "katana_custom_cmd_field",
     "ffuf_path_field",
     "ffuf_wordlist_field",
+    "kiterunner_path_field",
+    "kiterunner_wordlist_field",
     "wayback_from_field",
     "wayback_to_field",
     "wayback_limit_field",
@@ -165,6 +167,7 @@ _PERSISTED_COMBO_ATTRS = (
     "apihunter_top_findings_min_combo",
     "nuclei_auth_mode_combo",
     "nuclei_profile_combo",
+    "kiterunner_profile_combo",
     "graphql_profile_combo",
     "graphql_request_mode_combo",
     "auth_replay_scope_combo",
@@ -186,6 +189,7 @@ UI_CORE_LIMITS = {
     "tooltip_initial_delay_ms": 350,
     "tooltip_reshow_delay_ms": 100,
     "tooltip_dismiss_delay_ms": 20000,
+    "kiterunner_custom_targets_max_entries": 20,
     "apihunter_custom_targets_max_entries": 20,
 }
 
@@ -658,6 +662,7 @@ def _initialize_runtime_state(self):
     self.target_base_scope_hosts = set()
     self.target_base_scope_bases = set()
     self.target_base_scope_only_enabled = False
+    self.kiterunner_custom_targets_lines = []
     self.apihunter_custom_targets_lines = []
     self.target_scope_checkboxes = []
     self._syncing_target_scope_checkboxes = False
@@ -668,6 +673,7 @@ def _initialize_runtime_state(self):
         "httpx": threading.Event(),
         "katana": threading.Event(),
         "ffuf": threading.Event(),
+        "kiterunner": threading.Event(),
         "wayback": threading.Event(),
         "authreplay": threading.Event(),
         "sqlmap": threading.Event(),
@@ -762,6 +768,8 @@ def _initialize_runtime_state(self):
     self._import_progress_last_ts = 0.0
     self._import_progress_min_interval_s = 0.35
     self.recon_autopopulate_on_open = True
+    # Keep Recon denoised on every launch so downstream tool tabs inherit
+    # the same high-signal default target set.
     self.recon_noise_filter_enabled = True
     # Internal extension traffic can flood Recon/Logger and stall UI during heavy runs.
     # Keep it disabled by default; capture pipeline can still ingest Proxy/Repeater/Scanner data.
@@ -954,6 +962,28 @@ def _restore_persisted_ui_state(self):
     if invalid_count > 0 or too_many_count > 0:
         self._callbacks.printError(
             "ApiHunter custom targets restore ignored invalid/overflow lines (invalid={}, overflow={})".format(
+                invalid_count, too_many_count
+            )
+        )
+
+    kiterunner_targets_default = "\n".join(
+        getattr(self, "kiterunner_custom_targets_lines", []) or []
+    )
+    kiterunner_targets_text = self._load_text_setting(
+        "kiterunner_custom_targets_lines", kiterunner_targets_default
+    )
+    parsed_kiterunner_targets = self._parse_kiterunner_custom_targets_text(
+        kiterunner_targets_text,
+        max_entries=UI_CORE_LIMITS["kiterunner_custom_targets_max_entries"],
+    )
+    self.kiterunner_custom_targets_lines = list(
+        parsed_kiterunner_targets.get("targets", [])
+    )
+    invalid_count = int(parsed_kiterunner_targets.get("invalid_count", 0) or 0)
+    too_many_count = int(parsed_kiterunner_targets.get("too_many_count", 0) or 0)
+    if invalid_count > 0 or too_many_count > 0:
+        self._callbacks.printError(
+            "Kiterunner custom targets restore ignored invalid/overflow lines (invalid={}, overflow={})".format(
                 invalid_count, too_many_count
             )
         )
@@ -1500,6 +1530,7 @@ def _create_tabs(self, recon_panel):
     httpx_panel = self._create_httpx_tab()
     katana_panel = self._create_katana_tab()
     ffuf_panel = self._create_ffuf_tab()
+    kiterunner_panel = self._create_kiterunner_tab()
     wayback_panel = self._create_wayback_tab()
     graphql_panel = self._create_graphql_tab()
 
@@ -1517,6 +1548,7 @@ def _create_tabs(self, recon_panel):
     self.tabbed_pane.addTab("HTTPX", httpx_panel)
     self.tabbed_pane.addTab("Katana", katana_panel)
     self.tabbed_pane.addTab("FFUF", ffuf_panel)
+    self.tabbed_pane.addTab("Kiterunner", kiterunner_panel)
     self.tabbed_pane.addTab("Wayback", wayback_panel)
     self.tabbed_pane.addTab("Sqlmap", sqlmap_verify_panel)
     self.tabbed_pane.addTab("Dalfox", dalfox_verify_panel)
@@ -2294,6 +2326,51 @@ def _selected_profile_value(self, combo):
     raw_value = self._ascii_safe(str(combo.getSelectedItem()) if combo else "")
     return self._normalize_profile(raw_value)
 
+def _kiterunner_profile_settings(self, profile_value):
+    """Return Kiterunner tuning values for selected profile."""
+    profile = self._normalize_profile(profile_value)
+    if profile == "fast":
+        return {
+            "profile": "fast",
+            "max_parallel_hosts": 20,
+            "max_connection_per_host": 3,
+            "preflight_depth": 0,
+            "timeout": "2s",
+            "delay": "0ms",
+            "quarantine_threshold": 4,
+            "full_scan": False,
+            "target_host_cap": 8,
+            "assetnote_entry_cap": 2500,
+            "max_elapsed_seconds": 600,
+        }
+    if profile == "deep":
+        return {
+            "profile": "deep",
+            "max_parallel_hosts": 6,
+            "max_connection_per_host": 1,
+            "preflight_depth": 2,
+            "timeout": "8s",
+            "delay": "140ms",
+            "quarantine_threshold": 14,
+            "full_scan": True,
+            "target_host_cap": 6,
+            "assetnote_entry_cap": 12000,
+            "max_elapsed_seconds": 900,
+        }
+    return {
+        "profile": "balanced",
+        "max_parallel_hosts": 12,
+        "max_connection_per_host": 2,
+        "preflight_depth": 1,
+        "timeout": "3s",
+        "delay": "30ms",
+        "quarantine_threshold": 6,
+        "full_scan": False,
+        "target_host_cap": 12,
+        "assetnote_entry_cap": 8000,
+        "max_elapsed_seconds": 900,
+    }
+
 def _sqlmap_profile_settings(self, profile_value):
     """Return SQLMap tuning values for selected profile."""
     profile = self._normalize_profile(profile_value)
@@ -2779,6 +2856,7 @@ def _resolve_append_report_output_area(self, source_label):
         "httpx": "httpx_area",
         "katana": "katana_area",
         "ffuf": "ffuf_area",
+        "kiterunner": "kiterunner_area",
         "wayback": "wayback_area",
         "apihunter": "apihunter_area",
         "graphql analysis": "graphql_area",
@@ -5028,6 +5106,138 @@ def _create_ffuf_tab(self):
     panel.add(scroll, BorderLayout.CENTER)
     self.ffuf_results = []
     self.ffuf_lock = threading.Lock()
+    return panel
+
+def _create_kiterunner_tab(self):
+    """Create Kiterunner API route scanner tab."""
+    panel = JPanel(BorderLayout())
+    top_panel = JPanel()
+    top_panel.setLayout(BoxLayout(top_panel, BoxLayout.Y_AXIS))
+
+    controls_line1 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line2 = JPanel(FlowLayout(FlowLayout.LEFT))
+    controls_line1.add(JLabel("Kiterunner Path:"))
+    import os
+
+    kiterunner_candidates = [
+        os.path.expanduser("~/.local/bin/kr"),
+        os.path.expanduser("~/go/bin/kr"),
+        os.path.expanduser("~/go/bin/kr.exe"),
+        "kr.exe" if os.name == "nt" else "kr",
+        "kr",
+    ]
+    default_kiterunner = next(
+        (p for p in kiterunner_candidates if os.path.exists(p)),
+        "kr.exe" if os.name == "nt" else "kr",
+    )
+    self.kiterunner_path_field = JTextField(default_kiterunner, 22)
+    controls_line1.add(self.kiterunner_path_field)
+    controls_line1.add(JLabel("Wordlist/Alias:"))
+    default_kiterunner_wordlist = os.path.expanduser("~/wordlists/routes-large.kite")
+    if not os.path.exists(default_kiterunner_wordlist):
+        default_kiterunner_wordlist = os.path.expanduser("~/wordlists/routes-small.kite")
+    if not os.path.exists(default_kiterunner_wordlist):
+        default_kiterunner_wordlist = "apiroutes-260227"
+    self.kiterunner_wordlist_field = JTextField(default_kiterunner_wordlist, 24)
+    self.kiterunner_wordlist_field.setToolTipText(
+        "Local .kite file path or Assetnote alias, for example apiroutes-260227."
+    )
+    controls_line1.add(self.kiterunner_wordlist_field)
+    controls_line1.add(JLabel("Profile:"))
+    self.kiterunner_profile_combo = JComboBox(self._profile_labels())
+    self.kiterunner_profile_combo.setSelectedItem("Balanced")
+    self.kiterunner_profile_combo.setToolTipText(
+        "Balanced: default; broader ranked-host coverage with a larger route budget and 15-minute max. Fast keeps only the top-ranked hosts, caps Assetnote routes, and stops after 10 minutes. Deep spends that same 15-minute ceiling on fewer hosts with the largest route budget and fuller scans."
+    )
+    controls_line1.add(self.kiterunner_profile_combo)
+    self.kiterunner_use_custom_targets_checkbox = JCheckBox(
+        "Use Custom Targets", False
+    )
+    self.kiterunner_use_custom_targets_checkbox.setToolTipText(
+        "Use only Custom Targets popup URLs (max 20 base URLs)."
+    )
+    controls_line1.add(self.kiterunner_use_custom_targets_checkbox)
+    controls_line1.add(
+        self._create_action_button(
+            "Custom Targets...",
+            Color(96, 125, 139),
+            lambda e: self._open_kiterunner_custom_targets_popup(),
+        )
+    )
+
+    controls_line2.add(
+        self._create_action_button(
+            "Run Kiterunner", Color(205, 92, 92), lambda e: self._run_kiterunner(e)
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Stop", Color(255, 140, 0), lambda e: self._stop_kiterunner(e)
+        )
+    )
+    self._add_target_scope_controls(controls_line2)
+    self._add_force_kill_button(
+        controls_line2, lambda: getattr(self, "kiterunner_area", None)
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Export Results",
+            Color(70, 130, 180),
+            lambda e: self._export_kiterunner_results(),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Send to Intruder",
+            Color(255, 140, 0),
+            lambda e: self._send_kiterunner_to_intruder(),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Clear",
+            Color(220, 53, 69),
+            lambda e: self.kiterunner_area.setText(""),
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "Copy",
+            Color(108, 117, 125),
+            lambda e: self._copy_to_clipboard(self.kiterunner_area.getText()),
+        )
+    )
+    controls_line2.add(
+        self._create_append_report_button(
+            "Kiterunner", lambda: self.kiterunner_area.getText()
+        )
+    )
+    controls_line2.add(
+        self._create_action_button(
+            "To AI",
+            Color(33, 150, 243),
+            lambda e: self._export_text_output_to_ai(
+                "Kiterunner", self.kiterunner_area.getText()
+            ),
+        )
+    )
+
+    help_row = JPanel(FlowLayout(FlowLayout.LEFT))
+    help_row.add(
+        JLabel(
+            "Deep API route scan using Kiterunner with slower per-host pacing, forwarded-header spoofing, and scoped first-party host selection."
+        )
+    )
+
+    top_panel.add(controls_line1)
+    top_panel.add(controls_line2)
+    top_panel.add(help_row)
+    panel.add(top_panel, BorderLayout.NORTH)
+
+    self.kiterunner_area, scroll = self._create_text_area_panel()
+    panel.add(scroll, BorderLayout.CENTER)
+    self.kiterunner_results = []
+    self.kiterunner_lock = threading.Lock()
     return panel
 
 def _build_wayback_presets(self, stdin_prefix):
@@ -7321,6 +7531,7 @@ __all__ = [
     "_normalize_profile",
     "_profile_labels",
     "_selected_profile_value",
+    "_kiterunner_profile_settings",
     "_sqlmap_profile_settings",
     "_build_sqlmap_command",
     "_dalfox_profile_settings",
@@ -7371,6 +7582,7 @@ __all__ = [
     "_create_httpx_tab",
     "_create_katana_tab",
     "_create_ffuf_tab",
+    "_create_kiterunner_tab",
     "_build_wayback_presets",
     "_add_wayback_output_buttons",
     "_create_wayback_tab",

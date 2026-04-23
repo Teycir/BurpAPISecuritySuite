@@ -1973,9 +1973,9 @@ def collect_ffuf_targets(extender):
             host, scope_override
         ):
             continue
-        host_counts[host] = host_counts.get(host, 0) + 1
-        if (not scope_override.get("enabled")) and self._ffuf_is_noise_host(host):
+        if (not scope_override.get("enabled")) and self._is_generic_noise_entry(entry):
             continue
+        host_counts[host] = host_counts.get(host, 0) + 1
 
         base = self._infer_base_domain(host)
         if not base:
@@ -2038,7 +2038,7 @@ def collect_ffuf_targets(extender):
         if not allowed_bases:
             fallback_bases = {}
             for host, count in host_counts.items():
-                if self._ffuf_is_noise_host(host):
+                if self._is_generic_noise_entry({"host": host}):
                     continue
                 base = self._infer_base_domain(host)
                 if not base:
@@ -2071,7 +2071,7 @@ def collect_ffuf_targets(extender):
                 dropped_scope_host += 1
                 continue
         else:
-            if self._ffuf_is_noise_host(host):
+            if self._is_generic_noise_entry(entry):
                 dropped_noise_host += 1
                 continue
             if allowed_bases:
@@ -2138,6 +2138,250 @@ def collect_ffuf_targets(extender):
     }
     return targets, meta
 
+def collect_kiterunner_targets(extender):
+    self = extender
+    """Collect scoped host-base targets for Kiterunner API route scans."""
+    custom_override = self._get_kiterunner_custom_targets_override()
+    if custom_override.get("enabled"):
+        custom_targets = list(custom_override.get("targets", []) or [])
+        custom_error = self._ascii_safe(custom_override.get("error") or "").strip()
+        return custom_targets, {
+            "source_mode": "custom_targets",
+            "source_count": len(custom_targets),
+            "source_filter_error": "",
+            "inspected_entries": len(custom_targets),
+            "raw_candidates": len(custom_targets),
+            "dropped_noise_host": 0,
+            "dropped_scope_host": 0,
+            "dropped_low_signal": 0,
+            "truncated": 0,
+            "force_host": False,
+            "selected_host": "custom_targets",
+            "allowed_bases": [],
+            "manual_scope_enabled": False,
+            "manual_scope_line_count": 0,
+            "manual_scope_host_count": 0,
+            "manual_scope_base_count": 0,
+            "manual_scope_preview": [],
+            "signal_relaxed": False,
+            "signal_relax_added": 0,
+            "custom_targets_enabled": True,
+            "custom_targets_count": len(custom_targets),
+            "custom_targets_invalid_count": int(
+                custom_override.get("invalid_count", 0) or 0
+            ),
+            "custom_targets_too_many_count": int(
+                custom_override.get("too_many_count", 0) or 0
+            ),
+            "error": custom_error,
+        }
+
+    filtered_source = {}
+    filter_eval_error = ""
+    try:
+        filtered_source = dict(self._filter_endpoints())
+    except Exception as e:
+        filter_eval_error = self._ascii_safe(e)
+        self._callbacks.printError(
+            "Kiterunner filtered-view snapshot error: {}".format(str(e))
+        )
+    source_mode = "filtered_view_only"
+    if filter_eval_error:
+        source_mode = "filtered_view_error"
+
+    entries_snapshot = []
+    for entries in filtered_source.values():
+        entries_list = entries if isinstance(entries, list) else [entries]
+        for entry in entries_list:
+            if isinstance(entry, dict):
+                entries_snapshot.append(entry)
+
+    scope_override = self._get_target_scope_override()
+    if scope_override.get("enabled"):
+        selected_host = "target-bases"
+        force_host = False
+        allowed_bases = set(scope_override.get("bases", set()))
+    else:
+        selected_host = "all"
+        try:
+            if hasattr(self, "host_filter") and self.host_filter is not None:
+                selected_host = self._ascii_safe(
+                    str(self.host_filter.getSelectedItem()), lower=True
+                ).strip()
+        except Exception as e:
+            self._callbacks.printError(
+                "Kiterunner host-filter read error: {}".format(str(e))
+            )
+            selected_host = "all"
+        force_host = bool(selected_host and selected_host != "all")
+        # Kiterunner should scan all first-party bases in scope by default.
+        # Keep explicit host filters/manual scope, but avoid single-base auto narrowing.
+        allowed_bases = set()
+
+    def _collect_candidate_pass(allow_low_signal):
+        candidates = {}
+        dropped_noise_host = 0
+        dropped_scope_host = 0
+        dropped_low_signal = 0
+        inspected_entries = 0
+        for entry in entries_snapshot:
+            inspected_entries += 1
+            protocol = self._ascii_safe(entry.get("protocol"), lower=True).strip() or "https"
+            host = self._ascii_safe(entry.get("host"), lower=True).strip()
+            if not host:
+                dropped_scope_host += 1
+                continue
+
+            if scope_override.get("enabled"):
+                if not self._host_matches_target_scope(host, scope_override):
+                    dropped_scope_host += 1
+                    continue
+            elif force_host:
+                if host != selected_host:
+                    dropped_scope_host += 1
+                    continue
+            else:
+                if self._is_generic_noise_entry(entry):
+                    dropped_noise_host += 1
+                    continue
+                host_base = self._infer_base_domain(host)
+                if allowed_bases and host_base not in allowed_bases:
+                    dropped_scope_host += 1
+                    continue
+
+            port = entry.get("port", -1)
+            if port == -1:
+                port = 443 if protocol == "https" else 80
+            if (protocol == "https" and port == 443) or (
+                protocol == "http" and port == 80
+            ):
+                base_url = "{}://{}/".format(protocol, host)
+            else:
+                base_url = "{}://{}:{}/".format(protocol, host, port)
+
+            path = self._ascii_safe(entry.get("normalized_path") or "/", lower=True).strip()
+            parts = [p for p in path.strip("/").split("/") if p]
+            first_part = parts[0] if parts else ""
+            content_type = self._ascii_safe(entry.get("content_type"), lower=True).strip()
+            method = self._ascii_safe(entry.get("method"), lower=True).strip()
+            params = entry.get("parameters", {}) or {}
+            param_count = 0
+            if isinstance(params, dict):
+                for value in params.values():
+                    if isinstance(value, dict):
+                        param_count += len(value)
+                    elif isinstance(value, list):
+                        param_count += len(value)
+            auth_detected = [
+                self._ascii_safe(x, lower=True).strip()
+                for x in (entry.get("auth_detected", []) or [])
+            ]
+
+            api_like = bool(
+                "/api/" in path
+                or "/graphql" in path
+                or "/rest/" in path
+                or "/oauth" in path
+                or "/auth" in path
+                or re.match(r"^/v\d+(?:\.\d+)?(?:/|$)", path)
+            )
+            has_signal = bool(
+                api_like
+                or method in ["post", "put", "patch", "delete"]
+                or (
+                    "json" in content_type
+                    or "xml" in content_type
+                    or "x-www-form-urlencoded" in content_type
+                )
+                or param_count > 0
+                or any(x and x != "none" for x in auth_detected)
+            )
+            if (not allow_low_signal) and first_part and self._ffuf_is_noise_path_segment(first_part) and not api_like:
+                dropped_low_signal += 1
+                continue
+            if (not allow_low_signal) and (not has_signal):
+                dropped_low_signal += 1
+                continue
+
+            score = 0
+            if api_like:
+                score += 5
+            if method in ["post", "put", "patch", "delete"]:
+                score += 2
+            if "json" in content_type or "xml" in content_type:
+                score += 1
+            if param_count > 0:
+                score += 1
+            if any(x and x != "none" for x in auth_detected):
+                score += 1
+            prev = candidates.get(base_url)
+            if prev is None or score > prev:
+                candidates[base_url] = score
+        return {
+            "candidates": candidates,
+            "dropped_noise_host": dropped_noise_host,
+            "dropped_scope_host": dropped_scope_host,
+            "dropped_low_signal": dropped_low_signal,
+            "inspected_entries": inspected_entries,
+        }
+
+    strict_pass = _collect_candidate_pass(allow_low_signal=False)
+    candidates = strict_pass["candidates"]
+    dropped_noise_host = strict_pass["dropped_noise_host"]
+    dropped_scope_host = strict_pass["dropped_scope_host"]
+    dropped_low_signal = strict_pass["dropped_low_signal"]
+    inspected_entries = strict_pass["inspected_entries"]
+    signal_relaxed = False
+    signal_relax_added = 0
+
+    if (not candidates) and entries_snapshot:
+        relaxed_pass = _collect_candidate_pass(allow_low_signal=True)
+        relaxed_candidates = relaxed_pass["candidates"]
+        if relaxed_candidates:
+            candidates = relaxed_candidates
+            dropped_noise_host = relaxed_pass["dropped_noise_host"]
+            dropped_scope_host = relaxed_pass["dropped_scope_host"]
+            dropped_low_signal = 0
+            inspected_entries = relaxed_pass["inspected_entries"]
+            signal_relaxed = True
+            signal_relax_added = len(relaxed_candidates)
+
+    ordered = sorted(candidates.items(), key=lambda item: (-item[1], item[0]))
+    total_candidates = len(ordered)
+    truncated = 0
+    if total_candidates > self.KITERUNNER_MAX_TARGETS:
+        truncated = total_candidates - self.KITERUNNER_MAX_TARGETS
+        ordered = ordered[: self.KITERUNNER_MAX_TARGETS]
+    targets = [target for target, _ in ordered]
+
+    meta = {
+        "source_mode": source_mode,
+        "source_count": len(entries_snapshot),
+        "source_filter_error": filter_eval_error,
+        "inspected_entries": inspected_entries,
+        "raw_candidates": total_candidates,
+        "dropped_noise_host": dropped_noise_host,
+        "dropped_scope_host": dropped_scope_host,
+        "dropped_low_signal": dropped_low_signal,
+        "truncated": truncated,
+        "force_host": force_host,
+        "selected_host": selected_host,
+        "allowed_bases": sorted(list(allowed_bases)),
+        "manual_scope_enabled": bool(scope_override.get("enabled")),
+        "manual_scope_line_count": len(scope_override.get("lines", [])),
+        "manual_scope_host_count": len(scope_override.get("hosts", set())),
+        "manual_scope_base_count": len(scope_override.get("bases", set())),
+        "manual_scope_preview": list(scope_override.get("lines", []))[:3],
+        "signal_relaxed": signal_relaxed,
+        "signal_relax_added": signal_relax_added,
+        "custom_targets_enabled": False,
+        "custom_targets_count": 0,
+        "custom_targets_invalid_count": 0,
+        "custom_targets_too_many_count": 0,
+        "error": "",
+    }
+    return targets, meta
+
 def collect_wayback_queries(extender):
     self = extender
     """Collect scoped Wayback host/path queries from first-party Recon data."""
@@ -2171,9 +2415,9 @@ def collect_wayback_queries(extender):
             host, scope_override
         ):
             continue
-        host_counts[host] = host_counts.get(host, 0) + 1
-        if (not scope_override.get("enabled")) and self._ffuf_is_noise_host(host):
+        if (not scope_override.get("enabled")) and self._is_generic_noise_entry(entry):
             continue
+        host_counts[host] = host_counts.get(host, 0) + 1
         base = self._infer_base_domain(host)
         if not base:
             continue
@@ -2208,7 +2452,7 @@ def collect_wayback_queries(extender):
         if not allowed_bases:
             fallback_bases = {}
             for host, count in host_counts.items():
-                if self._ffuf_is_noise_host(host):
+                if self._is_generic_noise_entry({"host": host}):
                     continue
                 base = self._infer_base_domain(host)
                 if not base:
@@ -2241,7 +2485,7 @@ def collect_wayback_queries(extender):
                 dropped_scope_host += 1
                 continue
         else:
-            if self._ffuf_is_noise_host(host):
+            if self._is_generic_noise_entry(entry):
                 dropped_noise_host += 1
                 continue
             host_base = self._infer_base_domain(host)

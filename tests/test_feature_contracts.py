@@ -659,6 +659,17 @@ def test_recon_autopopulate_and_layout_wiring():
     print("[PASS] test_recon_autopopulate_and_layout_wiring")
 
 
+def test_recon_noise_filter_resets_to_selected_on_launch():
+    ui_text = _repo_file_text("burp_core_ui_and_fuzz_methods.py")
+    persisted_block = ui_text.split("_PERSISTED_CHECKBOX_ATTRS = (", 1)[1].split(
+        "_PERSISTED_TEXT_ATTRS = (", 1
+    )[0]
+    assert '"recon_noise_filter_checkbox"' not in persisted_block
+    assert "self.recon_noise_filter_enabled = True" in ui_text
+    assert '"Filter Noise", bool(getattr(self, "recon_noise_filter_enabled", True))' in ui_text
+    print("[PASS] test_recon_noise_filter_resets_to_selected_on_launch")
+
+
 def test_backfill_uses_memory_safe_proxy_history_window():
     text = _source_text()
     required_tokens = [
@@ -907,10 +918,12 @@ def test_shared_noise_filter_helpers_are_wired_for_recon_and_logger():
     required_tokens = [
         "self.recon_noise_filter_enabled = True",
         "self.logger_noise_filter_enabled = True",
+        "def _is_generic_noise_entry(",
         "def _has_high_signal_tags(",
         "def _recon_entry_is_noise(",
         "def _endpoint_is_recon_noise(",
         "def _logger_event_is_noise(",
+        "return self._is_generic_noise_entry(entry, endpoint_tags=endpoint_tags)",
         "noise_filter_enabled = bool(getattr(self, \"recon_noise_filter_enabled\", True))",
         "noise_box = getattr(self, \"recon_noise_filter_checkbox\", None)",
         "if noise_filter_enabled and self._endpoint_is_recon_noise(key, entries):",
@@ -918,11 +931,38 @@ def test_shared_noise_filter_helpers_are_wired_for_recon_and_logger():
         "noise_box = getattr(self, \"logger_noise_filter_checkbox\", None)",
         "if noise_box is None:",
         "noise_box = getattr(self, \"recon_noise_filter_checkbox\", None)",
+        'auth_detected = [',
+        'has_auth_context = any(value and value != "none" for value in auth_detected)',
+        "tracking_api_noise = bool(",
+        'and method in ["GET", "HEAD", "OPTIONS"]',
+        "if tracking_api_noise:",
         "- Filter Noise is controlled from Recon and applies to Logger too.",
+        '"tiktokw.us",',
+        '"snapchat.com",',
+        '"admob.com",',
+        '"moloco.com",',
+        '"kargo.com",',
+        '"mediasquare.fr",',
+        '"presage.io",',
     ]
     for token in required_tokens:
         assert token in text, "Missing shared noise-filter token: {}".format(token)
     print("[PASS] test_shared_noise_filter_helpers_are_wired_for_recon_and_logger")
+
+
+def test_generic_denoiser_is_shared_across_collectors():
+    text = _source_text()
+    required_tokens = [
+        "def _is_generic_noise_entry(",
+        "return self._is_generic_noise_entry(entry, endpoint_tags=endpoint_tags)",
+        "self._is_generic_noise_entry(entry)",
+        'self._is_generic_noise_entry({"host": host})',
+        'self._is_generic_noise_entry({"host": host_text})',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing generic denoiser sharing token: {}".format(token)
+    assert text.count("self._is_generic_noise_entry(entry)") >= 6
+    print("[PASS] test_generic_denoiser_is_shared_across_collectors")
 
 
 def test_logger_noise_filter_keeps_noisy_write_api_hosts_filtered():
@@ -1358,14 +1398,17 @@ def test_tool_profiles_and_health_button_are_wired():
         "def _evaluate_help_text(",
         '"name": "ApiHunter"',
         '"field": "apihunter_path_field"',
+        '"field": "kiterunner_path_field"',
         'self.sqlmap_profile_combo = JComboBox(self._profile_labels())',
         'self.dalfox_profile_combo = JComboBox(self._profile_labels())',
         'self.asset_profile_combo = JComboBox(self._profile_labels())',
+        'self.kiterunner_profile_combo = JComboBox(self._profile_labels())',
         'self.asset_custom_cmd_checkbox = JCheckBox("Enable Custom", False)',
         'self.asset_custom_cmd_field = JTextField("", 35)',
         'self.nuclei_auth_mode_combo = JComboBox(',
         'self.nuclei_auth_mode_combo.setSelectedItem("Auth + Unauth")',
         'self.nuclei_profile_combo = JComboBox(self._profile_labels())',
+        "def _kiterunner_profile_settings(",
         "def _build_sqlmap_command(",
         "def _build_dalfox_command(",
         "def _asset_profile_settings(",
@@ -1393,13 +1436,149 @@ def test_external_tool_scope_collectors_present():
     text = _source_text()
     assert "def _collect_nuclei_targets(" in text
     assert "def _collect_apihunter_targets(" in text
+    assert "def _collect_kiterunner_targets(" in text
     assert "def _collect_katana_seed_urls(" in text
     assert "def _collect_wayback_queries(" in text
     assert "targets, target_meta = self._collect_nuclei_targets()" in text
     assert "targets, target_meta = self._collect_apihunter_targets()" in text
+    assert "targets, target_meta = self._collect_kiterunner_targets()" in text
     assert "seed_urls, target_meta = self._collect_katana_seed_urls()" in text
     assert "queries, query_meta = self._collect_wayback_queries()" in text
     print("[PASS] test_external_tool_scope_collectors_present")
+
+
+def test_kiterunner_tab_and_runner_are_wired():
+    text = _source_text()
+    required_tokens = [
+        'self.kiterunner_path_field = JTextField(',
+        'self.kiterunner_wordlist_field = JTextField(',
+        'self.kiterunner_profile_combo = JComboBox(self._profile_labels())',
+        'self.kiterunner_profile_combo.setSelectedItem("Balanced")',
+        'Balanced: default; broader ranked-host coverage with a larger route budget and 15-minute max.',
+        'self.kiterunner_use_custom_targets_checkbox = JCheckBox(',
+        'lambda e: self._run_kiterunner(e)',
+        'lambda e: self._stop_kiterunner(e)',
+        'lambda e: self._export_kiterunner_results()',
+        'lambda e: self._send_kiterunner_to_intruder()',
+        'self.tabbed_pane.addTab("Kiterunner", kiterunner_panel)',
+        'required_tokens=["scan", "brute", "wordlist"]',
+        'targets, target_meta = self._collect_kiterunner_targets()',
+        '"[*] Running Kiterunner...\\n"',
+        '"[*] Mode: {}\\n".format(',
+        '"[*] Target Source: Target Bases popup\\n"',
+        '"[*] Target Source: Recon filtered scope\\n"',
+        '"[*] Target URLs:\\n"',
+        'KITERUNNER SCAN RESULTS',
+        '"--progress"',
+        '"--kitebuilder-full-scan"',
+        '"X-Originating-IP: 127.0.0.1"',
+        '"Accept: application/json"',
+        '"Kiterunner", self.kiterunner_area.getText()',
+        'self._snapshot_text_area("kiterunner_area")',
+        '"target_host_cap": 8,',
+        '"assetnote_entry_cap": 2500,',
+        '"target_host_cap": 12,',
+        '"assetnote_entry_cap": 8000,',
+        '"target_host_cap": 6,',
+        '"assetnote_entry_cap": 12000,',
+        '"max_elapsed_seconds": 600,',
+        '"max_elapsed_seconds": 900,',
+        '"signal_relaxed": signal_relaxed,',
+        '"signal_relax_added": signal_relax_added,',
+        'profile_target_host_cap = int(profile_cfg.get("target_host_cap", 0) or 0)',
+        'assetnote_entry_cap = int(profile_cfg.get("assetnote_entry_cap", 0) or 0)',
+        'def _normalize_kiterunner_assetnote_alias(alias_text, fallback_cap=0):',
+        'cap_match = re.search(r"^(.*?)(?:;|:)(\\d+)$", normalized_alias)',
+        '"value": "{}:{}".format(alias_name, alias_cap),',
+        '"value": "{}:{}".format(normalized_alias, fallback_cap),',
+        'wordlist_args = ["-A", effective_alias_value]',
+        '"[*] Wordlist cap syntax normalized to alias:N for local kr compatibility\\n"',
+        'max_elapsed_seconds = int(profile_cfg.get("max_elapsed_seconds", 0) or 0)',
+        '"[*] Profile host cap: {} skipped (top {} ranked hosts kept for {} mode)\\n".format(',
+        '"[*] Route budget: Assetnote alias capped to first {} entries for {} mode\\n".format(',
+        '"[*] Time boundary: {}s max elapsed for {} mode\\n".format(',
+        'pending_kiterunner_output_lines = []',
+        'heartbeat_interval_seconds = 10.0',
+        'ui_poll_interval_seconds = 0.35',
+        'total_target_count = len(targets)',
+        '"processed_targets": None,',
+        '"progress_is_estimate": False,',
+        '"progress_signal_seen": False,',
+        '"discovery_target_keys": set(),',
+        'def _sanitize_kiterunner_output_lines(raw_text):',
+        'chunk = pipe.read(1)',
+        'if buffered_text[index] in ["\\r", "\\n"]',
+        'def _extract_kiterunner_progress_update(raw_text):',
+        're.findall(r"(?<!\\d)(\\d+)\\s*/\\s*(\\d+)(?!\\d)", segment_text)',
+        'estimated_count = int(',
+        'def _kiterunner_progress_line_candidate(clean_line):',
+        'def _kiterunner_discovery_target_key(parsed_result):',
+        'def _render_kiterunner_discovery_line(parsed_result):',
+        'def _render_kiterunner_progress_line(',
+        '"[*] Progress: target-position unavailable | discoveries={} | elapsed={}s\\n".format(',
+        '"[*] Progress: {}{}/{} targets processed | discoveries={} | elapsed={}s\\n".format(',
+        '"[+] Discovery: [{}] [{}] {}\\n".format(',
+        '"[*] Tuning: Hosts={} | Per-host={} | Preflight={} | Timeout={} | Delay={}\\n".format(',
+        'cleaned_text = cleaned_text.replace("\\x08", "")',
+        'def _flush_pending_kiterunner_lines():',
+        '"Kiterunner stdout raw line"',
+        'timed_out_by_boundary = False',
+        'if max_elapsed_seconds > 0 and (',
+        'timed_out_by_boundary = True',
+        'time boundary reached after {}s; no discoveries were collected before the run was stopped\\n".format(',
+        'summary += "[*] Boundary: stopped early at {}s with partial results\\n".format(',
+        'progress_state["processed_targets"]',
+        'progress_state["progress_is_estimate"]',
+        'discovery_target_keys = progress_state[',
+        'strict_pass = _collect_candidate_pass(allow_low_signal=False)',
+        'relaxed_pass = _collect_candidate_pass(allow_low_signal=True)',
+        '"[*] Low-signal fallback: +{} hosts (kept scoped first-party bases after strict API-only pass returned none)\\n".format(',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Kiterunner wiring token: {}".format(token)
+    assert '"Accept: application/json, text/plain, */*"' not in text
+    assert 'self.kiterunner_profile_combo.setSelectedItem("Fast")' not in text
+    print("[PASS] test_kiterunner_tab_and_runner_are_wired")
+
+
+def test_kiterunner_custom_targets_and_filtered_scope_are_wired():
+    text = _source_text()
+    required_tokens = [
+        'self.kiterunner_use_custom_targets_checkbox = JCheckBox(',
+        "lambda e: self._open_kiterunner_custom_targets_popup()",
+        "def _parse_kiterunner_custom_targets_text(",
+        "def _open_kiterunner_custom_targets_popup(",
+        "def _get_kiterunner_custom_targets_override(",
+        'self.kiterunner_custom_targets_lines = []',
+        '"kiterunner_custom_targets_lines",',
+        'max_entries=UI_CORE_LIMITS["kiterunner_custom_targets_max_entries"]',
+        "custom_override = self._get_kiterunner_custom_targets_override()",
+        '"Kiterunner custom targets is enabled but no valid URLs are configured."',
+        '"Kiterunner filtered-view snapshot error: {}".format(str(e))',
+        'if (not self.api_data) and (not custom_override.get("enabled")):',
+        'if source_mode == "custom_targets":',
+        '"[*] Target Source: Custom Targets popup\\n"',
+        '"[*] Custom targets: {} popup-defined base URLs\\n".format(',
+        'filtered_source = dict(self._filter_endpoints())',
+        'source_mode = "filtered_view_only"',
+    ]
+    for token in required_tokens:
+        assert token in text, "Missing Kiterunner custom-target/filter token: {}".format(token)
+    print("[PASS] test_kiterunner_custom_targets_and_filtered_scope_are_wired")
+
+
+def test_kiterunner_remote_wordlist_failures_are_reported_clearly():
+    runner_text = _repo_file_text("heavy_runners.py")
+    required_tokens = [
+        'remote_wordlist_error_detected = False',
+        'if "failed to get remote wordlists" in err_lower or "failed to get url" in err_lower:',
+        "[*] The local kr binary could not fetch Assetnote wordlists for",
+        "Confirm this host can resolve/reach wordlists.assetnote.io",
+        "Retry with a local .kite file if remote wordlists are blocked",
+    ]
+    for token in required_tokens:
+        assert token in runner_text, "Missing Kiterunner remote-wordlist guidance token: {}".format(token)
+    print("[PASS] test_kiterunner_remote_wordlist_failures_are_reported_clearly")
 
 
 def test_apihunter_custom_targets_popup_and_enforcement_are_wired():
@@ -1709,10 +1888,13 @@ def test_emergency_pkill_button_and_handler_present():
         "httpx_area",
         "katana_area",
         "ffuf_area",
+        "kiterunner_area",
         "wayback_area",
     ]:
         token = 'lambda: getattr(self, "{}", None)'.format(area_name)
         assert token in text, "Missing emergency kill area binding: {}".format(area_name)
+    assert '("kiterunner", "Kiterunner")' in text
+    assert '"kr scan"' in text
     print("[PASS] test_emergency_pkill_button_and_handler_present")
 
 
