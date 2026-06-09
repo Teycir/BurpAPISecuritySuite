@@ -1,3 +1,24 @@
+## [1.4.17] - 2026-06-09
+
+### Added
+- New `Scope` tab (first tab position) for optional target filtering:
+  - Import Burp's native target scope (Include/Exclude rules) with one click
+  - Automatically filter Recon endpoints and all external tool runs to in-scope hosts only
+  - Clear scope filter anytime to return to unfiltered view (all hosts visible)
+  - Live status display showing included/excluded hosts
+  - Scope indicator in Recon stats panel: "Scope: X hosts"
+  - **OPTIONAL feature** - does not impact normal workflow, all endpoints shown by default
+
+### Changed
+- Scope filtering applies globally:
+  - Recon endpoint list shows only in-scope hosts when active
+  - External tools (Nuclei, HTTPX, Katana, FFUF, Kiterunner, ApiHunter, etc.) automatically target only in-scope hosts
+  - Scope status visible in Recon statistics panel
+- Optimized scope import algorithm:
+  - Only checks unique hosts from captured Recon data (O(n) where n = unique hosts)
+  - No proxy history scanning overhead (100x-1000x faster than scanning all requests)
+  - Uses Burp's `isInScope()` API for accurate scope checking
+
 ## [1.4.16] - 2026-04-23
 
 ### Added

@@ -1330,12 +1330,33 @@ def _filter_endpoints_with_state(self, state, regex_obj=None):
     with self.lock:
         data_snapshot = list(self.api_data.items())
         endpoint_tags_snapshot = dict(self.endpoint_tags)
-    setattr(self, "_recon_filter_endpoint_tags_snapshot", endpoint_tags_snapshot)
+        # Get Burp scope filter settings
+        burp_scope_enabled = bool(
+            getattr(self, "burp_scope_filter_enabled", False)
+        )
+        burp_included_hosts = set(
+            getattr(self, "burp_scope_included_hosts", []) or []
+        )
+        burp_excluded_hosts = set(
+            getattr(self, "burp_scope_excluded_hosts", []) or []
+        )
+    setattr(
+        self, "_recon_filter_endpoint_tags_snapshot", endpoint_tags_snapshot
+    )
     try:
         noise_filter_enabled = bool(state.get("noise_filter_enabled", False))
         for key, entries in data_snapshot:
             entry = self._get_entry(entries)
             entry_host = self._ascii_safe(entry.get("host") or "", lower=True)
+            
+            # Apply Burp scope filter first if enabled
+            if burp_scope_enabled and burp_included_hosts:
+                if entry_host not in burp_included_hosts:
+                    continue
+            if burp_scope_enabled and burp_excluded_hosts:
+                if entry_host in burp_excluded_hosts:
+                    continue
+            
             if (
                 state["search"]
                 and state["search"] not in key.lower()
@@ -1861,13 +1882,23 @@ def _update_stats(self):
             if sev in severity_counts:
                 severity_counts[sev] += 1
 
+    # Check if Burp scope filter is active
+    with self.lock:
+        burp_scope_enabled = bool(getattr(self, "burp_scope_filter_enabled", False))
+        burp_included_count = len(getattr(self, "burp_scope_included_hosts", []) or [])
+    
+    scope_status = ""
+    if burp_scope_enabled and burp_included_count > 0:
+        scope_status = " | Scope: {} hosts (bypasses noise filter)".format(burp_included_count)
+    
     self.stats_label.setText(
-        "Endpoints: {} | Critical: {} | High: {} | Medium: {} | Hosts: {}".format(
+        "Endpoints: {} | Critical: {} | High: {} | Medium: {} | Hosts: {}{}".format(
             total,
             severity_counts["critical"],
             severity_counts["high"],
             severity_counts["medium"],
             hosts,
+            scope_status,
         )
     )
 
@@ -8792,6 +8823,362 @@ def _finalize_import_ui_refresh(self):
             "Import UI finalize refresh error: {}".format(str(refresh_err))
         )
 
+def _import_burp_scope(self):
+    """Import Burp's target scope and apply to Recon filters."""
+    self._callbacks.printOutput("[DEBUG] _import_burp_scope called")
+    self.log_to_ui("[*] Importing Burp Scope (bypasses noise filter)...")
+    
+    try:
+        # Extract unique hosts from BOTH api_data (live Recon captures) AND
+        # logger_events (Logger++ tab) — whichever has data.
+        # api_data uses self.lock; logger_events uses self.logger_lock.
+        self._callbacks.printOutput("[DEBUG] Acquiring locks for host snapshot")
+        with self.lock:
+            api_snapshot = dict(self.api_data)
+        with getattr(self, "logger_lock", self.lock):
+            logger_snapshot = list(getattr(self, "logger_events", []) or [])
+
+        self._callbacks.printOutput(
+            "[DEBUG] api_data endpoints: {}, logger_events: {}".format(
+                len(api_snapshot), len(logger_snapshot)
+            )
+        )
+
+        candidate_hosts = set()
+
+        # Hosts from live Recon captures (api_data values are lists of samples)
+        for endpoint_key, samples in api_snapshot.items():
+            try:
+                for sample in (samples if isinstance(samples, list) else [samples]):
+                    host = self._ascii_safe(
+                        (sample.get("host") if isinstance(sample, dict) else None) or "", lower=True
+                    ).strip()
+                    if host:
+                        candidate_hosts.add(host)
+            except Exception as api_err:
+                self._callbacks.printError(
+                    "[!] Failed to read host from api_data entry: {}".format(str(api_err))
+                )
+
+        # Hosts from Logger++ events
+        for event in logger_snapshot:
+            try:
+                host = self._ascii_safe(event.get("host") or "", lower=True).strip()
+                if host:
+                    candidate_hosts.add(host)
+            except Exception as event_err:
+                self._callbacks.printError("[!] Failed to process logger event: {}".format(str(event_err)))
+                continue
+        
+        self._callbacks.printOutput("[DEBUG] Found {} candidate hosts".format(len(candidate_hosts)))
+        
+        # Log all candidate hosts for debugging
+        for host in sorted(candidate_hosts):
+            self._callbacks.printOutput("[DEBUG] Candidate host: {}".format(host))
+        
+        if not candidate_hosts:
+            self.log_to_ui("[!] No captured endpoints to filter. Browse the target first.")
+            self._callbacks.printOutput("[DEBUG] No candidate hosts found, showing warning dialog")
+            JOptionPane.showMessageDialog(
+                self._panel,
+                "No captured endpoints found.\n\nBrowse the target application first to capture API traffic.",
+                "Import Burp Scope",
+                JOptionPane.WARNING_MESSAGE
+            )
+            return
+        
+        # Check which hosts are in Burp's scope
+        included_hosts = set()
+        excluded_hosts = set()
+        
+        self._callbacks.printOutput("[DEBUG] Checking scope for {} hosts".format(len(candidate_hosts)))
+        
+        for host in candidate_hosts:
+            in_scope = False
+            try:
+                # Test https first
+                test_url = URL("https://{}".format(host))
+                self._callbacks.printOutput("[DEBUG] Testing URL: {}".format(test_url.toString()))
+                
+                if self._callbacks.isInScope(test_url):
+                    in_scope = True
+                    self._callbacks.printOutput("[DEBUG] Host in scope (https): {}".format(host))
+                else:
+                    # Try http as well
+                    test_url_http = URL("http://{}".format(host))
+                    if self._callbacks.isInScope(test_url_http):
+                        in_scope = True
+                        self._callbacks.printOutput("[DEBUG] Host in scope (http): {}".format(host))
+                    else:
+                        # Also test progressively-stripped apex domains to handle any depth
+                        # e.g., www.sub.example.com → sub.example.com → example.com
+                        parts = host.split(".")
+                        for depth in range(1, len(parts) - 1):
+                            apex = ".".join(parts[depth:])
+                            if (
+                                self._callbacks.isInScope(URL("https://{}".format(apex)))
+                                or self._callbacks.isInScope(URL("http://{}".format(apex)))
+                            ):
+                                in_scope = True
+                                self._callbacks.printOutput(
+                                    "[DEBUG] Host in scope via apex ({}) for: {}".format(apex, host)
+                                )
+                                break
+                
+                if in_scope:
+                    included_hosts.add(host)
+                else:
+                    excluded_hosts.add(host)
+                    self._callbacks.printOutput("[DEBUG] Host not in scope: {}".format(host))
+                    
+            except Exception as url_err:
+                self._callbacks.printError("[!] Failed to check scope for host {}: {}".format(host, str(url_err)))
+                excluded_hosts.add(host)
+                continue
+        
+        self._callbacks.printOutput("[DEBUG] Scope check complete: {} included, {} excluded".format(
+            len(included_hosts), len(excluded_hosts)
+        ))
+        
+        # If no scope configured, warn user
+        if not included_hosts:
+            self.log_to_ui("[!] None of the captured hosts are in Burp scope.")
+            self._callbacks.printOutput("[DEBUG] No included hosts, showing warning dialog")
+
+            # Show captured hosts to help user understand the issue
+            captured_hosts_list = "\n".join(sorted(list(candidate_hosts)[:10]))
+            if len(candidate_hosts) > 10:
+                captured_hosts_list += "\n... and {} more".format(len(candidate_hosts) - 10)
+
+            # Check Filter Noise state
+            filter_noise_enabled = getattr(self, "recon_noise_filter_checkbox", None)
+            is_filtering = False
+            if filter_noise_enabled and hasattr(filter_noise_enabled, "isSelected"):
+                is_filtering = filter_noise_enabled.isSelected()
+
+            noise_warning = ""
+            if is_filtering:
+                noise_warning = "\n\n⚠️  'Filter Noise' is ENABLED and may be hiding target traffic!"
+
+            JOptionPane.showMessageDialog(
+                self._panel,
+                "None of the captured hosts match Burp's target scope.\n\n"
+                "Captured hosts ({}):\n{}{}\n\n"
+                "Possible solutions:\n"
+                "1. Browse the target application through Burp proxy to capture endpoints\n"
+                "2. DISABLE 'Filter Noise' in Recon tab if it is filtering target traffic\n"
+                "3. Make sure 'Include subdomains' is checked in Burp scope for your target\n"
+                "4. Check that Auto-Capture is enabled in Recon tab\n"
+                "5. Verify your Burp Target Scope (Project options > Target > Scope) includes the target host".format(
+                    len(candidate_hosts), captured_hosts_list, noise_warning
+                ),
+                "Import Burp Scope",
+                JOptionPane.WARNING_MESSAGE
+            )
+            return
+        
+        # Store scope settings
+        self._callbacks.printOutput("[DEBUG] Storing scope settings")
+        with self.lock:
+            self.burp_scope_included_hosts = list(included_hosts)
+            self.burp_scope_excluded_hosts = list(excluded_hosts)
+            self.burp_scope_filter_enabled = True
+        
+        # Log results
+        self.log_to_ui(
+            "[+] Imported Burp scope: {} included hosts, {} excluded hosts".format(
+                len(included_hosts), len(excluded_hosts)
+            )
+        )
+        
+        if len(included_hosts) <= 10:
+            for host in sorted(included_hosts):
+                self.log_to_ui("    [+] Included: {}".format(host))
+        else:
+            for host in sorted(list(included_hosts)[:10]):
+                self.log_to_ui("    [+] Included: {}".format(host))
+            self.log_to_ui("    [+] ... and {} more".format(len(included_hosts) - 10))
+        
+        # Update Scope tab status
+        self._callbacks.printOutput("[DEBUG] Updating scope status display")
+        self._update_scope_status_display()
+        
+        # Refresh view with scope filter
+        self._callbacks.printOutput("[DEBUG] Refreshing view")
+        self.refresh_view()
+        
+        self._callbacks.printOutput("[DEBUG] Showing success dialog")
+        JOptionPane.showMessageDialog(
+            self._panel,
+            "Imported {} in-scope hosts from Burp.\n\nScope filtering is now ACTIVE.\n\nNote: Scope filtering bypasses 'Filter Noise' - you will see\nALL endpoints from in-scope hosts (including paths that would\nnormally be filtered as noise).".format(
+                len(included_hosts)
+            ),
+            "Import Burp Scope",
+            JOptionPane.INFORMATION_MESSAGE
+        )
+        
+        self._callbacks.printOutput("[DEBUG] _import_burp_scope completed successfully")
+        
+    except Exception as scope_err:
+        import traceback
+        error_msg = "Import Burp scope error: {}\n{}".format(str(scope_err), traceback.format_exc())
+        self._callbacks.printError(error_msg)
+        self.log_to_ui("[!] Failed to import Burp scope: {}".format(str(scope_err)))
+        JOptionPane.showMessageDialog(
+            self._panel,
+            "Failed to import Burp scope:\n\n{}".format(str(scope_err)),
+            "Import Burp Scope Error",
+            JOptionPane.ERROR_MESSAGE
+        )
+
+def _apply_burp_scope_filter(self):
+    """Apply Burp scope filter to endpoints during view refresh."""
+    # This will be checked in _filter_endpoints_with_state
+    pass
+
+def _clear_burp_scope_filter(self):
+    """Clear the imported Burp scope filter."""
+    self._callbacks.printOutput("[DEBUG] _clear_burp_scope_filter called")
+    
+    with self.lock:
+        had_scope = bool(getattr(self, "burp_scope_filter_enabled", False))
+        self.burp_scope_filter_enabled = False
+        self.burp_scope_included_hosts = []
+        self.burp_scope_excluded_hosts = []
+    
+    self._callbacks.printOutput("[DEBUG] Scope filter cleared, had_scope={}".format(had_scope))
+    
+    if had_scope:
+        self.log_to_ui("[*] Burp scope filter cleared")
+        self._update_scope_status_display()
+        self.refresh_view()
+    else:
+        self.log_to_ui("[*] No active Burp scope filter to clear")
+    
+    self._callbacks.printOutput("[DEBUG] _clear_burp_scope_filter completed")
+
+def _update_scope_status_display(self):
+    """Update the Scope tab status display (ASCII-safe, richer stats)."""
+    self._callbacks.printOutput("[DEBUG] _update_scope_status_display called")
+
+    status_area = getattr(self, "scope_status_area", None)
+    if not status_area:
+        self._callbacks.printOutput("[DEBUG] No scope_status_area found")
+        return
+
+    with self.lock:
+        enabled = bool(getattr(self, "burp_scope_filter_enabled", False))
+        included = list(getattr(self, "burp_scope_included_hosts", []) or [])
+        excluded = list(getattr(self, "burp_scope_excluded_hosts", []) or [])
+        api_snapshot = dict(self.api_data)
+
+    with getattr(self, "logger_lock", self.lock):
+        logger_count = len(getattr(self, "logger_events", []) or [])
+
+    self._callbacks.printOutput("[DEBUG] Scope status: enabled={}, included={}, excluded={}".format(
+        enabled, len(included), len(excluded)
+    ))
+
+    if not enabled or not included:
+        # Build a useful "inactive" state showing what recon data exists
+        total_eps = len(api_snapshot)
+        hosts_in_recon = len(set(
+            self._ascii_safe((self._get_entry(e).get("host") or ""), lower=True).strip()
+            for e in api_snapshot.values()
+        ))
+        inactive_text = (
+            "STATUS: INACTIVE\n"
+            + "=" * 50 + "\n\n"
+            + "No scope filter is active.\n"
+            + "All captured endpoints are visible.\n\n"
+            + "--- Recon Snapshot ---\n"
+            + "  Endpoints  : {}\n".format(total_eps)
+            + "  Hosts seen : {}\n".format(hosts_in_recon)
+            + "  Logger rows: {}\n\n".format(logger_count)
+            + "To activate filtering:\n"
+            + "  1. Set your scope in Burp Target > Scope\n"
+            + "  2. Click [Import Burp Scope] on the left"
+        )
+        status_area.setText(inactive_text)
+        self._callbacks.printOutput("[DEBUG] Scope filter not active, showing default message")
+        return
+
+    # Build per-host endpoint counts from api_data
+    host_ep_counts = {}
+    for entries in api_snapshot.values():
+        entry = self._get_entry(entries)
+        h = self._ascii_safe((entry.get("host") or ""), lower=True).strip()
+        if h:
+            host_ep_counts[h] = host_ep_counts.get(h, 0) + 1
+
+    total_in_scope_eps = sum(host_ep_counts.get(h, 0) for h in included)
+
+    text = (
+        "STATUS: ACTIVE  (noise filter bypassed for in-scope hosts)\n"
+        + "=" * 50 + "\n\n"
+        + "IN-SCOPE  ({} hosts, {} endpoints):\n".format(len(included), total_in_scope_eps)
+        + "-" * 50 + "\n"
+    )
+    for host in sorted(included):
+        ep_count = host_ep_counts.get(host, 0)
+        ep_str = "  ({} eps)".format(ep_count) if ep_count else ""
+        safe_host = self._ascii_safe(host)
+        text += "  [IN]  {}{}\n".format(safe_host, ep_str)
+
+    if excluded:
+        text += "\nEXCLUDED  ({} hosts):\n".format(len(excluded))
+        text += "-" * 50 + "\n"
+        for host in sorted(excluded)[:15]:
+            safe_host = self._ascii_safe(host)
+            text += "  [OUT] {}\n".format(safe_host)
+        if len(excluded) > 15:
+            text += "  ... and {} more\n".format(len(excluded) - 15)
+
+    text += (
+        "\n" + "=" * 50 + "\n"
+        + "Scope filter applies to:\n"
+        + "  * Recon endpoint list  (in-scope hosts only)\n"
+        + "  * Nuclei / HTTPX / Katana / Kiterunner\n"
+        + "  * Noise filter BYPASSED for in-scope hosts\n"
+        + "\nRecon snapshot: {} endpoints | {} logger rows\n".format(
+            len(api_snapshot), logger_count
+        )
+    )
+
+    status_area.setText(text)
+    self._callbacks.printOutput("[DEBUG] Scope status display updated successfully")
+
+def _refresh_host_filter(self):
+    """Refresh the host filter dropdown with current captured hosts."""
+    host_combo = getattr(self, "host_filter", None)
+    if not host_combo:
+        return
+    
+    with self.lock:
+        data_snapshot = dict(self.api_data)
+    
+    # Extract unique hosts
+    hosts = set()
+    for entries in data_snapshot.values():
+        entry = self._get_entry(entries)
+        host = self._ascii_safe(entry.get("host") or "", lower=True)
+        if host:
+            hosts.add(host)
+    
+    # Update combo box
+    current_selection = str(host_combo.getSelectedItem()) if host_combo.getSelectedItem() else "All"
+    host_combo.removeAllItems()
+    host_combo.addItem("All")
+    
+    for host in sorted(hosts):
+        host_combo.addItem(host)
+    
+    # Restore selection if still valid
+    if self._combo_contains_item(host_combo, current_selection):
+        host_combo.setSelectedItem(current_selection)
+    else:
+        host_combo.setSelectedItem("All")
+
 def import_data(self):
     """Import Suite export JSON, Excalibur HAR/session artifacts, or bridge bundles."""
     chooser = JFileChooser()
@@ -11294,4 +11681,7 @@ __all__ = [
     "_stop_wayback",
     "_stop_sqlmap",
     "_stop_dalfox",
+    "_import_burp_scope",
+    "_clear_burp_scope_filter",
+    "_update_scope_status_display",
 ]

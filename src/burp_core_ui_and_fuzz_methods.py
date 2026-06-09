@@ -1516,6 +1516,7 @@ def _create_tabs(self, recon_panel):
     diff_panel = self._create_diff_tab()
     version_panel = self._create_version_tab()
     param_panel = self._create_param_tab()
+    scope_panel = self._create_scope_tab()
     logger_panel = self._create_logger_tab()
     fuzzer_panel = self._create_fuzzer_tab()
     sqlmap_verify_panel = self._create_sqlmap_verify_tab()
@@ -1534,6 +1535,7 @@ def _create_tabs(self, recon_panel):
     wayback_panel = self._create_wayback_tab()
     graphql_panel = self._create_graphql_tab()
 
+    self.tabbed_pane.addTab("Scope", scope_panel)
     self.tabbed_pane.addTab("Recon", recon_panel)
     self.tabbed_pane.addTab("Logger", logger_panel)
     self.tabbed_pane.addTab("Diff", diff_panel)
@@ -3032,6 +3034,149 @@ def _export_text_output_to_ai(self, source_label, output_text):
     else:
         self._copy_to_clipboard(payload)
     self.log_to_ui("[+] AI export ready for {}".format(title))
+
+def _create_scope_tab(self):
+    """Create Scope configuration tab - redesigned two-column layout."""
+    panel = JPanel(BorderLayout(8, 8))
+    panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8))
+
+    # ── LEFT COLUMN: instructions + action buttons ───────────────────────────
+    left_col = JPanel()
+    left_col.setLayout(BoxLayout(left_col, BoxLayout.Y_AXIS))
+    left_col.setPreferredSize(Dimension(340, 0))
+
+    # Instructions card
+    instructions_border = BorderFactory.createCompoundBorder(
+        BorderFactory.createTitledBorder(
+            BorderFactory.createLineBorder(Color(120, 120, 120), 1),
+            "How Scope Filtering Works"
+        ),
+        BorderFactory.createEmptyBorder(4, 6, 4, 6)
+    )
+    info_panel = JPanel()
+    info_panel.setLayout(BoxLayout(info_panel, BoxLayout.Y_AXIS))
+    info_panel.setBorder(instructions_border)
+
+    info_text = JTextArea(
+        "OPTIONAL FEATURE\n"
+        "Skip this tab to see ALL captured traffic (default).\n\n"
+        "STEP 1 - Configure scope in Burp:\n"
+        "  Target > Scope > Add your target host\n"
+        "  (check 'Include subdomains')\n\n"
+        "STEP 2 - Click [Import Burp Scope]\n"
+        "  The plugin reads Burp's scope and matches\n"
+        "  it against your captured endpoints.\n\n"
+        "RESULT:\n"
+        "  [+] Recon shows ONLY in-scope hosts\n"
+        "  [+] Nuclei / HTTPX / Katana run on\n"
+        "      in-scope targets only\n"
+        "  [+] 'Filter Noise' is BYPASSED for\n"
+        "      in-scope hosts (full visibility)\n\n"
+        "USE CASE:\n"
+        "  You browsed amazon.fr AND google.com.\n"
+        "  Scope = amazon.fr -> only amazon.fr\n"
+        "  endpoints appear in Recon.\n\n"
+        "Click [Clear Scope Filter] to return\n"
+        "to normal (all hosts visible)."
+    )
+    info_text.setEditable(False)
+    info_text.setWrapStyleWord(True)
+    info_text.setLineWrap(True)
+    info_text.setBackground(info_panel.getBackground())
+    info_text.setFont(Font("Dialog", Font.PLAIN, 12))
+    info_panel.add(info_text)
+    info_panel.setAlignmentX(0.0)
+    left_col.add(info_panel)
+
+    left_col.add(Box.createVerticalStrut(10))
+
+    # Action buttons stacked vertically in left column
+    btn_panel = JPanel()
+    btn_panel.setLayout(BoxLayout(btn_panel, BoxLayout.Y_AXIS))
+    btn_panel.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 4))
+
+    def import_scope_action(e):
+        try:
+            self._callbacks.printOutput("[DEBUG] Import Scope button clicked")
+            self._import_burp_scope()
+        except Exception as handler_err:
+            import traceback
+            error_msg = "[!] Import Scope button handler error: {}\n{}".format(
+                str(handler_err), traceback.format_exc()
+            )
+            self._callbacks.printError(error_msg)
+            self.log_to_ui(error_msg)
+
+    import_scope_btn = JButton("  Import Burp Scope  ")
+    import_scope_btn.setBackground(Color(75, 0, 130))
+    import_scope_btn.setForeground(Color.WHITE)
+    import_scope_btn.setFont(Font("Dialog", Font.BOLD, 13))
+    import_scope_btn.setAlignmentX(0.5)
+    import_scope_btn.setMaximumSize(Dimension(320, 36))
+    import_scope_btn.addActionListener(import_scope_action)
+    btn_panel.add(import_scope_btn)
+
+    btn_panel.add(Box.createVerticalStrut(6))
+
+    def clear_scope_action(e):
+        try:
+            self._callbacks.printOutput("[DEBUG] Clear Scope button clicked")
+            self._clear_burp_scope_filter()
+        except Exception as handler_err:
+            import traceback
+            error_msg = "[!] Clear Scope button handler error: {}\n{}".format(
+                str(handler_err), traceback.format_exc()
+            )
+            self._callbacks.printError(error_msg)
+            self.log_to_ui(error_msg)
+
+    clear_scope_btn = JButton("  Clear Scope Filter  ")
+    clear_scope_btn.setBackground(Color(220, 53, 69))
+    clear_scope_btn.setForeground(Color.WHITE)
+    clear_scope_btn.setFont(Font("Dialog", Font.BOLD, 13))
+    clear_scope_btn.setAlignmentX(0.5)
+    clear_scope_btn.setMaximumSize(Dimension(320, 36))
+    clear_scope_btn.addActionListener(clear_scope_action)
+    btn_panel.add(clear_scope_btn)
+
+    btn_panel.setAlignmentX(0.0)
+    left_col.add(btn_panel)
+    left_col.add(Box.createVerticalGlue())
+
+    # ── RIGHT COLUMN: live scope status ─────────────────────────────────────
+    right_col = JPanel(BorderLayout(0, 6))
+
+    status_border = BorderFactory.createCompoundBorder(
+        BorderFactory.createTitledBorder(
+            BorderFactory.createLineBorder(Color(120, 120, 120), 1),
+            "Live Scope Status"
+        ),
+        BorderFactory.createEmptyBorder(4, 6, 4, 6)
+    )
+    right_col.setBorder(status_border)
+
+    self.scope_status_area = JTextArea()
+    self.scope_status_area.setEditable(False)
+    self.scope_status_area.setFont(Font("Monospaced", Font.PLAIN, 12))
+    self.scope_status_area.setText(
+        "STATUS: INACTIVE\n"
+        "----------------------------------------------\n"
+        "No scope filter is active.\n\n"
+        "All captured endpoints are visible.\n"
+        "Use 'Import Burp Scope' to activate filtering."
+    )
+    scroll = JScrollPane(self.scope_status_area)
+    scroll.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED)
+    right_col.add(scroll, BorderLayout.CENTER)
+
+    # ── Split pane (resizable) ───────────────────────────────────────────────
+    split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left_col, right_col)
+    split.setDividerLocation(350)
+    split.setResizeWeight(0.0)
+    split.setBorder(None)
+
+    panel.add(split, BorderLayout.CENTER)
+    return panel
 
 def _create_diff_tab(self):
     """Create the Diff comparison tab"""
@@ -7555,6 +7700,7 @@ __all__ = [
     "_append_text_output_to_report",
     "_export_text_output_to_ai",
     "_create_diff_tab",
+    "_create_scope_tab",
     "_load_diff_file",
     "_run_diff",
     "_create_scanner_tab",
