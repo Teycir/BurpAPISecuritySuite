@@ -10769,7 +10769,8 @@ def _validate_binary_signature(
     missing, forbidden = _evaluate_signature(help_text)
 
     # Self-heal stale/partial cached help output by forcing a fresh probe once.
-    if required_tokens and missing and len(missing) == len(required_tokens):
+    # Made more aggressive to trigger when ANY tokens are missing, not just when ALL are missing.
+    if required_tokens and missing:
         probe_ok_retry, help_text_retry, probe_error_retry = self._probe_binary_help(
             binary_path, force_refresh=True
         )
@@ -10819,7 +10820,10 @@ def _tool_health_specs(self):
         {
             "name": "ApiHunter",
             "field": "apihunter_path_field",
-            "fallback": [],
+            "fallback": [
+                os.path.expanduser("~/.cargo/bin/apihunter"),
+                "apihunter",
+            ],
             "required": ["--urls", "--format", "--output", "--no-auto-report"],
             "forbidden": [],
         },

@@ -1,3 +1,23 @@
+## [1.4.18] - 2026-08-15
+
+### Fixed
+- Enhanced self-healing logic for tool binary validation:
+  - Made cache refresh more aggressive to trigger when ANY required tokens are missing, not just when ALL are missing
+  - Resolves false incompatibility warnings when cached help text becomes stale (e.g., Nuclei binary updated but extension uses old cached help)
+  - Self-healing now forces fresh binary probe when partial flag mismatches are detected
+
+### Added
+- Path persistence for ApiHunter tool configuration:
+  - Added `apihunter_path_field` to persisted UI state
+  - Added `apihunter_custom_cmd_field` to persisted UI state
+  - Tool paths now persist between Burp Suite sessions instead of reverting to defaults
+
+### Changed
+- ApiHunter fallback path now uses standard Cargo bin directory:
+  - Updated from hardcoded personal path to `~/.cargo/bin/apihunter`
+  - Follows same pattern as other tool fallbacks (e.g., Go tools in `~/go/bin/`)
+  - Works across different users and systems with standard Rust tool installations
+
 ## [1.4.17] - 2026-06-09
 
 ### Added

@@ -108,6 +108,8 @@ _PERSISTED_TEXT_ATTRS = (
     "katana_custom_cmd_field",
     "ffuf_path_field",
     "ffuf_wordlist_field",
+    "apihunter_path_field",
+    "apihunter_custom_cmd_field",
     "kiterunner_path_field",
     "kiterunner_wordlist_field",
     "wayback_from_field",
